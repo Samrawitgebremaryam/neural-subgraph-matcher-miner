@@ -14,32 +14,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Cache Docker layers
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          load: true
-          tags: decoder-image:latest
-          cache-from: |
-            type=local,src=/tmp/.buildx-cache
-          cache-to: |
-            type=local,dest=/tmp/.buildx-cache-new,mode=max
-
-      - name: Move cache
+      - name: Pull prebuilt Docker image
         run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          docker login -u samribahta -p ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          docker pull samribahta/decoder-image:latest
 
       - name: Create output directories
         run: |
@@ -65,7 +43,7 @@ jobs:
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -e PYTHONUNBUFFERED=1 \
-            decoder-image:latest \
+            samribahta/decoder-image:latest \
             bash -c "
               set -e
               echo 'Starting decoder run...'
@@ -79,31 +57,12 @@ jobs:
               ls -la /app/plots/cluster
               ls -la /app/results
               "
-      # - name: Run pattern counter in Docker container
-      #   run: |
-      #     docker run --rm \
-      #       -v ${{ github.workspace }}:/app \
-      #       -e PYTHONUNBUFFERED=1 \
-      #       decoder-image:latest \
-      #       bash -c "
-      #         set -e
-      #         export PYTHONPATH=/app
-      #         echo 'Running pattern counter...'
-      #         python -m analyze.count_patterns \
-      #           --dataset=graph.pkl \
-      #           --queries_path=results/patterns.pkl \
-      #           --out_path=results/ \
-      #           --node_anchored \
-      #           --preserve_labels
-      #         echo 'Counting completed.'
-      #         ls -la /app/results
-      #       "
       - name: Run matcher in Docker container
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -e PYTHONUNBUFFERED=1 \
-            decoder-image:latest \
+            samribahta/decoder-image:latest \
             bash -c "
               set -e
               echo 'Starting matcher run on custom gene graph...'
