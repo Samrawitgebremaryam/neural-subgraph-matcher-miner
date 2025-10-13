@@ -39,9 +39,15 @@ def convert_to_pkl(input_file, output_file, directed=True):
         except ValueError:
             continue  # Skip invalid lines
 
-    # Save graph
+    # Prepare data in the expected format
+    data_to_save = {
+        "nodes": list(G.nodes(data=True)),
+        "edges": list(G.edges(data=True)),
+    }
+
+    # Save graph in the expected format
     with open(output_file, "wb") as f:
-        pickle.dump(G, f)
+        pickle.dump(data_to_save, f)
 
     print(f"Conversion complete!")
     print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
