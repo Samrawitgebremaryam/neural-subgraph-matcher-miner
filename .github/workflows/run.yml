@@ -10,6 +10,7 @@ on:
 jobs:
   run-decoder:
     runs-on: ubuntu-latest
+    timeout-minutes: 120 # 2 hours timeout
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -23,8 +24,10 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/plots/cluster
           mkdir -p ${{ github.workspace }}/results
+          mkdir -p ${{ github.workspace }}/ckpt
           chmod -R 777 ${{ github.workspace }}/plots
           chmod -R 777 ${{ github.workspace }}/results
+          chmod -R 777 ${{ github.workspace }}/ckpt
 
       - name: Check available processors and usage percentage
         id: cpu-check
@@ -38,25 +41,6 @@ jobs:
           echo "total_cpus=$TOTAL_CPUS" >> $GITHUB_OUTPUT
           echo "percent_used=$PERCENT_USED" >> $GITHUB_OUTPUT
 
-      - name: Run decoder in Docker container
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -e PYTHONUNBUFFERED=1 \
-            samribahta/decoder-image:latest \
-            bash -c "
-              set -e
-              echo 'Starting decoder run...'
-              python -m subgraph_mining.decoder \
-                --dataset=directed.pkl \
-                --n_trials=200 \
-                --node_anchored \
-                --out_path=/app/results/patterns.pkl \
-                --graph_type=directed
-              echo 'Checking output directories...'
-              ls -la /app/plots/cluster
-              ls -la /app/results
-              "
       - name: Run matcher in Docker container
         run: |
           docker run --rm \
@@ -65,41 +49,68 @@ jobs:
             samribahta/decoder-image:latest \
             bash -c "
               set -e
-              echo 'Starting matcher run on custom gene graph...'
+              echo 'Starting matcher run on Amazon dataset...'
               python -m subgraph_matching.train \
                 --dataset=graph \
-                --graph_pkl_path=graph.pkl \
+                --graph_pkl_path=amazon0302.pkl \
                 --node_anchored \
                 --batch_size 16 \
-                --val_size 128
+                --val_size 128 \
+                --model_path=/app/ckpt/model_amazon.pt
               echo 'Checking output directories...'
               ls -la /app/results
               ls -la /app/plots
             "
+
+      - name: Run decoder in Docker container
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -e PYTHONUNBUFFERED=1 \
+            samribahta/decoder-image:latest \
+            bash -c "
+              set -e
+              echo 'Starting decoder run on Amazon dataset...'
+              python -m subgraph_mining.decoder \
+                --dataset=amazon0302.pkl \
+                --n_trials=200 \
+                --node_anchored \
+                --model_path=/app/ckpt/model_amazon.pt \
+                --out_path=/app/results/amazon_patterns.pkl \
+                --graph_type=directed
+              echo 'Checking output directories...'
+              ls -la /app/plots/cluster
+              ls -la /app/results
+              "
+
       - name: Check for generated files
         run: |
           echo "Checking plots directory:"
           ls -R plots/ || echo "No plots directory found"
           echo "Checking results directory:"
           ls -R results/ || echo "No results directory found"
+          echo "Checking ckpt directory:"
+          ls -R ckpt/ || echo "No ckpt directory found"
 
       - name: Upload plots as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: decoder-plots
+          name: amazon-decoder-results
           path: |
             plots/
             results/
-          retention-days: 7
+            ckpt/
+          retention-days: 30
           if-no-files-found: warn
 
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: decoder-logs
+          name: amazon-decoder-logs
           path: |
             *.log
             *.err
+          retention-days: 7
           if-no-files-found: ignore
