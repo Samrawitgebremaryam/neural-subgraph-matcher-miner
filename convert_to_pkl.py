@@ -1,94 +1,89 @@
+#!/usr/bin/env python3
+"""
+Convert Amazon0302 edge list to NetworkX pickle format with metadata from amazon-meta.txt.
+Optimized for Neural Subgraph Learning Library (SPMiner) experiments.
+"""
+
 import argparse
 import pickle
 import networkx as nx
 from tqdm import tqdm
 import re
 
-
 def load_metadata(meta_file):
-    """Load Amazon metadata from meta file."""
+    """Load Amazon metadata from meta file, mapping ASINs to attributes."""
     metadata = {}
     print(f"Reading metadata from {meta_file}...")
 
     with open(meta_file, "r", encoding="utf-8", errors="ignore") as f:
-        content = f.read()
-
-    # Parse metadata blocks
-    blocks = re.split(r"\n\s*\n", content)
-
-    for block in tqdm(blocks, desc="Parsing metadata"):
-        if not block.strip():
-            continue
-
-        lines = block.strip().split("\n")
-        if not lines:
-            continue
-
-        # Extract ASIN (node ID)
-        asin = None
-        for line in lines:
-            if line.startswith("ASIN:"):
-                asin = line.split("ASIN:", 1)[1].strip()
-                break
-
-        if not asin:
-            continue
-
-        # Extract other attributes
-        attrs = {"asin": asin}
-
-        for line in lines:
-            if line.startswith("  title:"):
-                attrs["title"] = line.split("title:", 1)[1].strip()
+        current_product = {}
+        for line in tqdm(f, desc="Parsing metadata"):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                if current_product and "ASIN" in current_product:
+                    try:
+                        # Use ASIN as key, but convert to int if numeric for ID compatibility
+                        asin = current_product["ASIN"]
+                        node_id = int(asin) if asin.isdigit() else None
+                        if node_id is not None and node_id < 548552:  # Limit to meta dataset size
+                            metadata[node_id] = current_product
+                    except ValueError:
+                        continue  # Skip non-numeric ASINs
+                    current_product = {}
+                continue
+            if line.startswith("Id:"):
+                id_val = int(line.split("Id:")[1].strip())
+                current_product["Id"] = id_val
+            elif line.startswith("ASIN:"):
+                current_product["ASIN"] = line.split("ASIN:")[1].strip()
+            elif line.startswith("  title:"):
+                current_product["title"] = line.split("title:")[1].strip()
             elif line.startswith("  group:"):
-                attrs["group"] = line.split("group:", 1)[1].strip()
+                current_product["group"] = line.split("group:")[1].strip()
             elif line.startswith("  salesrank:"):
-                rank = line.split("salesrank:", 1)[1].strip()
-                try:
-                    attrs["salesrank"] = int(rank)
-                except ValueError:
-                    attrs["salesrank"] = None
+                rank = line.split("salesrank:")[1].strip()
+                current_product["salesrank"] = int(rank) if rank.isdigit() else None
             elif line.startswith("  similar:"):
-                similar = line.split("similar:", 1)[1].strip()
-                attrs["similar_count"] = len(similar.split()) if similar else 0
-
-        # Use ASIN as key (this should match the node IDs in the edge file)
-        try:
-            node_id = int(asin)
-            metadata[node_id] = attrs
-        except ValueError:
-            # If ASIN is not numeric, skip
-            continue
+                similar = line.split("similar:")[1].strip()
+                current_product["similar_count"] = len(similar.split()) if similar else 0
+            elif line.startswith("  categories:"):
+                categories = []
+                for cat_line in line.split("\n"):
+                    if "|" in cat_line:
+                        categories.append(cat_line.strip().split("|")[1:-1])  # Extract category path
+                current_product["categories"] = categories
+            elif line.startswith("  reviews:"):
+                review_info = line.split("reviews:")[1].strip().split()
+                current_product["reviews_total"] = int(review_info[1])
+                current_product["reviews_avg_rating"] = float(review_info[5]) if review_info[5] else 0.0
 
     print(f"Loaded metadata for {len(metadata)} products")
     return metadata
-
 
 def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
     """
     Convert edge list file to NetworkX pickle format with optional metadata.
 
     Args:
-        input_file: Path to input edge list file
-        output_file: Path to output pickle file
-        meta_file: Path to metadata file (optional)
-        directed: Whether to create directed or undirected graph
+        input_file: Path to input edge list file (e.g., amazon0302.txt)
+        output_file: Path to output pickle file (e.g., amazon0302.pkl)
+        meta_file: Path to metadata file (e.g., amazon-meta.txt, optional)
+        directed: Whether to create a directed graph (True for Amazon0302)
     """
     print(f"Converting {input_file} to {output_file}")
     print(f"Graph type: {'Directed' if directed else 'Undirected'}")
     if meta_file:
         print(f"Using metadata from: {meta_file}")
 
-    # Create graph
-    G = nx.DiGraph() if directed else nx.Graph()
+    # Create directed graph
+    G = nx.DiGraph()
 
     # Load metadata if provided
     metadata = {}
     if meta_file:
-        print("Loading metadata...")
         metadata = load_metadata(meta_file)
 
-    # Read edges
+    # Read edges and build graph
     with open(input_file, "r") as f:
         lines = f.readlines()
 
@@ -105,57 +100,51 @@ def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
                 from_node = int(parts[0])
                 to_node = int(parts[1])
                 G.add_edge(from_node, to_node)
+                # Add default attributes
+                if from_node not in G.nodes:
+                    G.nodes[from_node]["id"] = str(from_node)
+                    G.nodes[from_node]["label"] = "product"
+                if to_node not in G.nodes:
+                    G.nodes[to_node]["id"] = str(to_node)
+                    G.nodes[to_node]["label"] = "product"
         except ValueError:
-            continue  # Skip invalid lines
+            print(f"Skipping invalid line: {line}")
+            continue
 
-    # Prepare data in the expected format
-    # Extract nodes from edges and add attributes (with metadata if available)
-    nodes_with_attrs = []
-    for node_id in G.nodes():
-        # Start with basic attributes
-        node_attrs = {"id": str(node_id), "label": "product"}
-
-        # Add metadata if available
+    # Enrich nodes with metadata where available
+    for node_id in G.nodes:
         if node_id in metadata:
             meta = metadata[node_id]
-            node_attrs.update(
-                {
-                    "asin": meta.get("asin", str(node_id)),
-                    "title": meta.get("title", f"Product {node_id}"),
-                    "group": meta.get("group", "Unknown"),
-                    "salesrank": meta.get("salesrank"),
-                    "similar_count": meta.get("similar_count", 0),
-                }
-            )
+            G.nodes[node_id].update({
+                "asin": meta.get("ASIN", str(node_id)),
+                "title": meta.get("title", f"Product {node_id}"),
+                "group": meta.get("group", "Unknown"),
+                "salesrank": meta.get("salesrank"),
+                "similar_count": meta.get("similar_count", 0),
+                "categories": meta.get("categories", []),
+                "reviews_total": meta.get("reviews_total", 0),
+                "reviews_avg_rating": meta.get("reviews_avg_rating", 0.0)
+            })
 
-        nodes_with_attrs.append((node_id, node_attrs))
-
-    # Add default attributes to edges
-    edges_with_attrs = []
+    # Add edge attributes
     for u, v in G.edges():
-        edges_with_attrs.append((u, v, {"weight": 1.0, "type": "co_purchase"}))
+        G.edges[u, v].update({"weight": 1.0, "type": "co_purchase"})
 
-    data_to_save = {
-        "nodes": nodes_with_attrs,
-        "edges": edges_with_attrs,
-    }
-
-    # Save graph in the expected format
+    # Save graph
     with open(output_file, "wb") as f:
-        pickle.dump(data_to_save, f)
+        pickle.dump(G, f)
 
-    print(f"Conversion complete!")
+    print(f"✅ Conversion complete!")
     print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
     print(f"Saved to: {output_file}")
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Convert edge list to pickle")
-    parser.add_argument("input", help="Input edge list file")
+    parser = argparse.ArgumentParser(description="Convert edge list to NetworkX pickle for SPMiner")
+    parser.add_argument("input", help="Input edge list file (e.g., amazon0302.txt)")
     parser.add_argument("-o", "--output", help="Output pickle file", default=None)
-    parser.add_argument("-m", "--meta", help="Metadata file (optional)", default=None)
+    parser.add_argument("-m", "--meta", help="Metadata file (e.g., amazon-meta.txt)", default=None)
     parser.add_argument(
-        "--undirected", action="store_true", help="Create undirected graph"
+        "--undirected", action="store_true", help="Create undirected graph (default: directed)"
     )
 
     args = parser.parse_args()
@@ -166,10 +155,7 @@ def main():
         graph_type = "undirected" if args.undirected else "directed"
         args.output = f"{base_name}_{graph_type}.pkl"
 
-    convert_to_pkl(
-        args.input, args.output, meta_file=args.meta, directed=not args.undirected
-    )
-
+    convert_to_pkl(args.input, args.output, meta_file=args.meta, directed=not args.undirected)
 
 if __name__ == "__main__":
     main()
