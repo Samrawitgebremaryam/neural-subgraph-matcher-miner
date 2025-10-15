@@ -45,26 +45,26 @@ jobs:
           echo "total_cpus=$TOTAL_CPUS" >> $GITHUB_OUTPUT
           echo "percent_used=$PERCENT_USED" >> $GITHUB_OUTPUT
 
-      - name: Run matcher in Docker container
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -e PYTHONUNBUFFERED=1 \
-            samribahta/decoder-image:latest \
-            bash -c "
-              set -e
-              echo 'Starting matcher run on Amazon dataset...'
-              python -m subgraph_matching.train \
-                --dataset=graph \
-                --graph_pkl_path=amazon0302.pkl \
-                --node_anchored \
-                --batch_size 16 \
-                --val_size 128 \
-                --model_path=/app/ckpt/model_amazon.pt
-              echo 'Checking output directories...'
-              ls -la /app/results
-              ls -la /app/plots
-            "
+      # - name: Run matcher in Docker container
+      #   run: |
+      #     docker run --rm \
+      #       -v ${{ github.workspace }}:/app \
+      #       -e PYTHONUNBUFFERED=1 \
+      #       samribahta/decoder-image:latest \
+      #       bash -c "
+      #         set -e
+      #         echo 'Starting matcher run on Amazon dataset...'
+      #         python -m subgraph_matching.train \
+      #           --dataset=graph \
+      #           --graph_pkl_path=amazon0302.pkl \
+      #           --node_anchored \
+      #           --batch_size 16 \
+      #           --val_size 128 \
+      #           --model_path=/app/ckpt/model_amazon.pt
+      #         echo 'Checking output directories...'
+      #         ls -la /app/results
+      #         ls -la /app/plots
+      #       "
 
       - name: Run decoder in Docker container
         run: |

@@ -42,8 +42,10 @@ class GraphDataExtractor:
             'rgba(239, 68, 68, 0.6)',    # Red
             'rgba(20, 184, 166, 0.6)',   # Teal
         ]
-    
-    def extract_graph_data(self, graph: nx.Graph) -> Dict[str, Any]:
+
+    def extract_graph_data(
+        self, graph: nx.Graph, node_labels: Dict[int, str] = None
+    ) -> Dict[str, Any]:
         """
         Extract complete graph data from NetworkX graph.
         
@@ -69,10 +71,10 @@ class GraphDataExtractor:
         try:
             # Extract basic graph information
             metadata = self._extract_metadata(graph)
-            
-            # Extract nodes with positions and attributes
-            nodes = self._extract_nodes(graph)
-            
+
+            # Extract nodes with positions and attributes (pass optional node_labels)
+            nodes = self._extract_nodes(graph, node_labels)
+
             # Extract edges with attributes
             edges = self._extract_edges(graph)
             
@@ -125,24 +127,37 @@ class GraphDataExtractor:
             'isDirected': graph.is_directed(),
             'density': round(density, 3)
         }
-    
-    def _extract_nodes(self, graph: nx.Graph) -> List[Dict[str, Any]]:
+
+    def _extract_nodes(
+        self, graph: nx.Graph, node_labels: Dict[int, str] = None
+    ) -> List[Dict[str, Any]]:
         nodes = []
         pos = self._get_node_positions(graph)
         for node_key in graph.nodes():
             node_data = graph.nodes[node_key]
-            node_id = str(node_data['id']) if 'id' in node_data and node_data['id'] is not None else str(node_key)
+            node_id = (
+                str(node_data["id"])
+                if "id" in node_data and node_data["id"] is not None
+                else str(node_key)
+            )
             x, y = pos.get(node_key, (0, 0))
             is_anchor = node_data.get('anchor', 0) == 1
 
-            # Build display label from all attributes except anchor, x, y, id, label
-            display_label_parts = []
-            for key, value in node_data.items():
-                if key not in {'anchor', 'x', 'y'} and value is not None:
-                    display_label_parts.append(f"{key}: {value}")
-            print(f"Node {node_id} display label parts: {display_label_parts}")
-            display_label = "\\n".join(display_label_parts) if display_label_parts else node_id
+            # Use node_labels if provided, otherwise fall back to current logic
+            if node_labels and node_key in node_labels:
+                display_label = node_labels[node_key]
+            else:
+                display_label_parts = []
+                for key, value in node_data.items():
+                    if key not in {"anchor", "x", "y"} and value is not None:
+                        display_label_parts.append(f"{key}: {value}")
+                display_label = (
+                    "\\n".join(display_label_parts) if display_label_parts else node_id
+                )
 
+            print(
+                f"Node {node_id} display label parts: {display_label_parts if not node_labels or node_key not in node_labels else [display_label]}"
+            )
             node_dict = dict(node_data)
             node_dict['id'] = node_id
             node_dict['x'] = float(x)
@@ -194,8 +209,9 @@ class GraphDataExtractor:
             pos = nx.spring_layout(graph, k=3.0, iterations=50, seed=42)
             # Scale positions to reasonable canvas coordinates
             scale_factor = 200
-            return {n: (pos[n][0] * scale_factor, pos[n][1] * scale_factor) 
-                   for n in pos}
+            return {
+                n: (pos[n][0] * scale_factor, pos[n][1] * scale_factor) for n in pos
+            }
         except Exception:
             # Fallback to circular layout
             pos = nx.circular_layout(graph, scale=200)
@@ -297,10 +313,12 @@ class GraphDataExtractor:
                     metadata[key] = str(value)
         
         return metadata
-    
-    def _generate_legend(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-        node_types = set(node['label'] for node in nodes)
-        edge_types = set(edge['label'] for edge in edges)
+
+    def _generate_legend(
+        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        node_types = set(node["label"] for node in nodes)
+        edge_types = set(edge["label"] for edge in edges)
 
         node_legend = []
         for i, node_type in enumerate(sorted(node_types)):
@@ -513,8 +531,10 @@ class HTMLTemplateProcessor:
             raise RuntimeError(f"Failed to serialize graph data to JSON: {str(e)}")
         except Exception as e:
             raise RuntimeError(f"Data injection failed: {str(e)}")
-    
-    def generate_filename(self, graph_data: Dict[str, Any], base_name: str = "pattern") -> str:
+
+    def generate_filename(
+        self, graph_data: Dict[str, Any], base_name: str = "pattern"
+    ) -> str:
         """
         Implement filename generation based on graph characteristics.
         """
@@ -605,6 +625,7 @@ class HTMLTemplateProcessor:
         
         # Create full path
         import os
+
         full_path = os.path.join(output_dir, filename)
         
         try:
@@ -665,7 +686,8 @@ def process_html_template(graph_data: Dict[str, Any],
     processor = HTMLTemplateProcessor(template_path)
     return processor.process_template(graph_data, output_filename, output_dir)
 
-def visualize_pattern_graph_ext(pattern, args, count_by_size):
+
+def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
     """
     Main visualizer integration function matching existing API signature.
     """
@@ -699,7 +721,9 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size):
         logger.info("Extracting graph data from NetworkX object...")
         try:
             extractor = GraphDataExtractor()
-            graph_data = extractor.extract_graph_data(pattern)
+            graph_data = extractor.extract_graph_data(
+                pattern, node_labels=node_labels if node_labels is not None else {}
+            )
             logger.info("Graph data extraction completed successfully")
         except Exception as e:
             logger.error(f"Graph data extraction failed: {str(e)}")

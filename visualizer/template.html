@@ -1564,7 +1564,7 @@
             
             isolateNode(node) {
                 this.isolatedNode = node;
-                console.log(`Isolated node: ${node.label || node.id}`);
+                console.log(`Isolated node: ${node.display_label || node.label || node.id}`);
                 this.render(); // Re-render to apply isolation effects
             }
             
