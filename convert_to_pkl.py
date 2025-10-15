@@ -94,13 +94,11 @@ def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
                 from_node = int(parts[0])
                 to_node = int(parts[1])
                 G.add_edge(from_node, to_node)
-                # Add default attributes
+                # Initialize nodes without default label
                 if from_node not in G.nodes:
                     G.nodes[from_node]["id"] = str(from_node)
-                    G.nodes[from_node]["label"] = "product"
                 if to_node not in G.nodes:
                     G.nodes[to_node]["id"] = str(to_node)
-                    G.nodes[to_node]["label"] = "product"
         except ValueError:
             print(f"Skipping invalid line: {line}")
             continue
@@ -109,6 +107,7 @@ def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
     for node_id in G.nodes:
         if node_id in metadata:
             meta = metadata[node_id]
+            label = meta.get("title", f"Product {node_id}")  # Use title as label if available
             G.nodes[node_id].update({
                 "asin": meta.get("ASIN", str(node_id)),
                 "title": meta.get("title", f"Product {node_id}"),
@@ -117,7 +116,12 @@ def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
                 "similar_count": meta.get("similar_count", 0),
                 "categories": meta.get("categories", []),
                 "reviews_total": meta.get("reviews_total", 0),
-                "reviews_avg_rating": meta.get("reviews_avg_rating", 0.0)
+                "reviews_avg_rating": meta.get("reviews_avg_rating", 0.0),
+                "label": label  # Set label to title or fallback
+            })
+        else:
+            G.nodes[node_id].update({
+                "label": f"Product {node_id}"  # Fallback label for nodes without metadata
             })
 
     # Add edge attributes
