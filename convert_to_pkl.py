@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Convert Amazon0302 edge list to NetworkX pickle format with metadata from amazon-meta.txt.
-Optimized for Neural Subgraph Learning Library (SPMiner) experiments.
-"""
-
 import argparse
 import pickle
 import networkx as nx

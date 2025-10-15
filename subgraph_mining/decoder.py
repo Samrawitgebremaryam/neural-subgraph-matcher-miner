@@ -147,13 +147,12 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         for n in pattern.nodes():
             node_data = pattern.nodes[n]
             node_id = node_data.get('id', str(n))
-            node_label = node_data.get('label', 'unknown')
+            node_label = node_data.get('title', node_data.get('label', 'unknown'))
+            label_parts = [f"{node_label} (ID: {node_id})"]  # Combine title and ID for clarity
             
-            label_parts = [f"{node_label}:{node_id}"]
-            
+            # Include all non-default attributes
             other_attrs = {k: v for k, v in node_data.items() 
                           if k not in ['id', 'label', 'anchor'] and v is not None}
-            
             if other_attrs:
                 for key, value in other_attrs.items():
                     if isinstance(value, str):
@@ -166,16 +165,10 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                     elif isinstance(value, (int, float)):
                         if isinstance(value, float):
                             value = f"{value:.2f}" if abs(value) < 1000 else f"{value:.1e}"
-                    
-                    if edge_density > 0.5: 
-                        label_parts.append(f"{key}:{value}")
-                    else:  
-                        label_parts.append(f"{key}: {value}")
-            
-            if edge_density > 0.5:  
-                node_labels[n] = "; ".join(label_parts)
-            else:  
-                node_labels[n] = "\n".join(label_parts)
+                    label_parts.append(f"{key}: {value}")
+
+            # Use newline for sparse, semicolon for dense to improve readability
+            node_labels[n] = "\n".join(label_parts) if edge_density <= 0.5 else "; ".join(label_parts)
 
         if edge_density > 0.3:
             if num_nodes <= 20:
