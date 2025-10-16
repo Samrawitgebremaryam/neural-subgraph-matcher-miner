@@ -17,37 +17,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Download amazon0302.pkl from Google Drive (binary-safe)
-      - name: Fetch amazon0302.pkl
+      # 2️⃣ Install gdown and download amazon0302.pkl
+      - name: Fetch amazon0302.pkl from Google Drive
         env:
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: |
-          echo "📥 Downloading amazon0302.pkl from Google Drive using curl..."
-          FILE_ID=$GDRIVE_FILE_ID
-          FILE_NAME="amazon0302.pkl"
+          echo "📥 Installing gdown..."
+          python -m pip install --upgrade pip
+          pip install gdown
 
-          # Get confirmtion token for large files
-          CONFIRM=$(curl -sc /tmp/gcookie "https://drive.google.com/uc?export=download&id=${FILE_ID}" \
-            | grep -o 'confirm=[^&]*' | sed 's/confirm=//')
+          echo "📥 Downloading amazon0302.pkl from Google Drive..."
+          gdown "https://drive.google.com/uc?id=${GDRIVE_FILE_ID}" -O amazon0302.pkl
 
-          # Download actual binary file
-          curl -Lb /tmp/gcookie "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILE_ID}" -o "${FILE_NAME}"
+          echo "🔍 Checking downloaded file..."
+          ls -lh amazon0302.pkl
+          file amazon0302.pkl
 
-          echo "✅ Download complete. Checking file info..."
-          ls -lh "${FILE_NAME}"
-
-      # 3️⃣ Verify file content and fail if it’s not binary
+      # 3️⃣ Verify file content
       - name: Verify file content
         run: |
           echo "🔍 Verifying downloaded file..."
           FILE_TYPE=$(file amazon0302.pkl)
           echo "File type: $FILE_TYPE"
 
-          if echo "$FILE_TYPE" | grep -q "ASCII text"; then
-            echo "❌ ERROR: amazon0302.pkl is not a binary file. It’s likely an HTML or text placeholder!"
+          if echo "$FILE_TYPE" | grep -Eq "HTML|ASCII text|Unicode text"; then
+            echo "❌ ERROR: amazon0302.pkl is not a valid binary file (likely an HTML page)."
             exit 1
           fi
-
           echo "✅ amazon0302.pkl verified as binary."
 
       # 4️⃣ Pull Docker image
