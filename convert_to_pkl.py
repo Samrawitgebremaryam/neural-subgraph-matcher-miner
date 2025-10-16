@@ -4,6 +4,7 @@ import networkx as nx
 from tqdm import tqdm
 import re
 
+
 def load_metadata(meta_file):
     """Load Amazon metadata from meta file, mapping ASINs to attributes."""
     metadata = {}
@@ -225,18 +226,33 @@ def convert_to_pkl(
     for u, v in G.edges():
         G.edges[u, v].update({"weight": 1.0, "type": "co_purchase"})
 
-    # Save graph
+    # Prepare raw data dict expected by CustomGraphDataset
+    raw_data = {}
+    # Nodes as (node_id, attr_dict) tuples
+    raw_data["nodes"] = []
+    for n in G.nodes():
+        # make a plain dict copy of node attributes
+        raw_data["nodes"].append((n, dict(G.nodes[n])))
+
+    # Edges as (u, v) or (u, v, attr_dict)
+    raw_data["edges"] = []
+    for u, v, attrs in G.edges(data=True):
+        # convert attr view to plain dict
+        attr_dict = dict(attrs) if attrs else {}
+        raw_data["edges"].append((u, v, attr_dict))
+
+    # Save the raw_data dict to pickle (this matches the project's expectations)
     with open(output_file, "wb") as f:
-        pickle.dump(G, f)
+        pickle.dump(raw_data, f)
 
     print(f"✅ Conversion complete!")
-    print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+    print(f"Raw data: {len(raw_data['nodes'])} nodes, {len(raw_data['edges'])} edges")
     print(f"Saved to: {output_file}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert edge list to NetworkX pickle for SPMiner"
+        description="Convert edge list + metadata to a raw-data pickle compatible with the project's CustomGraphDataset (produces a dict with 'nodes' and 'edges')"
     )
     parser.add_argument("input", help="Input edge list file (e.g., amazon0302.txt)")
     parser.add_argument("-o", "--output", help="Output pickle file", default=None)
