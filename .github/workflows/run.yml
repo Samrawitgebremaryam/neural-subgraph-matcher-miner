@@ -13,30 +13,52 @@ jobs:
     timeout-minutes: 180
 
     steps:
+      # 1️⃣ Checkout code
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # 2️⃣ Download amazon0302.pkl from Google Drive (binary-safe)
       - name: Fetch amazon0302.pkl
         env:
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: |
-          echo "Downloading amazon0302.pkl from Google Drive using curl..."
+          echo "📥 Downloading amazon0302.pkl from Google Drive using curl..."
           FILE_ID=$GDRIVE_FILE_ID
           FILE_NAME="amazon0302.pkl"
-          CONFIRM=$(curl -sc /tmp/gcookie "https://drive.google.com/uc?export=download&id=${FILE_ID}" | \
-                    grep -o 'confirm=[^&]*' | sed 's/confirm=//')
-          curl -Lb /tmp/gcookie "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILE_ID}" -o ${FILE_NAME}
-          ls -lh amazon0302.pkl
 
+          # Get confirmtion token for large files
+          CONFIRM=$(curl -sc /tmp/gcookie "https://drive.google.com/uc?export=download&id=${FILE_ID}" \
+            | grep -o 'confirm=[^&]*' | sed 's/confirm=//')
 
-      # ✅ Pull prebuilt Docker image instead of building
+          # Download actual binary file
+          curl -Lb /tmp/gcookie "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILE_ID}" -o "${FILE_NAME}"
+
+          echo "✅ Download complete. Checking file info..."
+          ls -lh "${FILE_NAME}"
+
+      # 3️⃣ Verify file content and fail if it’s not binary
+      - name: Verify file content
+        run: |
+          echo "🔍 Verifying downloaded file..."
+          FILE_TYPE=$(file amazon0302.pkl)
+          echo "File type: $FILE_TYPE"
+
+          if echo "$FILE_TYPE" | grep -q "ASCII text"; then
+            echo "❌ ERROR: amazon0302.pkl is not a binary file. It’s likely an HTML or text placeholder!"
+            exit 1
+          fi
+
+          echo "✅ amazon0302.pkl verified as binary."
+
+      # 4️⃣ Pull Docker image
       - name: Pull prebuilt Docker image
         run: |
-          echo "Logging into Docker Hub..."
+          echo "🐳 Logging into Docker Hub..."
           docker login -u samribahta -p ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-          echo "Pulling latest decoder image..."
+          echo "📦 Pulling latest decoder image..."
           docker pull samribahta/decoder-image:latest
 
+      # 5️⃣ Create output directories
       - name: Create output directories
         run: |
           mkdir -p ${{ github.workspace }}/plots/cluster
@@ -46,6 +68,7 @@ jobs:
           chmod -R 777 ${{ github.workspace }}/results
           chmod -R 777 ${{ github.workspace }}/ckpt
 
+      # 6️⃣ Check CPU resources
       - name: Check available processors and usage percentage
         id: cpu-check
         run: |
@@ -58,6 +81,7 @@ jobs:
           echo "total_cpus=$TOTAL_CPUS" >> $GITHUB_OUTPUT
           echo "percent_used=$PERCENT_USED" >> $GITHUB_OUTPUT
 
+      # 7️⃣ Run matcher (train model)
       - name: Run matcher in Docker container
         run: |
           docker run --rm \
@@ -66,7 +90,7 @@ jobs:
             samribahta/decoder-image:latest \
             bash -c "
               set -e
-              echo 'Starting matcher run on Amazon dataset...'
+              echo '🚀 Starting matcher run on Amazon dataset...'
               python -m subgraph_matching.train \
                 --dataset=graph \
                 --graph_pkl_path=amazon0302.pkl \
@@ -74,11 +98,12 @@ jobs:
                 --batch_size 16 \
                 --val_size 128 \
                 --model_path=/app/ckpt/model_amazon.pt
-              echo 'Checking output directories...'
+              echo '📂 Checking output directories...'
               ls -la /app/results
               ls -la /app/plots
             "
 
+      # 8️⃣ Run decoder
       - name: Run decoder in Docker container
         run: |
           docker run --rm \
@@ -87,7 +112,7 @@ jobs:
             samribahta/decoder-image:latest \
             bash -c "
               set -e
-              echo 'Starting decoder run on Amazon dataset...'
+              echo '🚀 Starting decoder run on Amazon dataset...'
               python -m subgraph_mining.decoder \
                 --dataset=amazon0302.pkl \
                 --n_trials=200 \
@@ -95,21 +120,23 @@ jobs:
                 --model_path=/app/ckpt/model_amazon.pt \
                 --out_path=/app/results/amazon_patterns.pkl \
                 --graph_type=directed
-              echo 'Checking output directories...'
+              echo '📂 Checking output directories...'
               ls -la /app/plots/cluster
               ls -la /app/results
             "
 
+      # 9️⃣ Final file checks
       - name: Check for generated files
         run: |
-          echo "Checking plots directory:"
+          echo "📁 Checking plots directory:"
           ls -R plots/ || echo "No plots directory found"
-          echo "Checking results directory:"
+          echo "📁 Checking results directory:"
           ls -R results/ || echo "No results directory found"
-          echo "Checking ckpt directory:"
+          echo "📁 Checking ckpt directory:"
           ls -R ckpt/ || echo "No ckpt directory found"
 
-      - name: Upload plots as artifact
+      # 🔟 Upload results as artifact
+      - name: Upload plots and results as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -121,6 +148,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+      # 1️⃣1️⃣ Upload logs
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
