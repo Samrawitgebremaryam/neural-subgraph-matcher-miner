@@ -22,19 +22,25 @@ jobs:
         env:
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: |
-          echo "📥 Downloading amazon0302.pkl from Google Drive using curl..."
-          FILE_ID=$GDRIVE_FILE_ID
+          echo "📥 Downloading amazon0302.pkl from Google Drive..."
+
+          FILE_ID="$GDRIVE_FILE_ID"
           FILE_NAME="amazon0302.pkl"
 
-          # Get confirmtion token for large files
-          CONFIRM=$(curl -sc /tmp/gcookie "https://drive.google.com/uc?export=download&id=${FILE_ID}" \
-            | grep -o 'confirm=[^&]*' | sed 's/confirm=//')
+          # Try direct download first
+          curl -L -o "$FILE_NAME" "https://drive.google.com/uc?export=download&id=${FILE_ID}" || true
 
-          # Download actual binary file
-          curl -Lb /tmp/gcookie "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILE_ID}" -o "${FILE_NAME}"
+          # If it's still HTML (Google warning page), try token-based download
+          if file "$FILE_NAME" | grep -q "HTML"; then
+            echo "⚠️ Detected HTML page, retrying with confirmation token..."
+            CONFIRM=$(curl -sc /tmp/gcookie "https://drive.google.com/uc?export=download&id=${FILE_ID}" | \
+                      grep -o 'confirm=[^&]*' | sed 's/confirm=//')
+            curl -Lb /tmp/gcookie "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILE_ID}" -o "$FILE_NAME"
+          fi
 
           echo "✅ Download complete. Checking file info..."
-          ls -lh "${FILE_NAME}"
+          ls -lh "$FILE_NAME"
+          file "$FILE_NAME"
 
       # 3️⃣ Verify file content and fail if it’s not binary
       - name: Verify file content
@@ -43,8 +49,8 @@ jobs:
           FILE_TYPE=$(file amazon0302.pkl)
           echo "File type: $FILE_TYPE"
 
-          if echo "$FILE_TYPE" | grep -q "ASCII text"; then
-            echo "❌ ERROR: amazon0302.pkl is not a binary file. It’s likely an HTML or text placeholder!"
+          if echo "$FILE_TYPE" | grep -Eq "HTML|ASCII text|Unicode text"; then
+            echo "❌ ERROR: amazon0302.pkl is not a valid binary file (likely an HTML page)."
             exit 1
           fi
 
