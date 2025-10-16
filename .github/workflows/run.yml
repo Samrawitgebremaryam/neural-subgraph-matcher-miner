@@ -13,24 +13,19 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      # 1️⃣ Checkout code
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Install gdown and download Amazon dataset
-      - name: Fetch amazon0302.pkl using gdown
-        env:
-          GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
+      # 2️⃣ Download Amazon dataset from GitHub Releases
+      - name: Fetch amazon0302.pkl from GitHub Release
         run: |
-          echo "📥 Installing gdown..."
-          python3 -m pip install --upgrade --user gdown
-
-          echo "📥 Downloading amazon0302.pkl from Google Drive..."
-          python3 -m gdown.cli --id $GDRIVE_FILE_ID -O amazon0302.pkl
-
+          echo "📥 Downloading amazon0302.pkl from GitHub Releases..."
+          curl -L -o amazon0302.pkl https://github.com/Samrawitgebremaryam/neural-subgraph-matcher-miner/releases/download/v1.0/amazon0302.1.pkl
+          
           echo "🔍 Verifying downloaded file..."
           file amazon0302.pkl
-
+          
           if file amazon0302.pkl | grep -Eq "HTML|ASCII|Unicode"; then
             echo "❌ ERROR: amazon0302.pkl is not a valid binary file!"
             exit 1
