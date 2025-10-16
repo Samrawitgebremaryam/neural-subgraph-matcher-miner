@@ -11,50 +11,99 @@ def load_metadata(meta_file):
 
     with open(meta_file, "r", encoding="utf-8", errors="ignore") as f:
         current_product = {}
+        category_lines = False
         for line in tqdm(f, desc="Parsing metadata"):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                if current_product and "ASIN" in current_product:
-                    try:
-                        # Use ASIN as key, but convert to int if numeric for ID compatibility
-                        asin = current_product["ASIN"]
-                        node_id = int(asin) if asin.isdigit() else None
-                        if node_id is not None and node_id < 548552:  # Limit to meta dataset size
-                            metadata[node_id] = current_product
-                    except ValueError:
-                        continue  # Skip non-numeric ASINs
-                    current_product = {}
+            # Keep original line for indentation checks, but use a stripped
+            # version for prefix matching so we correctly handle lines like
+            # '  title:' that may have varying leading spaces.
+            raw = line.rstrip("\n")
+            s = raw.strip()
+
+            if not s:
+                # Blank line resets category parsing but otherwise skip
+                category_lines = False
                 continue
-            if line.startswith("Id:"):
-                id_val = int(line.split("Id:")[1].strip())
-                current_product["Id"] = id_val
-            elif line.startswith("ASIN:"):
-                current_product["ASIN"] = line.split("ASIN:")[1].strip()
-            elif line.startswith("  title:"):
-                current_product["title"] = line.split("title:")[1].strip()
-            elif line.startswith("  group:"):
-                current_product["group"] = line.split("group:")[1].strip()
-            elif line.startswith("  salesrank:"):
-                rank = line.split("salesrank:")[1].strip()
+
+            # ID and ASIN lines have no indentation in the canonical meta file
+            if s.startswith("Id:"):
+                if current_product and "Id" in current_product:
+                    metadata[current_product["Id"]] = current_product
+                current_product = {}
+                # support formats like 'Id:   12345'
+                try:
+                    current_product["Id"] = int(s.split("Id:", 1)[1].strip())
+                except Exception:
+                    current_product["Id"] = s.split("Id:", 1)[1].strip()
+            elif s.startswith("ASIN:"):
+                current_product["ASIN"] = s.split("ASIN:", 1)[1].strip()
+            # The rest of the fields are indented in the meta file; use the
+            # stripped version to match the field name regardless of spacing
+            elif s.startswith("title:"):
+                current_product["title"] = s.split("title:", 1)[1].strip()
+            elif s.startswith("group:"):
+                current_product["group"] = s.split("group:", 1)[1].strip()
+            elif s.startswith("salesrank:"):
+                rank = s.split("salesrank:", 1)[1].strip()
                 current_product["salesrank"] = int(rank) if rank.isdigit() else None
-            elif line.startswith("  similar:"):
-                similar = line.split("similar:")[1].strip()
-                current_product["similar_count"] = len(similar.split()) if similar else 0
-            elif line.startswith("  categories:"):
-                categories = []
-                for cat_line in line.split("\n"):
-                    if "|" in cat_line:
-                        categories.append(cat_line.strip().split("|")[1:-1])  # Extract category path
-                current_product["categories"] = categories
-            elif line.startswith("  reviews:"):
-                review_info = line.split("reviews:")[1].strip().split()
-                current_product["reviews_total"] = int(review_info[1])
-                current_product["reviews_avg_rating"] = float(review_info[5]) if review_info[5] else 0.0
+            elif s.startswith("similar:"):
+                similar = s.split("similar:", 1)[1].strip()
+                similar_count = int(similar.split()[0]) if similar else 0
+                current_product["similar_count"] = similar_count
+                if similar_count > 0:
+                    # similar list follows the count
+                    current_product["similar"] = similar.split()[1:]
+                else:
+                    current_product["similar"] = []
+            elif s.startswith("categories:"):
+                category_lines = True
+                current_product.setdefault("categories", [])
+                # parse count if present, e.g. 'categories: 2'
+                try:
+                    current_product["categories_count"] = int(
+                        s.split("categories:", 1)[1].strip()
+                    )
+                except Exception:
+                    current_product["categories_count"] = None
+            elif category_lines and s.startswith("|"):
+                # category lines look like '   |Books[...]|...'
+                current_product.setdefault("categories", []).append(s)
+            elif s.startswith("reviews:"):
+                # reviews line example: 'reviews: total: 2  downloaded: 2  avg rating: 5'
+                category_lines = False
+                # extract total and avg rating using regex for robustness
+                total_match = re.search(r"total:\s*(\d+)", s)
+                avg_match = re.search(r"avg rating:\s*([0-9.]+)", s)
+                try:
+                    current_product["reviews_total"] = (
+                        int(total_match.group(1)) if total_match else 0
+                    )
+                except Exception:
+                    current_product["reviews_total"] = 0
+                try:
+                    current_product["reviews_avg_rating"] = (
+                        float(avg_match.group(1)) if avg_match else 0.0
+                    )
+                except Exception:
+                    current_product["reviews_avg_rating"] = 0.0
+            else:
+                # Other indented lines (individual review lines, etc.) are ignored
+                pass
+
+        if current_product and "Id" in current_product:
+            # Ensure the Id is stored as an int key when possible
+            try:
+                meta_id = int(current_product["Id"])
+            except Exception:
+                meta_id = current_product["Id"]
+            metadata[meta_id] = current_product
 
     print(f"Loaded metadata for {len(metadata)} products")
     return metadata
 
-def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
+
+def convert_to_pkl(
+    input_file, output_file, meta_file=None, directed=True, drop_zero=False
+):
     """
     Convert edge list file to NetworkX pickle format with optional metadata.
 
@@ -69,13 +118,25 @@ def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
     if meta_file:
         print(f"Using metadata from: {meta_file}")
 
-    # Create directed graph
-    G = nx.DiGraph()
+    # Create graph
+    G = nx.DiGraph() if directed else nx.Graph()
 
     # Load metadata if provided
     metadata = {}
+    meta_asin_to_id = {}
     if meta_file:
         metadata = load_metadata(meta_file)
+        # Create ASIN-to-Id mapping for metadata (ASIN values inside meta dict)
+        meta_asin_to_id = {}
+        for meta_id, meta in metadata.items():
+            asin_val = meta.get("ASIN")
+            if asin_val:
+                meta_asin_to_id[str(asin_val)] = meta_id
+        print(
+            f"Metadata ASINs sample: {list(meta_asin_to_id.keys())[:10]}"
+        )  # Debug ASINs
+
+    # We'll decide whether to remove node 0 later based on metadata or flag
 
     # Read edges and build graph
     with open(input_file, "r") as f:
@@ -94,35 +155,71 @@ def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
                 from_node = int(parts[0])
                 to_node = int(parts[1])
                 G.add_edge(from_node, to_node)
-                # Initialize nodes without default label
+                # Initialize nodes with id and placeholder asin
                 if from_node not in G.nodes:
                     G.nodes[from_node]["id"] = str(from_node)
+                    G.nodes[from_node]["asin"] = str(
+                        from_node
+                    )  # Placeholder, to be updated
                 if to_node not in G.nodes:
                     G.nodes[to_node]["id"] = str(to_node)
+                    G.nodes[to_node]["asin"] = str(to_node)  # Placeholder
         except ValueError:
             print(f"Skipping invalid line: {line}")
             continue
 
-    # Enrich nodes with metadata where available
-    for node_id in G.nodes:
+    # Enrich nodes with metadata using ASIN mapping
+    # Remove node 0 if requested by flag or if metadata is clearly 1-based
+    if drop_zero and 0 in G.nodes:
+        print("--drop-zero option enabled: removing node 0 from the graph")
+        G.remove_node(0)
+    else:
+        if metadata:
+            try:
+                if min(int(k) for k in metadata.keys()) == 1 and 0 in G.nodes:
+                    print(
+                        "Detected 1-based metadata IDs and node 0 in graph -> removing node 0"
+                    )
+                    G.remove_node(0)
+            except Exception:
+                pass
+    for node_id in list(G.nodes):
+        # Ensure we operate on the actual node attribute dict
+        node_attrs = G.nodes[node_id]
+        # Always set the 'id' attribute as string
+        node_attrs["id"] = str(node_id)
+
+        # Prefer metadata lookup by numeric Id (the file's "Id" field)
+        meta = None
         if node_id in metadata:
             meta = metadata[node_id]
-            label = meta.get("title", f"Product {node_id}")  # Use title as label if available
-            G.nodes[node_id].update({
-                "asin": meta.get("ASIN", str(node_id)),
-                "title": meta.get("title", f"Product {node_id}"),
-                "group": meta.get("group", "Unknown"),
-                "salesrank": meta.get("salesrank"),
-                "similar_count": meta.get("similar_count", 0),
-                "categories": meta.get("categories", []),
-                "reviews_total": meta.get("reviews_total", 0),
-                "reviews_avg_rating": meta.get("reviews_avg_rating", 0.0),
-                "label": label  # Set label to title or fallback
-            })
         else:
-            G.nodes[node_id].update({
-                "label": f"Product {node_id}"  # Fallback label for nodes without metadata
-            })
+            # Fallback to ASIN-based lookup if an 'asin' attribute exists
+            asin = node_attrs.get("asin")
+            if asin and str(asin) in meta_asin_to_id:
+                meta_id = meta_asin_to_id[str(asin)]
+                meta = metadata.get(meta_id)
+
+        if meta:
+            # Use metadata values and ensure label comes from title when available
+            label = meta.get("title", f"Product {node_id}")
+            node_attrs.update(
+                {
+                    "asin": meta.get("ASIN", node_attrs.get("asin", str(node_id))),
+                    "title": meta.get("title", f"Product {node_id}"),
+                    "group": meta.get("group", "Unknown"),
+                    "salesrank": meta.get("salesrank"),
+                    "similar_count": meta.get("similar_count", 0),
+                    "similar": meta.get("similar", []),
+                    "categories": meta.get("categories", []),
+                    "reviews_total": meta.get("reviews_total", 0),
+                    "reviews_avg_rating": meta.get("reviews_avg_rating", 0.0),
+                    "label": label,
+                }
+            )
+        else:
+            # Ensure a fallback label exists
+            node_attrs.setdefault("label", f"Product {node_id}")
 
     # Add edge attributes
     for u, v in G.edges():
@@ -136,13 +233,25 @@ def convert_to_pkl(input_file, output_file, meta_file=None, directed=True):
     print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
     print(f"Saved to: {output_file}")
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Convert edge list to NetworkX pickle for SPMiner")
+    parser = argparse.ArgumentParser(
+        description="Convert edge list to NetworkX pickle for SPMiner"
+    )
     parser.add_argument("input", help="Input edge list file (e.g., amazon0302.txt)")
     parser.add_argument("-o", "--output", help="Output pickle file", default=None)
-    parser.add_argument("-m", "--meta", help="Metadata file (e.g., amazon-meta.txt)", default=None)
     parser.add_argument(
-        "--undirected", action="store_true", help="Create undirected graph (default: directed)"
+        "-m", "--meta", help="Metadata file (e.g., amazon-meta.txt)", default=None
+    )
+    parser.add_argument(
+        "--undirected",
+        action="store_true",
+        help="Create undirected graph (default: directed)",
+    )
+    parser.add_argument(
+        "--drop-zero",
+        action="store_true",
+        help="Remove node with id 0 from the graph (useful when metadata is 1-based)",
     )
 
     args = parser.parse_args()
@@ -153,7 +262,14 @@ def main():
         graph_type = "undirected" if args.undirected else "directed"
         args.output = f"{base_name}_{graph_type}.pkl"
 
-    convert_to_pkl(args.input, args.output, meta_file=args.meta, directed=not args.undirected)
+    convert_to_pkl(
+        args.input,
+        args.output,
+        meta_file=args.meta,
+        directed=not args.undirected,
+        drop_zero=args.drop_zero,
+    )
+
 
 if __name__ == "__main__":
     main()
