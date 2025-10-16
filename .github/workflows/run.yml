@@ -22,16 +22,25 @@ jobs:
         env:
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: |
-          echo "📥 Installing gdown..."
-          python -m pip install --upgrade pip
-          pip install gdown
-
           echo "📥 Downloading amazon0302.pkl from Google Drive..."
-          gdown "https://drive.google.com/uc?id=${GDRIVE_FILE_ID}" -O amazon0302.pkl
 
-          echo "🔍 Checking downloaded file..."
-          ls -lh amazon0302.pkl
-          file amazon0302.pkl
+          FILE_ID="$GDRIVE_FILE_ID"
+          FILE_NAME="amazon0302.pkl"
+
+          # Try direct download first
+          curl -L -o "$FILE_NAME" "https://drive.google.com/uc?export=download&id=${FILE_ID}" || true
+
+          # If it's still HTML (Google warning page), try token-based download
+          if file "$FILE_NAME" | grep -q "HTML"; then
+            echo "⚠️ Detected HTML page, retrying with confirmation token..."
+            CONFIRM=$(curl -sc /tmp/gcookie "https://drive.google.com/uc?export=download&id=${FILE_ID}" | \
+                      grep -o 'confirm=[^&]*' | sed 's/confirm=//')
+            curl -Lb /tmp/gcookie "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILE_ID}" -o "$FILE_NAME"
+          fi
+
+          echo "✅ Download complete. Checking file info..."
+          ls -lh "$FILE_NAME"
+          file "$FILE_NAME"
 
       # 3️⃣ Verify file content
       - name: Verify file content
