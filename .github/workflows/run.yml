@@ -16,21 +16,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Download dataset from Google Drive
-      - name: Download Amazon dataset from Google Drive
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-
-      - name: Install gdown
-        run: pip install gdown
-
       - name: Fetch amazon0302.pkl
         env:
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: |
           echo "Downloading amazon0302.pkl from Google Drive..."
-          gdown --id "$GDRIVE_FILE_ID" -O amazon0302.pkl
+          pip install gdown
+          gdown "https://drive.google.com/uc?id=$GDRIVE_FILE_ID" -O amazon0302.pkl
           ls -lh amazon0302.pkl
 
       # ✅ Pull prebuilt Docker image instead of building
