@@ -13,42 +13,42 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      # 1️⃣ Checkout repository
+      # 1️. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Download Amazon dataset from GitHub Release
+      # 2️. Download Amazon dataset from GitHub Release
       - name: Fetch amazon0302.pkl from GitHub Release
         run: |
-          echo "📥 Downloading amazon0302.pkl from GitHub Releases..."
+          echo " Downloading amazon0302.pkl from GitHub Releases..."
           wget -O amazon0302.pkl https://github.com/Samrawitgebremaryam/neural-subgraph-matcher-miner/releases/download/v1.0/amazon0302.pkl
           
-          echo "🔍 Verifying downloaded file..."
+          echo " Verifying downloaded file..."
           file amazon0302.pkl
 
           FILE_SIZE=$(stat -c%s amazon0302.pkl)
           echo "File size: $FILE_SIZE bytes"
 
           if [ $FILE_SIZE -lt 100000 ]; then
-            echo "❌ ERROR: amazon0302.pkl is too small. Likely not downloaded correctly!"
+            echo " ERROR: amazon0302.pkl is too small. Likely not downloaded correctly!"
             exit 1
           fi
 
           if file amazon0302.pkl | grep -Eq "HTML|ASCII|Unicode"; then
-            echo "❌ ERROR: amazon0302.pkl is not a valid binary file!"
+            echo " ERROR: amazon0302.pkl is not a valid binary file!"
             exit 1
           fi
-          echo "✅ amazon0302.pkl verified as binary."
+          echo " amazon0302.pkl verified as binary."
 
-      # 3️⃣ Pull Docker image
+      # 3️. Pull Docker image
       - name: Pull prebuilt Docker image
         run: |
-          echo "🐳 Logging into Docker Hub..."
+          echo " Logging into Docker Hub..."
           docker login -u samribahta -p ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-          echo "📦 Pulling latest decoder image..."
+          echo " Pulling latest decoder image..."
           docker pull samribahta/decoder-image:latest
 
-      # 4️⃣ Create output directories
+      # 4️. Create output directories
       - name: Create output directories
         run: |
           mkdir -p ${{ github.workspace }}/plots/cluster
@@ -58,7 +58,7 @@ jobs:
           chmod -R 777 ${{ github.workspace }}/results
           chmod -R 777 ${{ github.workspace }}/ckpt
 
-      # 5️⃣ Run matcher (train model)
+      # 5️. Run matcher (train model)
       - name: Run matcher in Docker container
         run: |
           docker run --rm \
@@ -67,7 +67,7 @@ jobs:
             samribahta/decoder-image:latest \
             bash -c "
               set -e
-              echo '🚀 Starting matcher run on Amazon dataset...'
+              echo ' Starting matcher run on Amazon dataset...'
               python -m subgraph_matching.train \
                 --dataset=graph \
                 --graph_pkl_path=amazon0302.pkl \
@@ -75,12 +75,12 @@ jobs:
                 --batch_size 16 \
                 --val_size 128 \
                 --model_path=/app/ckpt/model_amazon.pt
-              echo '📂 Checking output directories...'
+              echo ' Checking output directories...'
               ls -la /app/results
               ls -la /app/plots
             "
 
-      # 6️⃣ Run decoder
+      # 6️. Run decoder
       - name: Run decoder in Docker container
         run: |
           docker run --rm \
@@ -89,7 +89,7 @@ jobs:
             samribahta/decoder-image:latest \
             bash -c "
               set -e
-              echo '🚀 Starting decoder run on Amazon dataset...'
+              echo ' Starting decoder run on Amazon dataset...'
               python -m subgraph_mining.decoder \
                 --dataset=amazon0302.pkl \
                 --n_trials=200 \
@@ -97,25 +97,31 @@ jobs:
                 --model_path=/app/ckpt/model_amazon.pt \
                 --out_path=/app/results/amazon_patterns.pkl \
                 --graph_type=directed
-              echo '📂 Checking output directories...'
+              echo ' Checking output directories...'
               ls -la /app/plots/cluster
               ls -la /app/results
             "
 
-      # 7️⃣ Upload results as artifact
+      #  7️.Upload results as artifact (fixed version)
+      - name: Compress and verify artifact
+        if: always()
+        run: |
+          echo " Compressing results before upload..."
+          zip -r amazon-decoder-results.zip plots results ckpt
+          echo " Checking archive contents..."
+          unzip -l amazon-decoder-results.zip
+          echo "Compression done. Ready for upload."
+
       - name: Upload plots and results as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: amazon-decoder-results
-          path: |
-            plots/
-            results/
-            ckpt/
+          path: amazon-decoder-results.zip
           retention-days: 30
           if-no-files-found: warn
 
-      # 8️⃣ Upload logs
+      # 8️. Upload logs
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
