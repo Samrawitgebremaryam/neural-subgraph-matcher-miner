@@ -57,10 +57,10 @@ jobs:
           chmod -R 777 ${{ github.workspace }}/plots
           chmod -R 777 ${{ github.workspace }}/results
           chmod -R 777 ${{ github.workspace }}/ckpt
-          
+
       # 5️. Download previously trained model
       - name: Download previous matcher checkpoint
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: matcher-ckpt
           path: ckpt/
