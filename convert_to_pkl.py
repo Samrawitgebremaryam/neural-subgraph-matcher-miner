@@ -66,10 +66,8 @@ def load_metadata(meta_file):
                 except Exception:
                     current_product["categories_count"] = None
             elif category_lines and s.startswith("|"):
-                # category lines look like '   |Books[...]|...'
                 current_product.setdefault("categories", []).append(s)
             elif s.startswith("reviews:"):
-                # reviews line example: 'reviews: total: 2  downloaded: 2  avg rating: 5'
                 category_lines = False
                 # extract total and avg rating using regex for robustness
                 total_match = re.search(r"total:\s*(\d+)", s)
@@ -190,6 +188,17 @@ def convert_to_pkl(
         # Always set the 'id' attribute as string
         node_attrs["id"] = str(node_id)
 
+        # Set safe defaults for attributes that DeepSNAP will tensorize
+        node_attrs.setdefault("asin", str(node_id))
+        node_attrs.setdefault("title", f"Product {node_id}")
+        node_attrs.setdefault("group", "Unknown")
+        node_attrs.setdefault("salesrank", -1)
+        node_attrs.setdefault("similar_count", 0)
+        node_attrs.setdefault("similar", [])
+        node_attrs.setdefault("categories", [])
+        node_attrs.setdefault("reviews_total", 0)
+        node_attrs.setdefault("reviews_avg_rating", 0.0)
+
         # Prefer metadata lookup by numeric Id (the file's "Id" field)
         meta = None
         if node_id in metadata:
@@ -200,21 +209,38 @@ def convert_to_pkl(
             if asin and str(asin) in meta_asin_to_id:
                 meta_id = meta_asin_to_id[str(asin)]
                 meta = metadata.get(meta_id)
-
         if meta:
             # Use metadata values and ensure label comes from title when available
             label = meta.get("title", f"Product {node_id}")
+            # coerce numeric fields to safe defaults (avoid None values)
+            salesrank_val = meta.get("salesrank")
+            salesrank_val = int(salesrank_val) if isinstance(salesrank_val, int) else -1
+            similar_count_val = (
+                int(meta.get("similar_count", 0))
+                if meta.get("similar_count") is not None
+                else 0
+            )
+            reviews_total_val = (
+                int(meta.get("reviews_total", 0))
+                if meta.get("reviews_total") is not None
+                else 0
+            )
+            reviews_avg_val = (
+                float(meta.get("reviews_avg_rating", 0.0))
+                if meta.get("reviews_avg_rating") is not None
+                else 0.0
+            )
             node_attrs.update(
                 {
                     "asin": meta.get("ASIN", node_attrs.get("asin", str(node_id))),
                     "title": meta.get("title", f"Product {node_id}"),
                     "group": meta.get("group", "Unknown"),
-                    "salesrank": meta.get("salesrank"),
-                    "similar_count": meta.get("similar_count", 0),
+                    "salesrank": salesrank_val,
+                    "similar_count": similar_count_val,
                     "similar": meta.get("similar", []),
                     "categories": meta.get("categories", []),
-                    "reviews_total": meta.get("reviews_total", 0),
-                    "reviews_avg_rating": meta.get("reviews_avg_rating", 0.0),
+                    "reviews_total": reviews_total_val,
+                    "reviews_avg_rating": reviews_avg_val,
                     "label": label,
                 }
             )
