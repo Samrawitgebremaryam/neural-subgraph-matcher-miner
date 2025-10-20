@@ -66,14 +66,14 @@ jobs:
             bash -c "
               set -e
               echo 'Starting decoder run on Amazon dataset...' > decoder.log 2> decoder.err
-              echo 'Running with verbose output for debugging...' >> decoder.log
+              echo 'Running decoder with default settings...' >> decoder.log
               python -m subgraph_mining.decoder \
                 --dataset=amazon0302.pkl \
                 --n_trials=200 \
                 --node_anchored \
                 --out_path=/app/results/amazon_patterns.pkl \
                 --graph_type=directed \
-                --verbose  
+                --analyze  # Add --analyze if visualization is tied to this flag
                 >> decoder.log 2>> decoder.err
               echo 'Decoder finished successfully.' >> decoder.log
 
@@ -101,7 +101,7 @@ jobs:
               ls -la /app/results >> decoder.log 2>> decoder.err
             "
 
-      # 6️. Validate visualization (optional debug step)
+      # 6️. Validate visualization output
       - name: Validate visualization output
         if: always()
         run: |
@@ -125,7 +125,6 @@ jobs:
             results/
           retention-days: 30
           if-no-files-found: warn
-
 
       # 8. Upload logs
       - name: Upload logs
