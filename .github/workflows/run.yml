@@ -78,11 +78,12 @@ jobs:
               ls -la /app/results
             "
 
-      #  5.2 Shorten long filenames before upload
+      # 6. Shorten long filenames before upload and ensure .html extension
       - name: Shorten long file and folder names
         run: |
-          echo "Checking for long file paths..."
+          echo "Checking for long file paths and missing extensions..."
           find plots results -type f | while read -r file; do
+            # Shorten if too long
             if [ ${#file} -gt 200 ]; then
               dir=$(dirname "$file")
               base=$(basename "$file")
@@ -92,10 +93,21 @@ jobs:
               echo "  $file"
               echo "  -> $newname"
               mv "$file" "$newname" || true
+              file="$newname"
+            fi
+
+            # Add .html if file has no extension
+            if [[ ! "$file" =~ \.[^./]+$ ]]; then
+              newfile="${file}.html"
+              echo "Adding .html extension:"
+              echo "  $file"
+              echo "  -> $newfile"
+              mv "$file" "$newfile" || true
             fi
           done
 
-      # 6️. Upload results as artifact
+
+      # 7. Upload results as artifact
       - name: Upload results and plots as artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -108,7 +120,7 @@ jobs:
           if-no-files-found: warn
 
 
-      # 7️. Upload logs
+      # 8. Upload logs
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
