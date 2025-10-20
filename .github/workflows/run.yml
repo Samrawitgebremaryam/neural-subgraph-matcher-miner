@@ -53,8 +53,8 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/plots/cluster
           mkdir -p ${{ github.workspace }}/results
-          chmod -R 755 ${{ github.workspace }}/plots
-          chmod -R 755 ${{ github.workspace }}/results
+          chmod -R 777 ${{ github.workspace }}/plots
+          chmod -R 777 ${{ github.workspace }}/results
 
       # 5️. Run decoder 
       - name: Run decoder in Docker container
@@ -98,7 +98,7 @@ jobs:
         with:
           name: amazon-decoder-logs
           path: |
-            decoder.log
-            decoder.err
+            *.log
+            *.err
           retention-days: 7
           if-no-files-found: ignore

@@ -28,7 +28,7 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
-from visualizer import visualize_pattern_graph_ext  # Import from visualizer.py
+from visualizer import visualize_pattern_graph_ext  # Updated import
 from subgraph_mining.search_agents import GreedySearchAgent, MCTSSearchAgent, MemoryEfficientMCTSAgent, MemoryEfficientGreedyAgent, BeamSearchAgent
 
 import matplotlib.pyplot as plt
@@ -620,16 +620,16 @@ def pattern_growth(dataset, task, args):
     print(f"Successfully visualized {successful_visualizations}/{len(out_graphs)} patterns", flush=True)
 
     # Save results
-    if not os.path.exists("results"):
-        os.makedirs("results")
+    if not os.path.exists("/app/results"):  # Use absolute path
+        os.makedirs("/app/results")
     with open(args.out_path, "wb") as f:
         pickle.dump(out_graphs, f)
     
     return out_graphs
 
 def main():
-    if not os.path.exists("plots/cluster"):
-        os.makedirs("plots/cluster")
+    if not os.path.exists("/app/plots/cluster"):  # Use absolute path
+        os.makedirs("/app/plots/cluster")
 
     parser = argparse.ArgumentParser(description='Decoder arguments')
     parse_encoder(parser)
