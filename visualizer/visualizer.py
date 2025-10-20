@@ -147,26 +147,37 @@ class GraphDataExtractor:
             if node_labels and node_key in node_labels:
                 display_label = node_labels[node_key]
             else:
+                # Prioritize label (group), then title, salesrank, and other attributes
                 display_label_parts = []
+                if 'label' in node_data and node_data['label'] is not None:
+                    display_label_parts.append(f"Category: {node_data['label']}")
+                if 'title' in node_data and node_data['title'] is not None:
+                    display_label_parts.append(f"Title: {node_data['title']}")
+                if 'salesrank' in node_data and node_data['salesrank'] != -1:
+                    display_label_parts.append(f"Sales Rank: {node_data['salesrank']}")
+                # Add remaining attributes (excluding reserved keys)
                 for key, value in node_data.items():
-                    if key not in {"anchor", "x", "y"} and value is not None:
+                    if key not in {'id', 'x', 'y', 'anchor', 'label', 'title', 'salesrank'} and value is not None:
                         display_label_parts.append(f"{key}: {value}")
-                display_label = (
-                    "\\n".join(display_label_parts) if display_label_parts else node_id
-                )
+                display_label = "\\n".join(display_label_parts) if display_label_parts else node_id
 
             print(
                 f"Node {node_id} display label parts: {display_label_parts if not node_labels or node_key not in node_labels else [display_label]}"
             )
+            # Add salesrank to influence size (scaled inversely, capped)
+            salesrank = node_data.get('salesrank', 1000000)  # Default to high rank if missing
+            size_factor = max(10, min(50, 50 / (salesrank + 1)))  # Scale 10-50 based on salesrank
+
             node_dict = dict(node_data)
             node_dict['id'] = node_id
             node_dict['x'] = float(x)
             node_dict['y'] = float(y)
             node_dict['anchor'] = is_anchor
+            node_dict['size'] = size_factor  # Add size for visualization
             # Ensure 'label' is the type/category (not a display label)
             if 'label' not in node_dict or node_dict['label'] is None:
                 node_dict['label'] = self._get_node_type(node_data)
-            node_dict['display_label'] = display_label  # <-- Add this line
+            node_dict['display_label'] = display_label  # Add prioritized display_label
 
             nodes.append(node_dict)
         return nodes
@@ -239,7 +250,6 @@ class GraphDataExtractor:
     def _get_edge_type(self, edge_data: Dict[str, Any]) -> str:
         """
         Determine edge type from edge attributes.
-
         """
         # Priority order for type determination
         type_keys = ['type', 'label', 'relation', 'category', 'kind']
@@ -283,7 +293,7 @@ class GraphDataExtractor:
         Extract metadata from node attributes, excluding special keys.
         """
         # Keys to exclude from metadata
-        excluded_keys = {'id', 'x', 'y', 'type', 'label', 'anchor'}
+        excluded_keys = {'id', 'x', 'y', 'type', 'label', 'anchor', 'size', 'display_label'}
         
         metadata = {}
         for key, value in node_data.items():
@@ -373,7 +383,7 @@ def validate_graph_data(graph_data: Dict[str, Any]) -> bool:
             return False
         
         # Validate first node structure
-        node_keys = ['id', 'x', 'y', 'label', 'anchor']
+        node_keys = ['id', 'x', 'y', 'label', 'anchor', 'size', 'display_label']
         if not all(key in nodes[0] for key in node_keys):
             return False
         
@@ -544,14 +554,12 @@ class HTMLTemplateProcessor:
         if 'metadata' not in graph_data:
             raise ValueError("Graph data must contain metadata section")
         
-        metadata = graph_data['metadata']
-        
         try:
             # Extract characteristics for filename generation
-            node_count = metadata.get('nodeCount', 0)
-            edge_count = metadata.get('edgeCount', 0)
-            is_directed = metadata.get('isDirected', False)
-            density = metadata.get('density', 0)
+            node_count = graph_data['metadata'].get('nodeCount', 0)
+            edge_count = graph_data['metadata'].get('edgeCount', 0)
+            is_directed = graph_data['metadata'].get('isDirected', False)
+            density = graph_data['metadata'].get('density', 0)
             
             # Generate descriptive filename components
             components = [base_name]
@@ -743,7 +751,6 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
             import os
             # Ensure output directory exists
             output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plots/cluster"))
-            output_dir = os.path.abspath(output_dir)
             os.makedirs(output_dir, exist_ok=True)
 
             template_path = os.path.join(os.path.dirname(__file__), "template.html")
@@ -775,9 +782,10 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
             try:
                 # Increment success counter for this graph size
                 if num_nodes in count_by_size:
-                    # This maintains compatibility with the existing counting system
+                    count_by_size[num_nodes] += 1  # Maintain compatibility
                     logger.info(f"Graph size {num_nodes} has {count_by_size[num_nodes]} occurrences")
                 else:
+                    count_by_size[num_nodes] = 1
                     logger.info(f"New graph size {num_nodes} encountered")
             except Exception as e:
                 logger.warning(f"Counter update failed (non-critical): {str(e)}")

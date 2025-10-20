@@ -150,9 +150,12 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             node_label = node_data.get('title', node_data.get('label', 'unknown'))
             label_parts = [f"{node_label} (ID: {node_id})"]  # Combine title and ID for clarity
             
-            # Include all non-default attributes
+            
+            salesrank = node_data.get('salesrank', -1)
+            if salesrank != -1:
+                label_parts.append(f"Sales Rank: {salesrank}")
             other_attrs = {k: v for k, v in node_data.items() 
-                          if k not in ['id', 'label', 'anchor'] and v is not None}
+                          if k not in ['id', 'label', 'anchor', 'salesrank'] and v is not None}
             if other_attrs:
                 for key, value in other_attrs.items():
                     if isinstance(value, str):
@@ -199,18 +202,21 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             base_node_size = 5000
             anchor_node_size = base_node_size * 1.2
         
+        # Adjust node sizes based on salesrank (lower rank = larger size, capped)
         for i, node in enumerate(node_list):
             node_data = pattern.nodes[node]
             node_label = node_data.get('label', 'unknown')
             is_anchor = node_data.get('anchor', 0) == 1 
+            salesrank = node_data.get('salesrank', 1000000)  # Default to high rank if missing
+            size_factor = max(50, min(5000, 5000 / (salesrank + 1)))  # Inverse scaling, capped
             
             if is_anchor:
                 colors.append('red')
-                node_sizes.append(anchor_node_size)
+                node_sizes.append(min(anchor_node_size, size_factor * 1.3))
                 shapes.append('s')
             else:
                 colors.append(label_color_map[node_label])
-                node_sizes.append(base_node_size)
+                node_sizes.append(min(base_node_size, size_factor))
                 shapes.append('o')
 
         anchor_nodes = []
@@ -298,7 +304,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
 
         
         max_attrs_per_node = max(len([k for k in pattern.nodes[n].keys() 
-                                     if k not in ['id', 'label', 'anchor'] and pattern.nodes[n][k] is not None]) 
+                                     if k not in ['id', 'label', 'anchor', 'salesrank'] and pattern.nodes[n][k] is not None]) 
                                 for n in pattern.nodes())
         
         if edge_density > 0.5:  
@@ -341,7 +347,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                            data.get('label') or 
                            data.get('input_label') or
                            data.get('relation') or
-                           data.get('edge_type'))
+                           data.get('edge_type', 'default'))  # Fallback to 'default'
                 if edge_type:
                     edge_labels[(u, v)] = str(edge_type)
 
@@ -359,7 +365,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         anchor_info = " (Red squares = anchor nodes)" if has_anchors else ""
         
         total_node_attrs = sum(len([k for k in pattern.nodes[n].keys() 
-                                  if k not in ['id', 'label', 'anchor'] and pattern.nodes[n][k] is not None]) 
+                                  if k not in ['id', 'label', 'anchor', 'salesrank'] and pattern.nodes[n][k] is not None]) 
                              for n in pattern.nodes())
         attr_info = f", {total_node_attrs} total node attrs" if total_node_attrs > 0 else ""
         
@@ -497,6 +503,7 @@ def pattern_growth(dataset, task, args):
                             subgraph = subgraph.subgraph(max(
                                 nx.connected_components(subgraph), key=len))
                         
+                        # Preserve anchor and type attributes if added elsewhere
                         orig_attrs = {n: subgraph.nodes[n].copy() for n in subgraph.nodes()}
                         edge_attrs = {(u,v): subgraph.edges[u,v].copy() 
                                     for u,v in subgraph.edges()}
@@ -589,7 +596,7 @@ def pattern_growth(dataset, task, args):
     
     successful_visualizations = 0
     for pattern in out_graphs:
-        if visualize_pattern_graph_ext(pattern, args, count_by_size):
+        if visualize_pattern_graph(pattern, args, count_by_size):
             successful_visualizations += 1
         count_by_size[len(pattern)] += 1
 
