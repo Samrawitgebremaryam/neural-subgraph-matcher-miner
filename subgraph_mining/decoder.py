@@ -4,6 +4,7 @@ from itertools import combinations
 import time
 import os
 import pickle
+import re
 
 from deepsnap.batch import Batch
 import numpy as np
@@ -27,7 +28,7 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
-from visualizer.visualizer import visualize_pattern_graph_ext
+from visualizer import visualize_pattern_graph_ext  # Import from visualizer.py
 from subgraph_mining.search_agents import GreedySearchAgent, MCTSSearchAgent, MemoryEfficientMCTSAgent, MemoryEfficientGreedyAgent, BeamSearchAgent
 
 import matplotlib.pyplot as plt
@@ -42,7 +43,6 @@ from itertools import permutations
 from queue import PriorityQueue
 import matplotlib.colors as mcolors
 import networkx as nx
-import pickle
 import torch.multiprocessing as mp
 from sklearn.decomposition import PCA
 
@@ -77,7 +77,7 @@ def make_plant_dataset(size):
     np.random.seed(14853)
     pattern = generator.generate(size=10)
     nx.draw(pattern, with_labels=True)
-    plt.savefig("plots/cluster/plant-pattern.png")
+    plt.savefig("plots/cluster/plant-pattern.png")  # Use absolute path in Docker
     plt.close()
     graphs = []
     for i in range(1000):
@@ -172,7 +172,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                             value = f"{value:.2f}" if abs(value) < 1000 else f"{value:.1e}"
                     label_parts.append(f"{key}: {value}")
 
-            # Use newline for sparse, semicolon for dense
+            # Use newline for sparse, semicolon for dense to improve readability
             node_labels[n] = "\n".join(label_parts) if edge_density <= 0.5 else "; ".join(label_parts)
 
         if edge_density > 0.3:
@@ -442,10 +442,18 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         plt.savefig(f"plots/cluster/{filename}.png", bbox_inches='tight', dpi=300)
         plt.savefig(f"plots/cluster/{filename}.pdf", bbox_inches='tight')
         plt.close()  # Clean up figure
-        
+        print(f"Successfully saved static plot to plots/cluster/{filename}.png", flush=True)
+
+        # Interactive visualization using visualizer.py
+        if hasattr(args, 'interactive') and args.interactive:
+            success = visualize_pattern_graph_ext(pattern, args, count_by_size)
+            if success:
+                print(f"Successfully generated interactive HTML for pattern", flush=True)
+            else:
+                print(f"Failed to generate interactive HTML for pattern", flush=True)
         return True
     except Exception as e:
-        print(f"Error visualizing pattern graph: {e}")
+        print(f"Error visualizing pattern graph: {e}", flush=True)
         return False
 
 def pattern_growth(dataset, task, args):
@@ -588,22 +596,28 @@ def pattern_growth(dataset, task, args):
     
     # Run search
     out_graphs = agent.run_search(args.n_trials)
+    if not out_graphs:
+        print("Warning: No patterns discovered by search agent.", flush=True)
     
     print(time.time() - start_time, "TOTAL TIME")
     x = int(time.time() - start_time)
     print(x // 60, "mins", x % 60, "secs")
 
-    # Visualize discovered patterns
+    # Visualize discovered patterns with both static and interactive outputs
     count_by_size = defaultdict(int)
     warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
     
     successful_visualizations = 0
     for pattern in out_graphs:
+        # Static visualization (PNG/PDF)
         if visualize_pattern_graph(pattern, args, count_by_size):
             successful_visualizations += 1
+        
+        # Interactive visualization (HTML)
+        visualize_pattern_graph_ext(pattern, args, count_by_size)
         count_by_size[len(pattern)] += 1
 
-    print(f"Successfully visualized {successful_visualizations}/{len(out_graphs)} patterns")
+    print(f"Successfully visualized {successful_visualizations}/{len(out_graphs)} patterns", flush=True)
 
     # Save results
     if not os.path.exists("results"):
