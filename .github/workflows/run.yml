@@ -53,69 +53,61 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/plots/cluster
           mkdir -p ${{ github.workspace }}/results
-          chmod -R 755 ${{ github.workspace }}/plots
-          chmod -R 755 ${{ github.workspace }}/results
+          chmod -R 777 ${{ github.workspace }}/plots
+          chmod -R 777 ${{ github.workspace }}/results
 
-      # 5️. Copy template.html 
-      - name: Copy template.html to container working directory
-        run: |
-          cp template.html ${{ github.workspace }}/template.html || echo "template.html not found, ensure it's in repository root"
-
-      # 6️. Run decoder 
+      # 5️. Run decoder 
       - name: Run decoder in Docker container
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -w /app \  # Set working directory inside container
             -e PYTHONUNBUFFERED=1 \
             samribahta/decoder-image:latest \
             bash -c "
               set -e
-              echo 'Starting decoder run on Amazon dataset...' > decoder.log 2> decoder.err
-              echo 'Running decoder with visualization enabled...' >> decoder.log
+              echo ' Starting decoder run on Amazon dataset...'
               python -m subgraph_mining.decoder \
-                --dataset=/app/amazon0302.pkl \
+                --dataset=amazon0302.pkl \
                 --n_trials=200 \
                 --node_anchored \
                 --out_path=/app/results/amazon_patterns.pkl \
-                --graph_type=directed \
-                --analyze \
-                >> decoder.log 2>> decoder.err
-              echo 'Decoder finished successfully.' >> decoder.log
-
-              # Check if patterns were generated
-              if [ -f /app/results/amazon_patterns.pkl ]; then
-                echo 'Pattern file amazon_patterns.pkl generated successfully.' >> decoder.log
-              else
-                echo 'ERROR: Pattern file amazon_patterns.pkl not found!' >> decoder.log
-              fi
-
-              # Check for HTML plot files
-              echo 'Checking output directories...' >> decoder.log
-              if ls /app/plots/cluster/*.html >/dev/null 2>> decoder.err; then
-                echo 'HTML files found in plots/cluster:' >> decoder.log
-                ls -la /app/plots/cluster/*.html >> decoder.log 2>> decoder.err
-              else
-                echo 'WARNING: No .html plot files found in plots/cluster!' >> decoder.log
-              fi
-              ls -la /app/results >> decoder.log 2>> decoder.err
-              cat decoder.err >> decoder.log  # Append errors to log for visibility
+                --graph_type=directed
+              echo 'Decoder finished successfully.'
+              echo 'Checking output directories...'
+              ls -la /app/plots/cluster || echo 'No cluster plots found.'
+              ls -la /app/results
             "
 
-      # 7️. Validate visualization output
-      - name: Validate visualization output
-        if: always()
+      # 6. Shorten long filenames before upload and ensure .html extension
+      - name: Shorten long file and folder names
         run: |
-          echo "Validating visualization output..."
-          if [ -d ${{ github.workspace }}/plots/cluster ] && find ${{ github.workspace }}/plots/cluster -type f -name "*.html" | grep -q .; then
-            echo "Visualization successful: HTML files detected in plots/cluster."
-            find ${{ github.workspace }}/plots/cluster -type f -name "*.html"
-          else
-            echo "ERROR: No HTML plot files found in plots/cluster!"
-            exit 1
-          fi
+          echo "Checking for long file paths and missing extensions..."
+          find plots results -type f | while read -r file; do
+            # Shorten if too long
+            if [ ${#file} -gt 200 ]; then
+              dir=$(dirname "$file")
+              base=$(basename "$file")
+              shortbase=$(echo "$base" | cut -c1-50)
+              newname="${dir}/${shortbase}"
+              echo "Renaming long file:"
+              echo "  $file"
+              echo "  -> $newname"
+              mv "$file" "$newname" || true
+              file="$newname"
+            fi
 
-      # 8. Upload results and plots as artifact
+            # Add .html if file has no extension
+            if [[ ! "$file" =~ \.[^./]+$ ]]; then
+              newfile="${file}.html"
+              echo "Adding .html extension:"
+              echo "  $file"
+              echo "  -> $newfile"
+              mv "$file" "$newfile" || true
+            fi
+          done
+
+
+      # 7. Upload results as artifact
       - name: Upload results and plots as artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -127,14 +119,15 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # 9. Upload logs
+
+      # 8. Upload logs
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: amazon-decoder-logs
           path: |
-            decoder.log
-            decoder.err
+            *.log
+            *.err
           retention-days: 7
           if-no-files-found: ignore
