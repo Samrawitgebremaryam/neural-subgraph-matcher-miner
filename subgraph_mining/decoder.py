@@ -4,6 +4,7 @@ from itertools import combinations
 import time
 import os
 import pickle
+import re
 
 from deepsnap.batch import Batch
 import numpy as np
@@ -27,7 +28,7 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
-from visualizer.visualizer import visualize_pattern_graph_ext
+from visualizer import visualize_pattern_graph_ext  # Updated import
 from subgraph_mining.search_agents import GreedySearchAgent, MCTSSearchAgent, MemoryEfficientMCTSAgent, MemoryEfficientGreedyAgent, BeamSearchAgent
 
 import matplotlib.pyplot as plt
@@ -42,7 +43,6 @@ from itertools import permutations
 from queue import PriorityQueue
 import matplotlib.colors as mcolors
 import networkx as nx
-import pickle
 import torch.multiprocessing as mp
 from sklearn.decomposition import PCA
 
@@ -77,7 +77,7 @@ def make_plant_dataset(size):
     np.random.seed(14853)
     pattern = generator.generate(size=10)
     nx.draw(pattern, with_labels=True)
-    plt.savefig("plots/cluster/plant-pattern.png")
+    plt.savefig("/app/plots/cluster/plant-pattern.png")
     plt.close()
     graphs = []
     for i in range(1000):
@@ -128,325 +128,6 @@ def pattern_growth_streaming(dataset, task, args):
             all_discovered_patterns.extend(chunk_out_graphs)
 
     return all_discovered_patterns
-
-def visualize_pattern_graph(pattern, args, count_by_size):
-    try:
-        num_nodes = len(pattern)
-        num_edges = pattern.number_of_edges()
-        edge_density = num_edges / (num_nodes * (num_nodes - 1)) if num_nodes > 1 else 0
-        
-        # Cap figsize to prevent oversized images
-        base_size = max(12, min(20, num_nodes * 2))
-        if edge_density > 0.3:  # Dense graph
-            figsize = (min(base_size * 1.2, 20), min(base_size, 20))
-        else:
-            figsize = (min(base_size, 20), min(base_size * 0.8, 20))
-        
-        plt.figure(figsize=figsize)
-
-        node_labels = {}
-        for n in pattern.nodes():
-            node_data = pattern.nodes[n]
-            node_id = node_data.get('id', str(n))
-            node_label = node_data.get('title', node_data.get('label', 'unknown'))
-            # Truncate and sanitize title for label
-            node_label = str(node_label)[:15].replace('/', '_').replace(':', '_').replace('#', '')
-            label_parts = [f"{node_label} (ID: {node_id})"]
-            
-            salesrank = node_data.get('salesrank', -1)
-            if salesrank != -1:
-                label_parts.append(f"Sales Rank: {salesrank}")
-            other_attrs = {k: v for k, v in node_data.items() 
-                          if k not in ['id', 'label', 'anchor', 'salesrank'] and v is not None}
-            if other_attrs:
-                for key, value in other_attrs.items():
-                    if isinstance(value, str):
-                        if edge_density > 0.5 and len(value) > 8:  
-                            value = value[:5] + "..."
-                        elif edge_density > 0.3 and len(value) > 12: 
-                            value = value[:9] + "..."
-                        elif len(value) > 15: 
-                            value = value[:12] + "..."
-                    elif isinstance(value, (int, float)):
-                        if isinstance(value, float):
-                            value = f"{value:.2f}" if abs(value) < 1000 else f"{value:.1e}"
-                    label_parts.append(f"{key}: {value}")
-
-            # Use newline for sparse, semicolon for dense
-            node_labels[n] = "\n".join(label_parts) if edge_density <= 0.5 else "; ".join(label_parts)
-
-        if edge_density > 0.3:
-            if num_nodes <= 20:
-                pos = nx.circular_layout(pattern, scale=3)
-            else:
-                pos = nx.spring_layout(pattern, k=3.0, seed=42, iterations=100)
-        else:
-            pos = nx.spring_layout(pattern, k=2.0, seed=42, iterations=50)
-
-        unique_labels = sorted(set(pattern.nodes[n].get('label', 'unknown') for n in pattern.nodes()))
-        label_color_map = {label: plt.cm.Set3(i) for i, label in enumerate(unique_labels)}
-
-        unique_edge_types = sorted(set(data.get('type', 'default') for u, v, data in pattern.edges(data=True)))
-        edge_color_map = {edge_type: plt.cm.tab20(i % 20) for i, edge_type in enumerate(unique_edge_types)}
-
-        colors = []
-        node_sizes = []
-        shapes = []
-        node_list = list(pattern.nodes())
-        
-        if edge_density > 0.5:  # Very dense
-            base_node_size = 2500
-            anchor_node_size = base_node_size * 1.3
-        elif edge_density > 0.3:  # Dense
-            base_node_size = 3500
-            anchor_node_size = base_node_size * 1.2
-        else:  # Sparse
-            base_node_size = 5000
-            anchor_node_size = base_node_size * 1.2
-        
-        # Adjust node sizes based on salesrank (lower rank = larger size, capped)
-        for i, node in enumerate(node_list):
-            node_data = pattern.nodes[node]
-            node_label = node_data.get('label', 'unknown')
-            is_anchor = node_data.get('anchor', 0) == 1 
-            salesrank = node_data.get('salesrank', 1000000)  # Default to high rank if missing
-            size_factor = max(50, min(5000, 5000 / (salesrank + 1)))  # Inverse scaling, capped
-            
-            if is_anchor:
-                colors.append('red')
-                node_sizes.append(min(anchor_node_size, size_factor * 1.3))
-                shapes.append('s')
-            else:
-                colors.append(label_color_map[node_label])
-                node_sizes.append(min(base_node_size, size_factor))
-                shapes.append('o')
-
-        anchor_nodes = []
-        regular_nodes = []
-        anchor_colors = []
-        regular_colors = []
-        anchor_sizes = []
-        regular_sizes = []
-        
-        for i, node in enumerate(node_list):
-            if shapes[i] == 's':
-                anchor_nodes.append(node)
-                anchor_colors.append(colors[i])
-                anchor_sizes.append(node_sizes[i])
-            else:
-                regular_nodes.append(node)
-                regular_colors.append(colors[i])
-                regular_sizes.append(node_sizes[i])
-
-        if anchor_nodes:
-            nx.draw_networkx_nodes(pattern, pos, 
-                    nodelist=anchor_nodes,
-                    node_color=anchor_colors, 
-                    node_size=anchor_sizes, 
-                    node_shape='o',
-                    edgecolors='black', 
-                    linewidths=3,
-                    alpha=0.9)
-
-        if regular_nodes:
-            nx.draw_networkx_nodes(pattern, pos, 
-                    nodelist=regular_nodes,
-                    node_color=regular_colors, 
-                    node_size=regular_sizes, 
-                    node_shape='o',
-                    edgecolors='black', 
-                    linewidths=2,
-                    alpha=0.8)
-
-        if edge_density > 0.5:  
-            edge_width = 1.5
-            edge_alpha = 0.6
-        elif edge_density > 0.3:  
-            edge_width = 2
-            edge_alpha = 0.7
-        else:  
-            edge_width = 3
-            edge_alpha = 0.8
-        
-        if pattern.is_directed():
-            arrow_size = 30 if edge_density < 0.3 else (20 if edge_density < 0.5 else 15)
-            connectionstyle = "arc3,rad=0.1" if edge_density < 0.5 else "arc3,rad=0.15"
-            
-            for u, v, data in pattern.edges(data=True):
-                edge_type = data.get('type', 'default')
-                edge_color = edge_color_map[edge_type]
-                
-                nx.draw_networkx_edges(
-                    pattern, pos,
-                    edgelist=[(u, v)],
-                    width=edge_width,
-                    edge_color=[edge_color],
-                    alpha=edge_alpha,
-                    arrows=True,
-                    arrowsize=arrow_size,
-                    arrowstyle='-|>',
-                    connectionstyle=connectionstyle,
-                    node_size=max(node_sizes) * 1.3,
-                    min_source_margin=15,
-                    min_target_margin=15
-                )
-        else:
-            for u, v, data in pattern.edges(data=True):
-                edge_type = data.get('type', 'default')
-                edge_color = edge_color_map[edge_type]
-                
-                nx.draw_networkx_edges(
-                    pattern, pos,
-                    edgelist=[(u, v)],
-                    width=edge_width,
-                    edge_color=[edge_color],
-                    alpha=edge_alpha,
-                    arrows=False  
-                )
-
-        
-        max_attrs_per_node = max(len([k for k in pattern.nodes[n].keys() 
-                                     if k not in ['id', 'label', 'anchor', 'salesrank'] and pattern.nodes[n][k] is not None]) 
-                                for n in pattern.nodes())
-        
-        if edge_density > 0.5:  
-            font_size = max(6, min(9, 150 // (num_nodes + max_attrs_per_node * 5)))
-        elif edge_density > 0.3:  
-            font_size = max(7, min(10, 200 // (num_nodes + max_attrs_per_node * 3)))
-        else:  
-            font_size = max(8, min(12, 250 // (num_nodes + max_attrs_per_node * 2)))
-        
-        for node, (x, y) in pos.items():
-            label = node_labels[node]
-            node_data = pattern.nodes[node]
-            is_anchor = node_data.get('anchor', 0) == 1
-            
-            if edge_density > 0.5:
-                pad = 0.15
-            elif edge_density > 0.3:
-                pad = 0.2
-            else:
-                pad = 0.3
-            
-            bbox_props = dict(
-                facecolor='lightcoral' if is_anchor else (1, 0.8, 0.8, 0.6),
-                edgecolor='darkred' if is_anchor else 'gray',
-                alpha=0.8,
-                boxstyle=f'round,pad={pad}'
-            )
-            
-            plt.text(x, y, label, 
-                    fontsize=font_size, 
-                    fontweight='bold' if is_anchor else 'normal',
-                    color='black',
-                    ha='center', va='center',
-                    bbox=bbox_props)
-
-        if edge_density < 0.5 and num_edges < 25:
-            edge_labels = {}
-            for u, v, data in pattern.edges(data=True):
-                edge_type = (data.get('type') or 
-                           data.get('label') or 
-                           data.get('input_label') or
-                           data.get('relation') or
-                           data.get('edge_type', 'default'))  # Fallback to 'default'
-                if edge_type:
-                    edge_labels[(u, v)] = str(edge_type)[:10]  # Truncate edge labels
-
-            if edge_labels:
-                edge_font_size = max(5, font_size - 2)
-                nx.draw_networkx_edge_labels(pattern, pos, 
-                          edge_labels=edge_labels, 
-                          font_size=edge_font_size, 
-                          font_color='black',
-                          bbox=dict(facecolor='white', edgecolor='lightgray', 
-                                  alpha=0.8, boxstyle='round,pad=0.1'))
-
-        graph_type = "Directed" if pattern.is_directed() else "Undirected"
-        has_anchors = any(pattern.nodes[n].get('anchor', 0) == 1 for n in pattern.nodes())
-        anchor_info = " (Red squares = anchor nodes)" if has_anchors else ""
-        
-        total_node_attrs = sum(len([k for k in pattern.nodes[n].keys() 
-                                  if k not in ['id', 'label', 'anchor', 'salesrank'] and pattern.nodes[n][k] is not None]) 
-                             for n in pattern.nodes())
-        attr_info = f", {total_node_attrs} total node attrs" if total_node_attrs > 0 else ""
-        
-        density_info = f"Density: {edge_density:.2f}"
-        if edge_density > 0.5:
-            density_info += " (Very Dense)"
-        elif edge_density > 0.3:
-            density_info += " (Dense)"
-        else:
-            density_info += " (Sparse)"
-        
-        title = f"{graph_type} Pattern Graph{anchor_info}\n"
-        title += f"(Size: {num_nodes} nodes, {num_edges} edges{attr_info}, {density_info})"
-        
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.axis('off')
-
-        if unique_edge_types and len(unique_edge_types) > 1:
-            x_pos = 1.2  
-            y_pos = 1.0  
-            
-            edge_legend_elements = [
-                plt.Line2D([0], [0], 
-                          color=color, 
-                          linewidth=3, 
-                          label=f'{edge_type[:10]}')  # Truncate legend labels
-                for edge_type, color in edge_color_map.items()
-            ]
-            
-            legend = plt.legend(
-                handles=edge_legend_elements,
-                loc='upper left',
-                bbox_to_anchor=(x_pos, y_pos),
-                borderaxespad=0.,
-                framealpha=0.9,
-                title="Edge Types",
-                fontsize=9
-            )
-            legend.get_title().set_fontsize(10)
-            
-            plt.tight_layout(rect=[0, 0, 0.85, 1])
-        else:
-            plt.tight_layout()
-
-        # Generate a shorter filename
-        pattern_info = [f"{num_nodes}-{count_by_size.get(num_nodes, 1)}"]
-        node_types = sorted(set(str(pattern.nodes[n].get('label', ''))[:10] for n in pattern.nodes()))  # Truncate labels
-        if node_types:
-            pattern_info.append('nodes-' + '-'.join(node_types))
-        edge_types = sorted(set((data.get('type', '') or 'default')[:10] for _, _, data in pattern.edges(data=True)))
-        if edge_types:
-            pattern_info.append('edges-' + '-'.join(edge_types))
-        if has_anchors:
-            pattern_info.append('anchored')
-        if total_node_attrs > 0:
-            pattern_info.append(f'{min(total_node_attrs, 9)}attrs')  # Cap attributes
-        if edge_density > 0.5:
-            pattern_info.append('very-dense')
-        elif edge_density > 0.3:
-            pattern_info.append('dense')
-        else:
-            pattern_info.append('sparse')
-
-        graph_type_short = "dir" if pattern.is_directed() else "undir"
-        filename = f"{graph_type_short}_{'_'.join(pattern_info)}"
-        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)  # Sanitize filename
-        if len(filename) > 200:
-            filename = filename[:190] + '_' + str(hash(filename) % 1000) + '.png'
-
-        # Ensure output directory exists
-        os.makedirs("plots/cluster", exist_ok=True)
-        plt.savefig(f"plots/cluster/{filename}.png", bbox_inches='tight', dpi=300)
-        plt.savefig(f"plots/cluster/{filename}.pdf", bbox_inches='tight')
-        plt.close()  # Clean up figure
-        
-        return True
-    except Exception as e:
-        print(f"Error visualizing pattern graph: {e}")
-        return False
 
 def pattern_growth(dataset, task, args):
     start_time = time.time()
@@ -588,34 +269,36 @@ def pattern_growth(dataset, task, args):
     
     # Run search
     out_graphs = agent.run_search(args.n_trials)
+    if not out_graphs:
+        print("Warning: No patterns discovered by search agent.", flush=True)
     
     print(time.time() - start_time, "TOTAL TIME")
     x = int(time.time() - start_time)
     print(x // 60, "mins", x % 60, "secs")
 
-    # Visualize discovered patterns
+    # Visualize discovered patterns using visualizer.py
     count_by_size = defaultdict(int)
     warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
     
     successful_visualizations = 0
     for pattern in out_graphs:
-        if visualize_pattern_graph(pattern, args, count_by_size):
+        if visualize_pattern_graph_ext(pattern, args, count_by_size):
             successful_visualizations += 1
         count_by_size[len(pattern)] += 1
 
-    print(f"Successfully visualized {successful_visualizations}/{len(out_graphs)} patterns")
+    print(f"Successfully visualized {successful_visualizations}/{len(out_graphs)} patterns", flush=True)
 
     # Save results
-    if not os.path.exists("results"):
-        os.makedirs("results")
+    if not os.path.exists("/app/results"):  # Use absolute path
+        os.makedirs("/app/results")
     with open(args.out_path, "wb") as f:
         pickle.dump(out_graphs, f)
     
     return out_graphs
 
 def main():
-    if not os.path.exists("plots/cluster"):
-        os.makedirs("plots/cluster")
+    if not os.path.exists("/app/plots/cluster"):  # Use absolute path
+        os.makedirs("/app/plots/cluster")
 
     parser = argparse.ArgumentParser(description='Decoder arguments')
     parse_encoder(parser)

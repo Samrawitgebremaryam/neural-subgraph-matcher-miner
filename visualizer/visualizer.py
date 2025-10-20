@@ -7,7 +7,7 @@ import random
 import time
 import os
 import re
-
+import logging
 
 class GraphDataExtractor:
     """
@@ -632,8 +632,6 @@ class HTMLTemplateProcessor:
             filename += '.html'
         
         # Create full path
-        import os
-
         full_path = os.path.join(output_dir, filename)
         
         try:
@@ -661,7 +659,7 @@ class HTMLTemplateProcessor:
     
     def process_template(self, graph_data: Dict[str, Any], 
                         output_filename: Optional[str] = None,
-                        output_dir: str = ".") -> str:
+                        output_dir: str = "/app/plots/cluster") -> str:  # Updated output_dir
         """
         Complete template processing workflow: read, inject, and write.
         """
@@ -687,7 +685,7 @@ class HTMLTemplateProcessor:
 def process_html_template(graph_data: Dict[str, Any], 
                          template_path: str = "template.html",
                          output_filename: Optional[str] = None,
-                         output_dir: str = ".") -> str:
+                         output_dir: str = "/app/plots/cluster") -> str:  # Updated output_dir
     """
     Convenience function for HTML template processing.
     """
@@ -699,8 +697,6 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
     """
     Main visualizer integration function matching existing API signature.
     """
-    import logging
-    
     # Configure logging for comprehensive error tracking
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
@@ -749,11 +745,11 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
         logger.info("Generating HTML visualization...")
         try:
             import os
-            # Ensure output directory exists
-            output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plots/cluster"))
+            # Use absolute path for output directory
+            output_dir = "/app/plots/cluster"
             os.makedirs(output_dir, exist_ok=True)
 
-            template_path = os.path.join(os.path.dirname(__file__), "template.html")
+            template_path = "/app/template.html"  # Assume template.html is in /app
             processor = HTMLTemplateProcessor(template_path)
             
             # Generate filename based on graph characteristics and count_by_size
@@ -770,7 +766,7 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
 
         except FileNotFoundError as e:
             logger.error(f"Template file not found: {str(e)}")
-            logger.info("Make sure template.html exists in the current directory")
+            logger.info("Make sure template.html exists in /app directory")
             return False
         except Exception as e:
             logger.error(f"HTML generation failed: {str(e)}")
@@ -869,7 +865,7 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         
         # Ensure filename length is within limit (e.g., 200 characters)
         if len(filename) > 200:
-            filename = filename[:190] + '_' + str(hash(filename) % 1000) + '.png'
+            filename = filename[:190] + '_' + str(hash(filename) % 1000) + '.html'
         
         # Sanitize filename
         filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
@@ -880,4 +876,4 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
     except Exception:
         # Fallback to simple naming
         timestamp = int(time.time())
-        return f"pattern_{timestamp}_interactive.png"
+        return f"pattern_{timestamp}_interactive.html"

@@ -56,24 +56,30 @@ jobs:
           chmod -R 755 ${{ github.workspace }}/plots
           chmod -R 755 ${{ github.workspace }}/results
 
-      # 5️. Run decoder 
+      # 5️. Copy template.html 
+      - name: Copy template.html to container working directory
+        run: |
+          cp template.html ${{ github.workspace }}/template.html || echo "template.html not found, ensure it's in repository root"
+
+      # 6️. Run decoder 
       - name: Run decoder in Docker container
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
+            -w /app \  # Set working directory inside container
             -e PYTHONUNBUFFERED=1 \
             samribahta/decoder-image:latest \
             bash -c "
               set -e
               echo 'Starting decoder run on Amazon dataset...' > decoder.log 2> decoder.err
-              echo 'Running decoder with default settings...' >> decoder.log
+              echo 'Running decoder with visualization enabled...' >> decoder.log
               python -m subgraph_mining.decoder \
-                --dataset=amazon0302.pkl \
+                --dataset=/app/amazon0302.pkl \
                 --n_trials=200 \
                 --node_anchored \
                 --out_path=/app/results/amazon_patterns.pkl \
                 --graph_type=directed \
-                --analyze  # Add --analyze if visualization is tied to this flag
+                --analyze \
                 >> decoder.log 2>> decoder.err
               echo 'Decoder finished successfully.' >> decoder.log
 
@@ -84,37 +90,32 @@ jobs:
                 echo 'ERROR: Pattern file amazon_patterns.pkl not found!' >> decoder.log
               fi
 
-              # Check for plot files
+              # Check for HTML plot files
               echo 'Checking output directories...' >> decoder.log
-              if ls /app/plots/cluster/*.png >/dev/null 2>> decoder.err; then
-                echo 'Plot files (.png) found in plots/cluster:' >> decoder.log
-                ls -la /app/plots/cluster/*.png >> decoder.log 2>> decoder.err
+              if ls /app/plots/cluster/*.html >/dev/null 2>> decoder.err; then
+                echo 'HTML files found in plots/cluster:' >> decoder.log
+                ls -la /app/plots/cluster/*.html >> decoder.log 2>> decoder.err
               else
-                echo 'WARNING: No .png plot files found in plots/cluster!' >> decoder.log
-              fi
-              if ls /app/plots/cluster/*.pdf >/dev/null 2>> decoder.err; then
-                echo 'Plot files (.pdf) found in plots/cluster:' >> decoder.log
-                ls -la /app/plots/cluster/*.pdf >> decoder.log 2>> decoder.err
-              else
-                echo 'WARNING: No .pdf plot files found in plots/cluster!' >> decoder.log
+                echo 'WARNING: No .html plot files found in plots/cluster!' >> decoder.log
               fi
               ls -la /app/results >> decoder.log 2>> decoder.err
+              cat decoder.err >> decoder.log  # Append errors to log for visibility
             "
 
-      # 6️. Validate visualization output
+      # 7️. Validate visualization output
       - name: Validate visualization output
         if: always()
         run: |
           echo "Validating visualization output..."
-          if [ -d ${{ github.workspace }}/plots/cluster ] && find ${{ github.workspace }}/plots/cluster -type f | grep -q .; then
-            echo "Visualization successful: Plot files detected in plots/cluster."
-            find ${{ github.workspace }}/plots/cluster -type f
+          if [ -d ${{ github.workspace }}/plots/cluster ] && find ${{ github.workspace }}/plots/cluster -type f -name "*.html" | grep -q .; then
+            echo "Visualization successful: HTML files detected in plots/cluster."
+            find ${{ github.workspace }}/plots/cluster -type f -name "*.html"
           else
-            echo "ERROR: No plot files found in plots/cluster!"
+            echo "ERROR: No HTML plot files found in plots/cluster!"
             exit 1
           fi
 
-      # 7. Upload results and plots as artifact
+      # 8. Upload results and plots as artifact
       - name: Upload results and plots as artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -126,7 +127,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # 8. Upload logs
+      # 9. Upload logs
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
