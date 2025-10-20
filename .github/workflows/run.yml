@@ -78,6 +78,23 @@ jobs:
               ls -la /app/results
             "
 
+      #  5.2 Shorten long filenames before upload
+      - name: Shorten long file and folder names
+        run: |
+          echo "Checking for long file paths..."
+          find plots results -type f | while read -r file; do
+            if [ ${#file} -gt 200 ]; then
+              dir=$(dirname "$file")
+              base=$(basename "$file")
+              shortbase=$(echo "$base" | cut -c1-50)
+              newname="${dir}/${shortbase}"
+              echo "Renaming long file:"
+              echo "  $file"
+              echo "  -> $newname"
+              mv "$file" "$newname" || true
+            fi
+          done
+
       # 6️. Upload results as artifact
       - name: Upload results and plots as artifact
         if: always()
@@ -89,6 +106,7 @@ jobs:
             results/
           retention-days: 30
           if-no-files-found: warn
+
 
       # 7️. Upload logs
       - name: Upload logs
