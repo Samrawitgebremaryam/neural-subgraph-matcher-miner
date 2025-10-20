@@ -869,18 +869,15 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         
         # Ensure filename length is within limit (e.g., 200 characters)
         if len(filename) > 200:
-            # Truncate to 180 characters and append a unique hash
-            base_name = filename[:180]
-            unique_hash = str(hash(filename) % 1000).zfill(3)  # Ensure 3 digits
-            filename = f"{base_name}_{unique_hash}"
+            filename = filename[:190] + '_' + str(hash(filename) % 1000) + '.png'
         
-        # Sanitize filename and add extension
+        # Sanitize filename
         filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-        filename = re.sub(r'_+', '_', filename).rstrip('_') + '.png'  # Ensure .png extension
+        filename = re.sub(r'_+', '_', filename)
         
         return filename
         
     except Exception:
-        # Fallback to simple naming with timestamp
+        # Fallback to simple naming
         timestamp = int(time.time())
         return f"pattern_{timestamp}_interactive.png"

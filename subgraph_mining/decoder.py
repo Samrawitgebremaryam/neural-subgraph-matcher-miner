@@ -184,7 +184,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             pos = nx.spring_layout(pattern, k=2.0, seed=42, iterations=50)
 
         unique_labels = sorted(set(pattern.nodes[n].get('label', 'unknown') for n in pattern.nodes()))
-        label_color_map = {label: plt.cm.Set3(i / len(unique_labels)) for i, label in enumerate(unique_labels)}
+        label_color_map = {label: plt.cm.Set3(i) for i, label in enumerate(unique_labels)}
 
         unique_edge_types = sorted(set(data.get('type', 'default') for u, v, data in pattern.edges(data=True)))
         edge_color_map = {edge_type: plt.cm.tab20(i % 20) for i, edge_type in enumerate(unique_edge_types)}
@@ -243,7 +243,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                     nodelist=anchor_nodes,
                     node_color=anchor_colors, 
                     node_size=anchor_sizes, 
-                    node_shape='s',
+                    node_shape='o',
                     edgecolors='black', 
                     linewidths=3,
                     alpha=0.9)
@@ -414,7 +414,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
 
         # Generate a shorter filename
         pattern_info = [f"{num_nodes}-{count_by_size.get(num_nodes, 1)}"]
-        node_types = sorted(set(pattern.nodes[n].get('label', '')[:10] for n in pattern.nodes()))  # Truncate labels
+        node_types = sorted(set(str(pattern.nodes[n].get('label', ''))[:10] for n in pattern.nodes()))  # Truncate labels
         if node_types:
             pattern_info.append('nodes-' + '-'.join(node_types))
         edge_types = sorted(set((data.get('type', '') or 'default')[:10] for _, _, data in pattern.edges(data=True)))
