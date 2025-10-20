@@ -103,17 +103,8 @@ jobs:
               ls -la /app/results
             "
 
-      #  7️.Upload results as artifact (fixed version)
-      - name: Compress and verify artifact
-        if: always()
-        run: |
-          echo " Compressing results before upload..."
-          zip -r amazon-decoder-results.zip plots results ckpt
-          echo " Checking archive contents..."
-          unzip -l amazon-decoder-results.zip
-          echo "Compression done. Ready for upload."
-
-      - name: Upload plots and results as artifact
+      # 7️. Upload results as artifact (clean version — no manual zipping)
+      - name: Upload results and plots as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
