@@ -832,20 +832,18 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         occurrence_count = count_by_size.get(num_nodes, 1) if count_by_size else 1
         components.append(f"{num_nodes}-{occurrence_count}")
         
-        # Node types
-        node_types = sorted(set(
-            pattern.nodes[n].get('label', '') 
-            for n in pattern.nodes() 
-            if pattern.nodes[n].get('label', '')
-        ))
-        if node_types:
-            components.append('nodes-' + '-'.join(node_types))
+        # Truncate and sanitize node titles
+        node_titles = sorted(set(
+            str(pattern.nodes[n].get('title', f"node_{n}")[:15].replace('/', '_').replace(':', '_')
+            for n in pattern.nodes()
+        )))
+        if node_titles:
+            components.append('nodes-' + '-'.join(node_titles))
         
         # Edge types
         edge_types = sorted(set(
-            data.get('type', '') 
-            for u, v, data in pattern.edges(data=True) 
-            if data.get('type', '')
+            data.get('type', '').replace('/', '_').replace(':', '_')
+            for u, v, data in pattern.edges(data=True)
         ))
         if edge_types:
             components.append('edges-' + '-'.join(edge_types))
@@ -869,13 +867,20 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         # Join components
         filename = '_'.join(components)
         
-        # Sanitize filename
+        # Ensure filename length is within limit (e.g., 200 characters)
+        if len(filename) > 200:
+            # Truncate to 180 characters and append a unique hash
+            base_name = filename[:180]
+            unique_hash = str(hash(filename) % 1000).zfill(3)  # Ensure 3 digits
+            filename = f"{base_name}_{unique_hash}"
+        
+        # Sanitize filename and add extension
         filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-        filename = re.sub(r'_+', '_', filename)
+        filename = re.sub(r'_+', '_', filename).rstrip('_') + '.png'  # Ensure .png extension
         
         return filename
         
     except Exception:
-        # Fallback to simple naming
+        # Fallback to simple naming with timestamp
         timestamp = int(time.time())
-        return f"pattern_{timestamp}_interactive"
+        return f"pattern_{timestamp}_interactive.png"

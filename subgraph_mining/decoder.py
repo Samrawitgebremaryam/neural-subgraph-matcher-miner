@@ -135,11 +135,12 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         num_edges = pattern.number_of_edges()
         edge_density = num_edges / (num_nodes * (num_nodes - 1)) if num_nodes > 1 else 0
         
+        # Cap figsize to prevent oversized images
         base_size = max(12, min(20, num_nodes * 2))
         if edge_density > 0.3:  # Dense graph
-            figsize = (base_size * 1.2, base_size)
+            figsize = (min(base_size * 1.2, 20), min(base_size, 20))
         else:
-            figsize = (base_size, base_size * 0.8)
+            figsize = (min(base_size, 20), min(base_size * 0.8, 20))
         
         plt.figure(figsize=figsize)
 
@@ -148,8 +149,9 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             node_data = pattern.nodes[n]
             node_id = node_data.get('id', str(n))
             node_label = node_data.get('title', node_data.get('label', 'unknown'))
-            label_parts = [f"{node_label} (ID: {node_id})"]  # Combine title and ID for clarity
-            
+            # Truncate and sanitize title for label
+            node_label = str(node_label)[:15].replace('/', '_').replace(':', '_').replace('#', '')
+            label_parts = [f"{node_label} (ID: {node_id})"]
             
             salesrank = node_data.get('salesrank', -1)
             if salesrank != -1:
@@ -170,7 +172,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                             value = f"{value:.2f}" if abs(value) < 1000 else f"{value:.1e}"
                     label_parts.append(f"{key}: {value}")
 
-            # Use newline for sparse, semicolon for dense to improve readability
+            # Use newline for sparse, semicolon for dense
             node_labels[n] = "\n".join(label_parts) if edge_density <= 0.5 else "; ".join(label_parts)
 
         if edge_density > 0.3:
@@ -182,7 +184,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             pos = nx.spring_layout(pattern, k=2.0, seed=42, iterations=50)
 
         unique_labels = sorted(set(pattern.nodes[n].get('label', 'unknown') for n in pattern.nodes()))
-        label_color_map = {label: plt.cm.Set3(i) for i, label in enumerate(unique_labels)}
+        label_color_map = {label: plt.cm.Set3(i / len(unique_labels)) for i, label in enumerate(unique_labels)}
 
         unique_edge_types = sorted(set(data.get('type', 'default') for u, v, data in pattern.edges(data=True)))
         edge_color_map = {edge_type: plt.cm.tab20(i % 20) for i, edge_type in enumerate(unique_edge_types)}
@@ -349,7 +351,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                            data.get('relation') or
                            data.get('edge_type', 'default'))  # Fallback to 'default'
                 if edge_type:
-                    edge_labels[(u, v)] = str(edge_type)
+                    edge_labels[(u, v)] = str(edge_type)[:10]  # Truncate edge labels
 
             if edge_labels:
                 edge_font_size = max(5, font_size - 2)
@@ -391,7 +393,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                 plt.Line2D([0], [0], 
                           color=color, 
                           linewidth=3, 
-                          label=f'{edge_type}')
+                          label=f'{edge_type[:10]}')  # Truncate legend labels
                 for edge_type, color in edge_color_map.items()
             ]
             
@@ -410,22 +412,18 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         else:
             plt.tight_layout()
 
-        pattern_info = [f"{num_nodes}-{count_by_size[num_nodes]}"]
-
-        node_types = sorted(set(pattern.nodes[n].get('label', '') for n in pattern.nodes()))
-        if any(node_types):
+        # Generate a shorter filename
+        pattern_info = [f"{num_nodes}-{count_by_size.get(num_nodes, 1)}"]
+        node_types = sorted(set(pattern.nodes[n].get('label', '')[:10] for n in pattern.nodes()))  # Truncate labels
+        if node_types:
             pattern_info.append('nodes-' + '-'.join(node_types))
-
-        edge_types = sorted(set(pattern.edges[e].get('type', '') for e in pattern.edges()))
-        if any(edge_types):
+        edge_types = sorted(set((data.get('type', '') or 'default')[:10] for _, _, data in pattern.edges(data=True)))
+        if edge_types:
             pattern_info.append('edges-' + '-'.join(edge_types))
-
         if has_anchors:
             pattern_info.append('anchored')
-
         if total_node_attrs > 0:
-            pattern_info.append(f'{total_node_attrs}attrs')
-
+            pattern_info.append(f'{min(total_node_attrs, 9)}attrs')  # Cap attributes
         if edge_density > 0.5:
             pattern_info.append('very-dense')
         elif edge_density > 0.3:
@@ -434,11 +432,16 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             pattern_info.append('sparse')
 
         graph_type_short = "dir" if pattern.is_directed() else "undir"
-        filename = f"{graph_type_short}_{('_'.join(pattern_info))}"
+        filename = f"{graph_type_short}_{'_'.join(pattern_info)}"
+        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)  # Sanitize filename
+        if len(filename) > 200:
+            filename = filename[:190] + '_' + str(hash(filename) % 1000) + '.png'
 
+        # Ensure output directory exists
+        os.makedirs("plots/cluster", exist_ok=True)
         plt.savefig(f"plots/cluster/{filename}.png", bbox_inches='tight', dpi=300)
         plt.savefig(f"plots/cluster/{filename}.pdf", bbox_inches='tight')
-        plt.close()
+        plt.close()  # Clean up figure
         
         return True
     except Exception as e:
