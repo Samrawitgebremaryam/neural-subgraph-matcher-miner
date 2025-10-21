@@ -22,7 +22,7 @@ jobs:
         run: |
           echo " Downloading amazon0302.pkl from GitHub Releases..."
           wget -O amazon0302.pkl https://github.com/Samrawitgebremaryam/neural-subgraph-matcher-miner/releases/download/v1.0/amazon0302.pkl
-          
+
           echo " Verifying downloaded file..."
           file amazon0302.pkl
 
@@ -56,7 +56,7 @@ jobs:
           chmod -R 777 ${{ github.workspace }}/plots
           chmod -R 777 ${{ github.workspace }}/results
 
-      # 5️. Run decoder 
+      # 5️. Run decoder
       - name: Run decoder in Docker container
         run: |
           docker run --rm \
@@ -65,22 +65,49 @@ jobs:
             samribahta/decoder-image:latest \
             bash -c "
               set -e
-              echo ' Starting decoder run on Amazon dataset...' > decoder.log 2> decoder.err
+              echo ' Starting decoder run on Amazon dataset...'
               python -m subgraph_mining.decoder \
                 --dataset=amazon0302.pkl \
                 --n_trials=200 \
                 --node_anchored \
                 --out_path=/app/results/amazon_patterns.pkl \
-                --graph_type=directed \
-                >> decoder.log 2>> decoder.err
-              echo 'Decoder finished successfully.' >> decoder.log
-              echo 'Checking output directories...' >> decoder.log
-              ls -la /app/plots/cluster >> decoder.log 2>> decoder.err || echo 'No cluster plots found.' >> decoder.log
-              ls -la /app/results >> decoder.log 2>> decoder.err
+                --graph_type=directed
+              echo 'Decoder finished successfully.'
+              echo 'Checking output directories...'
+              ls -la /app/plots/cluster || echo 'No cluster plots found.'
+              ls -la /app/results
             "
 
-      # 6️. Validate visualization output
-      - name: Validate visualization output
+      # 6. Shorten long filenames before upload and ensure .html extension
+      - name: Shorten long file and folder names
+        run: |
+          echo "Checking for long file paths and missing extensions..."
+          find plots results -type f | while read -r file; do
+            # Shorten if too long
+            if [ ${#file} -gt 200 ]; then
+              dir=$(dirname "$file")
+              base=$(basename "$file")
+              shortbase=$(echo "$base" | cut -c1-50)
+              newname="${dir}/${shortbase}"
+              echo "Renaming long file:"
+              echo "  $file"
+              echo "  -> $newname"
+              mv "$file" "$newname" || true
+              file="$newname"
+            fi
+
+            # Add .html if file has no extension
+            if [[ ! "$file" =~ \.[^./]+$ ]]; then
+              newfile="${file}.html"
+              echo "Adding .html extension:"
+              echo "  $file"
+              echo "  -> $newfile"
+              mv "$file" "$newfile" || true
+            fi
+          done
+
+      # 7. Upload results as artifact
+      - name: Upload results and plots as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -91,7 +118,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # 7. Upload logs
+      # 8. Upload logs
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
