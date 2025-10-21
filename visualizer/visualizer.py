@@ -7,7 +7,7 @@ import random
 import time
 import os
 import re
-import logging
+
 
 class GraphDataExtractor:
     """
@@ -143,37 +143,44 @@ class GraphDataExtractor:
             x, y = pos.get(node_key, (0, 0))
             is_anchor = node_data.get('anchor', 0) == 1
 
-            # Use node_labels if provided, otherwise fall back to current logic
+            # Use node_labels if provided, otherwise fall back to restricted 4-attribute logic
             if node_labels and node_key in node_labels:
                 display_label = node_labels[node_key]
             else:
-                # Prioritize label (group), then title, salesrank, and other attributes
+                # Only show the 4 specified attributes in order: label, id, title, salesrank
                 display_label_parts = []
-                if 'label' in node_data and node_data['label'] is not None:
-                    display_label_parts.append(f"Category: {node_data['label']}")
-                if 'title' in node_data and node_data['title'] is not None:
-                    display_label_parts.append(f"Title: {node_data['title']}")
-                if 'salesrank' in node_data and node_data['salesrank'] != -1:
-                    display_label_parts.append(f"Sales Rank: {node_data['salesrank']}")
-                # Add remaining attributes (excluding reserved keys)
-                for key, value in node_data.items():
-                    if key not in {'id', 'x', 'y', 'anchor', 'label', 'title', 'salesrank'} and value is not None:
-                        display_label_parts.append(f"{key}: {value}")
-                display_label = "\\n".join(display_label_parts) if display_label_parts else node_id
+                
+                # 1. Label (from group) - must appear first
+                label_value = node_data.get('label', 'Unknown')
+                if label_value is not None:
+                    display_label_parts.append(f"Label: {label_value}")
+                
+                # 2. ID
+                if node_id is not None:
+                    display_label_parts.append(f"ID: {node_id}")
+                
+                # 3. Title
+                title_value = node_data.get('title', 'Unknown')
+                if title_value is not None:
+                    display_label_parts.append(f"Title: {title_value}")
+                
+                # 4. Sales Rank
+                salesrank_value = node_data.get('salesrank', -1)
+                if salesrank_value is not None and salesrank_value != -1:
+                    display_label_parts.append(f"Sales Rank: {salesrank_value}")
+                
+                display_label = (
+                    "\\n".join(display_label_parts) if display_label_parts else node_id
+                )
 
             print(
                 f"Node {node_id} display label parts: {display_label_parts if not node_labels or node_key not in node_labels else [display_label]}"
             )
-            # Add salesrank to influence size (scaled inversely, capped)
-            salesrank = node_data.get('salesrank', 1000000)  # Default to high rank if missing
-            size_factor = max(10, min(50, 50 / (salesrank + 1)))  # Scale 10-50 based on salesrank
-
             node_dict = dict(node_data)
             node_dict['id'] = node_id
             node_dict['x'] = float(x)
             node_dict['y'] = float(y)
             node_dict['anchor'] = is_anchor
-            node_dict['size'] = size_factor  # Add size for visualization
             # Ensure 'label' is the type/category (not a display label)
             if 'label' not in node_dict or node_dict['label'] is None:
                 node_dict['label'] = self._get_node_type(node_data)
@@ -293,7 +300,7 @@ class GraphDataExtractor:
         Extract metadata from node attributes, excluding special keys.
         """
         # Keys to exclude from metadata
-        excluded_keys = {'id', 'x', 'y', 'type', 'label', 'anchor', 'size', 'display_label'}
+        excluded_keys = {'id', 'x', 'y', 'type', 'label', 'anchor'}
         
         metadata = {}
         for key, value in node_data.items():
@@ -383,7 +390,7 @@ def validate_graph_data(graph_data: Dict[str, Any]) -> bool:
             return False
         
         # Validate first node structure
-        node_keys = ['id', 'x', 'y', 'label', 'anchor', 'size', 'display_label']
+        node_keys = ['id', 'x', 'y', 'label', 'anchor']
         if not all(key in nodes[0] for key in node_keys):
             return False
         
@@ -554,12 +561,14 @@ class HTMLTemplateProcessor:
         if 'metadata' not in graph_data:
             raise ValueError("Graph data must contain metadata section")
         
+        metadata = graph_data['metadata']
+        
         try:
             # Extract characteristics for filename generation
-            node_count = graph_data['metadata'].get('nodeCount', 0)
-            edge_count = graph_data['metadata'].get('edgeCount', 0)
-            is_directed = graph_data['metadata'].get('isDirected', False)
-            density = graph_data['metadata'].get('density', 0)
+            node_count = metadata.get('nodeCount', 0)
+            edge_count = metadata.get('edgeCount', 0)
+            is_directed = metadata.get('isDirected', False)
+            density = metadata.get('density', 0)
             
             # Generate descriptive filename components
             components = [base_name]
@@ -632,6 +641,8 @@ class HTMLTemplateProcessor:
             filename += '.html'
         
         # Create full path
+        import os
+
         full_path = os.path.join(output_dir, filename)
         
         try:
@@ -659,7 +670,7 @@ class HTMLTemplateProcessor:
     
     def process_template(self, graph_data: Dict[str, Any], 
                         output_filename: Optional[str] = None,
-                        output_dir: str = "/app/plots/cluster") -> str:  # Updated output_dir
+                        output_dir: str = ".") -> str:
         """
         Complete template processing workflow: read, inject, and write.
         """
@@ -685,7 +696,7 @@ class HTMLTemplateProcessor:
 def process_html_template(graph_data: Dict[str, Any], 
                          template_path: str = "template.html",
                          output_filename: Optional[str] = None,
-                         output_dir: str = "/app/plots/cluster") -> str:  # Updated output_dir
+                         output_dir: str = ".") -> str:
     """
     Convenience function for HTML template processing.
     """
@@ -697,6 +708,8 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
     """
     Main visualizer integration function matching existing API signature.
     """
+    import logging
+    
     # Configure logging for comprehensive error tracking
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
@@ -745,11 +758,12 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
         logger.info("Generating HTML visualization...")
         try:
             import os
-            # Use absolute path for output directory
-            output_dir = "/app/plots/cluster"
+            # Ensure output directory exists
+            output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plots/cluster"))
+            output_dir = os.path.abspath(output_dir)
             os.makedirs(output_dir, exist_ok=True)
 
-            template_path = "/app/template.html"  # Assume template.html is in /app
+            template_path = os.path.join(os.path.dirname(__file__), "template.html")
             processor = HTMLTemplateProcessor(template_path)
             
             # Generate filename based on graph characteristics and count_by_size
@@ -766,7 +780,7 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
 
         except FileNotFoundError as e:
             logger.error(f"Template file not found: {str(e)}")
-            logger.info("Make sure template.html exists in /app directory")
+            logger.info("Make sure template.html exists in the current directory")
             return False
         except Exception as e:
             logger.error(f"HTML generation failed: {str(e)}")
@@ -778,10 +792,9 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, node_labels=None):
             try:
                 # Increment success counter for this graph size
                 if num_nodes in count_by_size:
-                    count_by_size[num_nodes] += 1  # Maintain compatibility
+                    # This maintains compatibility with the existing counting system
                     logger.info(f"Graph size {num_nodes} has {count_by_size[num_nodes]} occurrences")
                 else:
-                    count_by_size[num_nodes] = 1
                     logger.info(f"New graph size {num_nodes} encountered")
             except Exception as e:
                 logger.warning(f"Counter update failed (non-critical): {str(e)}")
@@ -828,18 +841,20 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         occurrence_count = count_by_size.get(num_nodes, 1) if count_by_size else 1
         components.append(f"{num_nodes}-{occurrence_count}")
         
-        # Truncate and sanitize node titles
-        node_titles = sorted(set(
-            str(pattern.nodes[n].get('title', f"node_{n}")[:15].replace('/', '_').replace(':', '_')
-            for n in pattern.nodes()
-        )))
-        if node_titles:
-            components.append('nodes-' + '-'.join(node_titles))
+        # Node types
+        node_types = sorted(set(
+            pattern.nodes[n].get('label', '') 
+            for n in pattern.nodes() 
+            if pattern.nodes[n].get('label', '')
+        ))
+        if node_types:
+            components.append('nodes-' + '-'.join(node_types))
         
         # Edge types
         edge_types = sorted(set(
-            data.get('type', '').replace('/', '_').replace(':', '_')
-            for u, v, data in pattern.edges(data=True)
+            data.get('type', '') 
+            for u, v, data in pattern.edges(data=True) 
+            if data.get('type', '')
         ))
         if edge_types:
             components.append('edges-' + '-'.join(edge_types))
@@ -863,10 +878,6 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         # Join components
         filename = '_'.join(components)
         
-        # Ensure filename length is within limit (e.g., 200 characters)
-        if len(filename) > 200:
-            filename = filename[:190] + '_' + str(hash(filename) % 1000) + '.html'
-        
         # Sanitize filename
         filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
         filename = re.sub(r'_+', '_', filename)
@@ -876,4 +887,4 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
     except Exception:
         # Fallback to simple naming
         timestamp = int(time.time())
-        return f"pattern_{timestamp}_interactive.html"
+        return f"pattern_{timestamp}_interactive"

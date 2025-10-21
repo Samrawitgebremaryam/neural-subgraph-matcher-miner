@@ -147,30 +147,38 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         node_labels = {}
         for n in pattern.nodes():
             node_data = pattern.nodes[n]
-            node_id = node_data.get('id', str(n))
-            node_label = node_data.get('title', node_data.get('label', 'unknown'))
-            # Truncate and sanitize title for label
-            node_label = str(node_label)[:15].replace('/', '_').replace(':', '_').replace('#', '')
-            label_parts = [f"{node_label} (ID: {node_id})"]
-            
-            salesrank = node_data.get('salesrank', -1)
+            node_id = node_data.get("id", str(n))
+            # Build label parts with only the 4 specified attributes in order: label, id, title, salesrank
+            label_parts = []
+
+            # 1. Label (from group) - must appear first
+            node_label = node_data.get("label", "unknown")
+            node_label = (
+                str(node_label)[:15]
+                .replace("/", "_")
+                .replace(":", "_")
+                .replace("#", "")
+            )
+            label_parts.append(f"Label: {node_label}")
+
+            # 2. ID
+            label_parts.append(f"ID: {node_id}")
+
+            # 3. Title
+            title = node_data.get("title", "Unknown")
+            if isinstance(title, str):
+                if edge_density > 0.5 and len(title) > 8:
+                    title = title[:5] + "..."
+                elif edge_density > 0.3 and len(title) > 12:
+                    title = title[:9] + "..."
+                elif len(title) > 15:
+                    title = title[:12] + "..."
+            label_parts.append(f"Title: {title}")
+
+            # 4. Sales Rank
+            salesrank = node_data.get("salesrank", -1)
             if salesrank != -1:
                 label_parts.append(f"Sales Rank: {salesrank}")
-            other_attrs = {k: v for k, v in node_data.items() 
-                          if k not in ['id', 'label', 'anchor', 'salesrank'] and v is not None}
-            if other_attrs:
-                for key, value in other_attrs.items():
-                    if isinstance(value, str):
-                        if edge_density > 0.5 and len(value) > 8:  
-                            value = value[:5] + "..."
-                        elif edge_density > 0.3 and len(value) > 12: 
-                            value = value[:9] + "..."
-                        elif len(value) > 15: 
-                            value = value[:12] + "..."
-                    elif isinstance(value, (int, float)):
-                        if isinstance(value, float):
-                            value = f"{value:.2f}" if abs(value) < 1000 else f"{value:.1e}"
-                    label_parts.append(f"{key}: {value}")
 
             # Use newline for sparse, semicolon for dense to improve readability
             node_labels[n] = "\n".join(label_parts) if edge_density <= 0.5 else "; ".join(label_parts)
@@ -365,12 +373,22 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         graph_type = "Directed" if pattern.is_directed() else "Undirected"
         has_anchors = any(pattern.nodes[n].get('anchor', 0) == 1 for n in pattern.nodes())
         anchor_info = " (Red squares = anchor nodes)" if has_anchors else ""
-        
-        total_node_attrs = sum(len([k for k in pattern.nodes[n].keys() 
-                                  if k not in ['id', 'label', 'anchor', 'salesrank'] and pattern.nodes[n][k] is not None]) 
-                             for n in pattern.nodes())
-        attr_info = f", {total_node_attrs} total node attrs" if total_node_attrs > 0 else ""
-        
+
+        total_node_attrs = sum(
+            len(
+                [
+                    k
+                    for k in pattern.nodes[n].keys()
+                    if k not in ["id", "label", "anchor", "salesrank"]
+                    and pattern.nodes[n][k] is not None
+                ]
+            )
+            for n in pattern.nodes()
+        )
+        attr_info = (
+            f", {total_node_attrs} total node attrs" if total_node_attrs > 0 else ""
+        )
+
         density_info = f"Density: {edge_density:.2f}"
         if edge_density > 0.5:
             density_info += " (Very Dense)"
@@ -401,10 +419,10 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                 handles=edge_legend_elements,
                 loc='upper left',
                 bbox_to_anchor=(x_pos, y_pos),
-                borderaxespad=0.,
+                borderaxespad=0.0,
                 framealpha=0.9,
                 title="Edge Types",
-                fontsize=9
+                fontsize=9,
             )
             legend.get_title().set_fontsize(10)
             

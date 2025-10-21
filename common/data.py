@@ -142,19 +142,7 @@ class CustomGraphDataset:
 
     def _build_graph(self):
         G = nx.Graph()
-        
-        # Filter nodes to only include id, title, group (as label), and salesrank
-        filtered_nodes = []
-        for node, attrs in self.raw_data['nodes']:
-            # Sanitize and filter attributes
-            sanitized_attrs = {
-                "id": attrs.get("id", str(node)),
-                "title": attrs.get("title", f"Product {node}"),
-                "label": attrs.get("group", f"Product {node}"),  # Set label to group
-                "salesrank": attrs.get("salesrank", -1)
-            }
-            filtered_nodes.append((node, sanitized_attrs))
-        G.add_nodes_from(filtered_nodes)
+        G.add_nodes_from(self.raw_data["nodes"])
 
         cleaned_edges = []
         for edge in self.raw_data['edges']:
@@ -166,9 +154,33 @@ class CustomGraphDataset:
                 cleaned_edges.append(edge)
         G.add_edges_from(cleaned_edges)
 
+        # Sanitize node attributes to avoid None values in numeric fields
         for node in G.nodes():
-            if 'node_feature' not in G.nodes[node]:
-                G.nodes[node]['node_feature'] = torch.tensor([1.0], dtype=torch.float)
+            attrs = G.nodes[node]
+            # IDs and labels
+            if "id" not in attrs:
+                attrs["id"] = str(node)
+            if "label" not in attrs:
+                attrs["label"] = attrs.get("group", f"Product {node}")
+            # Numeric defaults (DeepSNAP tensorizes ints/floats)
+            for k, default_val in (
+                ("salesrank", -1),
+                ("similar_count", 0),
+                ("reviews_total", 0),
+            ):
+                if attrs.get(k) is None:
+                    attrs[k] = default_val
+            if attrs.get("reviews_avg_rating") is None:
+                attrs["reviews_avg_rating"] = 0.0
+            # Lists
+            if attrs.get("similar") is None:
+                attrs["similar"] = []
+            if attrs.get("categories") is None:
+                attrs["categories"] = []
+
+        for node in G.nodes():
+            if "node_feature" not in G.nodes[node]:
+                G.nodes[node]["node_feature"] = torch.tensor([1.0], dtype=torch.float)
 
         return DSGraph(G)
 
