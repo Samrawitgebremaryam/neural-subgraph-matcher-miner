@@ -28,8 +28,14 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
-from visualizer import visualize_pattern_graph_ext  # Updated import
-from subgraph_mining.search_agents import GreedySearchAgent, MCTSSearchAgent, MemoryEfficientMCTSAgent, MemoryEfficientGreedyAgent, BeamSearchAgent
+from visualizer.visualizer import visualize_pattern_graph_ext
+from subgraph_mining.search_agents import (
+    GreedySearchAgent,
+    MCTSSearchAgent,
+    MemoryEfficientMCTSAgent,
+    MemoryEfficientGreedyAgent,
+    BeamSearchAgent,
+)
 
 import matplotlib.pyplot as plt
 
@@ -46,7 +52,8 @@ import networkx as nx
 import torch.multiprocessing as mp
 from sklearn.decomposition import PCA
 
-import warnings 
+import warnings
+
 
 def bfs_chunk(graph, start_node, max_size):
     visited = set([start_node])
@@ -61,6 +68,7 @@ def bfs_chunk(graph, start_node, max_size):
                     break
     return graph.subgraph(visited).copy()
 
+
 def process_large_graph_in_chunks(graph, chunk_size=10000):
     all_nodes = set(graph.nodes())
     graph_chunks = []
@@ -70,6 +78,7 @@ def process_large_graph_in_chunks(graph, chunk_size=10000):
         graph_chunks.append(chunk)
         all_nodes -= set(chunk.nodes())
     return graph_chunks
+
 
 def make_plant_dataset(size):
     generator = combined_syn.get_generator([size])
@@ -91,24 +100,35 @@ def make_plant_dataset(size):
         graphs.append(graph)
     return graphs
 
+
 def _process_chunk(args_tuple):
     chunk_dataset, task, args, chunk_index, total_chunks = args_tuple
     start_time = time.time()
     last_print = start_time
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}", flush=True)
+    print(
+        f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}",
+        flush=True,
+    )
     try:
         result = None
         while result is None:
             now = time.time()
             if now - last_print >= 10:
-                print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} still processing chunk {chunk_index+1}/{total_chunks} ({int(now-start_time)}s elapsed)", flush=True)
+                print(
+                    f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} still processing chunk {chunk_index+1}/{total_chunks} ({int(now-start_time)}s elapsed)",
+                    flush=True,
+                )
                 last_print = now
             result = pattern_growth([chunk_dataset], task, args)
-        print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {int(time.time()-start_time)}s", flush=True)
+        print(
+            f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {int(time.time()-start_time)}s",
+            flush=True,
+        )
         return result
     except Exception as e:
         print(f"Error processing chunk {chunk_index}: {e}", flush=True)
         return []
+
 
 def pattern_growth_streaming(dataset, task, args):
     graph = dataset[0]
@@ -118,7 +138,10 @@ def pattern_growth_streaming(dataset, task, args):
     all_discovered_patterns = []
 
     total_chunks = len(dataset)
-    chunk_args = [(chunk_dataset, task, args, idx, total_chunks) for idx, chunk_dataset in enumerate(dataset)]
+    chunk_args = [
+        (chunk_dataset, task, args, idx, total_chunks)
+        for idx, chunk_dataset in enumerate(dataset)
+    ]
 
     with mp.Pool(processes=4) as pool:
         results = pool.map(_process_chunk, chunk_args)
@@ -129,19 +152,20 @@ def pattern_growth_streaming(dataset, task, args):
 
     return all_discovered_patterns
 
+
 def visualize_pattern_graph(pattern, args, count_by_size):
     try:
         num_nodes = len(pattern)
         num_edges = pattern.number_of_edges()
         edge_density = num_edges / (num_nodes * (num_nodes - 1)) if num_nodes > 1 else 0
-        
+
         # Cap figsize to prevent oversized images
         base_size = max(12, min(20, num_nodes * 2))
         if edge_density > 0.3:  # Dense graph
             figsize = (min(base_size * 1.2, 20), min(base_size, 20))
         else:
             figsize = (min(base_size, 20), min(base_size * 0.8, 20))
-        
+
         plt.figure(figsize=figsize)
 
         node_labels = {}
@@ -153,6 +177,8 @@ def visualize_pattern_graph(pattern, args, count_by_size):
 
             # 1. Label (from group) - must appear first
             node_label = node_data.get("label", "unknown")
+            if node_label is None:
+                node_label = "unknown"
             node_label = (
                 str(node_label)[:15]
                 .replace("/", "_")
@@ -181,7 +207,11 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                 label_parts.append(f"Sales Rank: {salesrank}")
 
             # Use newline for sparse, semicolon for dense to improve readability
-            node_labels[n] = "\n".join(label_parts) if edge_density <= 0.5 else "; ".join(label_parts)
+            node_labels[n] = (
+                "\n".join(label_parts)
+                if edge_density <= 0.5
+                else "; ".join(label_parts)
+            )
 
         if edge_density > 0.3:
             if num_nodes <= 20:
@@ -191,17 +221,26 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         else:
             pos = nx.spring_layout(pattern, k=2.0, seed=42, iterations=50)
 
-        unique_labels = sorted(set(pattern.nodes[n].get('label', 'unknown') for n in pattern.nodes()))
-        label_color_map = {label: plt.cm.Set3(i) for i, label in enumerate(unique_labels)}
+        unique_labels = sorted(
+            set(pattern.nodes[n].get("label", "unknown") for n in pattern.nodes())
+        )
+        label_color_map = {
+            label: plt.cm.Set3(i) for i, label in enumerate(unique_labels)
+        }
 
-        unique_edge_types = sorted(set(data.get('type', 'default') for u, v, data in pattern.edges(data=True)))
-        edge_color_map = {edge_type: plt.cm.tab20(i % 20) for i, edge_type in enumerate(unique_edge_types)}
+        unique_edge_types = sorted(
+            set(data.get("type", "default") for u, v, data in pattern.edges(data=True))
+        )
+        edge_color_map = {
+            edge_type: plt.cm.tab20(i % 20)
+            for i, edge_type in enumerate(unique_edge_types)
+        }
 
         colors = []
         node_sizes = []
         shapes = []
         node_list = list(pattern.nodes())
-        
+
         if edge_density > 0.5:  # Very dense
             base_node_size = 2500
             anchor_node_size = base_node_size * 1.3
@@ -211,23 +250,27 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         else:  # Sparse
             base_node_size = 5000
             anchor_node_size = base_node_size * 1.2
-        
+
         # Adjust node sizes based on salesrank (lower rank = larger size, capped)
         for i, node in enumerate(node_list):
             node_data = pattern.nodes[node]
-            node_label = node_data.get('label', 'unknown')
-            is_anchor = node_data.get('anchor', 0) == 1 
-            salesrank = node_data.get('salesrank', 1000000)  # Default to high rank if missing
-            size_factor = max(50, min(5000, 5000 / (salesrank + 1)))  # Inverse scaling, capped
-            
+            node_label = node_data.get("label", "unknown")
+            is_anchor = node_data.get("anchor", 0) == 1
+            salesrank = node_data.get(
+                "salesrank", 1000000
+            )  # Default to high rank if missing
+            size_factor = max(
+                50, min(5000, 5000 / (salesrank + 1))
+            )  # Inverse scaling, capped
+
             if is_anchor:
-                colors.append('red')
+                colors.append("red")
                 node_sizes.append(min(anchor_node_size, size_factor * 1.3))
-                shapes.append('s')
+                shapes.append("s")
             else:
                 colors.append(label_color_map[node_label])
                 node_sizes.append(min(base_node_size, size_factor))
-                shapes.append('o')
+                shapes.append("o")
 
         anchor_nodes = []
         regular_nodes = []
@@ -235,9 +278,9 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         regular_colors = []
         anchor_sizes = []
         regular_sizes = []
-        
+
         for i, node in enumerate(node_list):
-            if shapes[i] == 's':
+            if shapes[i] == "s":
                 anchor_nodes.append(node)
                 anchor_colors.append(colors[i])
                 anchor_sizes.append(node_sizes[i])
@@ -247,131 +290,164 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                 regular_sizes.append(node_sizes[i])
 
         if anchor_nodes:
-            nx.draw_networkx_nodes(pattern, pos, 
-                    nodelist=anchor_nodes,
-                    node_color=anchor_colors, 
-                    node_size=anchor_sizes, 
-                    node_shape='o',
-                    edgecolors='black', 
-                    linewidths=3,
-                    alpha=0.9)
+            nx.draw_networkx_nodes(
+                pattern,
+                pos,
+                nodelist=anchor_nodes,
+                node_color=anchor_colors,
+                node_size=anchor_sizes,
+                node_shape="o",
+                edgecolors="black",
+                linewidths=3,
+                alpha=0.9,
+            )
 
         if regular_nodes:
-            nx.draw_networkx_nodes(pattern, pos, 
-                    nodelist=regular_nodes,
-                    node_color=regular_colors, 
-                    node_size=regular_sizes, 
-                    node_shape='o',
-                    edgecolors='black', 
-                    linewidths=2,
-                    alpha=0.8)
+            nx.draw_networkx_nodes(
+                pattern,
+                pos,
+                nodelist=regular_nodes,
+                node_color=regular_colors,
+                node_size=regular_sizes,
+                node_shape="o",
+                edgecolors="black",
+                linewidths=2,
+                alpha=0.8,
+            )
 
-        if edge_density > 0.5:  
+        if edge_density > 0.5:
             edge_width = 1.5
             edge_alpha = 0.6
-        elif edge_density > 0.3:  
+        elif edge_density > 0.3:
             edge_width = 2
             edge_alpha = 0.7
-        else:  
+        else:
             edge_width = 3
             edge_alpha = 0.8
-        
+
         if pattern.is_directed():
-            arrow_size = 30 if edge_density < 0.3 else (20 if edge_density < 0.5 else 15)
+            arrow_size = (
+                30 if edge_density < 0.3 else (20 if edge_density < 0.5 else 15)
+            )
             connectionstyle = "arc3,rad=0.1" if edge_density < 0.5 else "arc3,rad=0.15"
-            
+
             for u, v, data in pattern.edges(data=True):
-                edge_type = data.get('type', 'default')
+                edge_type = data.get("type", "default")
                 edge_color = edge_color_map[edge_type]
-                
+
                 nx.draw_networkx_edges(
-                    pattern, pos,
+                    pattern,
+                    pos,
                     edgelist=[(u, v)],
                     width=edge_width,
                     edge_color=[edge_color],
                     alpha=edge_alpha,
                     arrows=True,
                     arrowsize=arrow_size,
-                    arrowstyle='-|>',
+                    arrowstyle="-|>",
                     connectionstyle=connectionstyle,
                     node_size=max(node_sizes) * 1.3,
                     min_source_margin=15,
-                    min_target_margin=15
+                    min_target_margin=15,
                 )
         else:
             for u, v, data in pattern.edges(data=True):
-                edge_type = data.get('type', 'default')
+                edge_type = data.get("type", "default")
                 edge_color = edge_color_map[edge_type]
-                
+
                 nx.draw_networkx_edges(
-                    pattern, pos,
+                    pattern,
+                    pos,
                     edgelist=[(u, v)],
                     width=edge_width,
                     edge_color=[edge_color],
                     alpha=edge_alpha,
-                    arrows=False  
+                    arrows=False,
                 )
 
-        
-        max_attrs_per_node = max(len([k for k in pattern.nodes[n].keys() 
-                                     if k not in ['id', 'label', 'anchor', 'salesrank'] and pattern.nodes[n][k] is not None]) 
-                                for n in pattern.nodes())
-        
-        if edge_density > 0.5:  
+        max_attrs_per_node = max(
+            len(
+                [
+                    k
+                    for k in pattern.nodes[n].keys()
+                    if k not in ["id", "label", "anchor", "salesrank"]
+                    and pattern.nodes[n][k] is not None
+                ]
+            )
+            for n in pattern.nodes()
+        )
+
+        if edge_density > 0.5:
             font_size = max(6, min(9, 150 // (num_nodes + max_attrs_per_node * 5)))
-        elif edge_density > 0.3:  
+        elif edge_density > 0.3:
             font_size = max(7, min(10, 200 // (num_nodes + max_attrs_per_node * 3)))
-        else:  
+        else:
             font_size = max(8, min(12, 250 // (num_nodes + max_attrs_per_node * 2)))
-        
+
         for node, (x, y) in pos.items():
             label = node_labels[node]
             node_data = pattern.nodes[node]
-            is_anchor = node_data.get('anchor', 0) == 1
-            
+            is_anchor = node_data.get("anchor", 0) == 1
+
             if edge_density > 0.5:
                 pad = 0.15
             elif edge_density > 0.3:
                 pad = 0.2
             else:
                 pad = 0.3
-            
+
             bbox_props = dict(
-                facecolor='lightcoral' if is_anchor else (1, 0.8, 0.8, 0.6),
-                edgecolor='darkred' if is_anchor else 'gray',
+                facecolor="lightcoral" if is_anchor else (1, 0.8, 0.8, 0.6),
+                edgecolor="darkred" if is_anchor else "gray",
                 alpha=0.8,
-                boxstyle=f'round,pad={pad}'
+                boxstyle=f"round,pad={pad}",
             )
-            
-            plt.text(x, y, label, 
-                    fontsize=font_size, 
-                    fontweight='bold' if is_anchor else 'normal',
-                    color='black',
-                    ha='center', va='center',
-                    bbox=bbox_props)
+
+            plt.text(
+                x,
+                y,
+                label,
+                fontsize=font_size,
+                fontweight="bold" if is_anchor else "normal",
+                color="black",
+                ha="center",
+                va="center",
+                bbox=bbox_props,
+            )
 
         if edge_density < 0.5 and num_edges < 25:
             edge_labels = {}
             for u, v, data in pattern.edges(data=True):
-                edge_type = (data.get('type') or 
-                           data.get('label') or 
-                           data.get('input_label') or
-                           data.get('relation') or
-                           data.get('edge_type', 'default'))  # Fallback to 'default'
+                edge_type = (
+                    data.get("type")
+                    or data.get("label")
+                    or data.get("input_label")
+                    or data.get("relation")
+                    or data.get("edge_type", "default")
+                )  # Fallback to 'default'
                 if edge_type:
                     edge_labels[(u, v)] = str(edge_type)[:10]  # Truncate edge labels
 
             if edge_labels:
                 edge_font_size = max(5, font_size - 2)
-                nx.draw_networkx_edge_labels(pattern, pos, 
-                          edge_labels=edge_labels, 
-                          font_size=edge_font_size, 
-                          font_color='black',
-                          bbox=dict(facecolor='white', edgecolor='lightgray', 
-                                  alpha=0.8, boxstyle='round,pad=0.1'))
+                nx.draw_networkx_edge_labels(
+                    pattern,
+                    pos,
+                    edge_labels=edge_labels,
+                    font_size=edge_font_size,
+                    font_color="black",
+                    bbox=dict(
+                        facecolor="white",
+                        edgecolor="lightgray",
+                        alpha=0.8,
+                        boxstyle="round,pad=0.1",
+                    ),
+                )
 
         graph_type = "Directed" if pattern.is_directed() else "Undirected"
-        has_anchors = any(pattern.nodes[n].get('anchor', 0) == 1 for n in pattern.nodes())
+        has_anchors = any(
+            pattern.nodes[n].get("anchor", 0) == 1 for n in pattern.nodes()
+        )
         anchor_info = " (Red squares = anchor nodes)" if has_anchors else ""
 
         total_node_attrs = sum(
@@ -396,28 +472,29 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             density_info += " (Dense)"
         else:
             density_info += " (Sparse)"
-        
+
         title = f"{graph_type} Pattern Graph{anchor_info}\n"
-        title += f"(Size: {num_nodes} nodes, {num_edges} edges{attr_info}, {density_info})"
-        
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.axis('off')
+        title += (
+            f"(Size: {num_nodes} nodes, {num_edges} edges{attr_info}, {density_info})"
+        )
+
+        plt.title(title, fontsize=14, fontweight="bold")
+        plt.axis("off")
 
         if unique_edge_types and len(unique_edge_types) > 1:
-            x_pos = 1.2  
-            y_pos = 1.0  
-            
+            x_pos = 1.2
+            y_pos = 1.0
+
             edge_legend_elements = [
-                plt.Line2D([0], [0], 
-                          color=color, 
-                          linewidth=3, 
-                          label=f'{edge_type[:10]}')  # Truncate legend labels
+                plt.Line2D(
+                    [0], [0], color=color, linewidth=3, label=f"{edge_type[:10]}"
+                )  # Truncate legend labels
                 for edge_type, color in edge_color_map.items()
             ]
-            
+
             legend = plt.legend(
                 handles=edge_legend_elements,
-                loc='upper left',
+                loc="upper left",
                 bbox_to_anchor=(x_pos, y_pos),
                 borderaxespad=0.0,
                 framealpha=0.9,
@@ -425,54 +502,67 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                 fontsize=9,
             )
             legend.get_title().set_fontsize(10)
-            
+
             plt.tight_layout(rect=[0, 0, 0.85, 1])
         else:
             plt.tight_layout()
 
         # Generate a shorter filename
         pattern_info = [f"{num_nodes}-{count_by_size.get(num_nodes, 1)}"]
-        node_types = sorted(set(str(pattern.nodes[n].get('label', ''))[:10] for n in pattern.nodes()))  # Truncate labels
+        node_types = sorted(
+            set(str(pattern.nodes[n].get("label", ""))[:10] for n in pattern.nodes())
+        )  # Truncate labels
         if node_types:
-            pattern_info.append('nodes-' + '-'.join(node_types))
-        edge_types = sorted(set((data.get('type', '') or 'default')[:10] for _, _, data in pattern.edges(data=True)))
+            pattern_info.append("nodes-" + "-".join(node_types))
+        edge_types = sorted(
+            set(
+                (data.get("type", "") or "default")[:10]
+                for _, _, data in pattern.edges(data=True)
+            )
+        )
         if edge_types:
-            pattern_info.append('edges-' + '-'.join(edge_types))
+            pattern_info.append("edges-" + "-".join(edge_types))
         if has_anchors:
-            pattern_info.append('anchored')
+            pattern_info.append("anchored")
         if total_node_attrs > 0:
-            pattern_info.append(f'{min(total_node_attrs, 9)}attrs')  # Cap attributes
+            pattern_info.append(f"{min(total_node_attrs, 9)}attrs")  # Cap attributes
         if edge_density > 0.5:
-            pattern_info.append('very-dense')
+            pattern_info.append("very-dense")
         elif edge_density > 0.3:
-            pattern_info.append('dense')
+            pattern_info.append("dense")
         else:
-            pattern_info.append('sparse')
+            pattern_info.append("sparse")
 
         graph_type_short = "dir" if pattern.is_directed() else "undir"
         filename = f"{graph_type_short}_{'_'.join(pattern_info)}"
-        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)  # Sanitize filename
+        filename = re.sub(r'[<>:"/\\|?*]', "_", filename)  # Sanitize filename
         if len(filename) > 200:
-            filename = filename[:190] + '_' + str(hash(filename) % 1000) + '.png'
+            filename = filename[:190] + "_" + str(hash(filename) % 1000) + ".png"
 
         # Ensure output directory exists
         os.makedirs("plots/cluster", exist_ok=True)
-        plt.savefig(f"plots/cluster/{filename}.png", bbox_inches='tight', dpi=300)
-        plt.savefig(f"plots/cluster/{filename}.pdf", bbox_inches='tight')
+        plt.savefig(f"plots/cluster/{filename}.png", bbox_inches="tight", dpi=300)
+        plt.savefig(f"plots/cluster/{filename}.pdf", bbox_inches="tight")
         plt.close()  # Clean up figure
-        print(f"Successfully saved static plot to plots/cluster/{filename}.png", flush=True)
+        print(
+            f"Successfully saved static plot to plots/cluster/{filename}.png",
+            flush=True,
+        )
 
         # Interactive visualization using visualizer.py
-        if hasattr(args, 'interactive') and args.interactive:
+        if hasattr(args, "interactive") and args.interactive:
             success = visualize_pattern_graph_ext(pattern, args, count_by_size)
             if success:
-                print(f"Successfully generated interactive HTML for pattern", flush=True)
+                print(
+                    f"Successfully generated interactive HTML for pattern", flush=True
+                )
             else:
                 print(f"Failed to generate interactive HTML for pattern", flush=True)
         return True
     except Exception as e:
         print(f"Error visualizing pattern graph: {e}", flush=True)
         return False
+
 
 def pattern_growth(dataset, task, args):
     start_time = time.time()
@@ -484,8 +574,7 @@ def pattern_growth(dataset, task, args):
         model = models.OrderEmbedder(1, args.hidden_dim, args)
     model.to(utils.get_device())
     model.eval()
-    model.load_state_dict(torch.load(args.model_path,
-        map_location=utils.get_device()))
+    model.load_state_dict(torch.load(args.model_path, map_location=utils.get_device()))
 
     if task == "graph-labeled":
         dataset, labels = dataset
@@ -494,21 +583,24 @@ def pattern_growth(dataset, task, args):
     print(len(dataset), "graphs")
     print("search strategy:", args.search_strategy)
     print("graph type:", args.graph_type)
-    if task == "graph-labeled": print("using label 0")
-    
+    if task == "graph-labeled":
+        print("using label 0")
+
     graphs = []
     for i, graph in enumerate(dataset):
-        if task == "graph-labeled" and labels[i] != 0: continue
-        if task == "graph-truncate" and i >= 1000: break
+        if task == "graph-labeled" and labels[i] != 0:
+            continue
+        if task == "graph-truncate" and i >= 1000:
+            break
         if not type(graph) == nx.Graph and not type(graph) == nx.DiGraph:
             graph = pyg_utils.to_networkx(graph).to_undirected()
             for node in graph.nodes():
-                if 'label' not in graph.nodes[node]:
-                    graph.nodes[node]['label'] = str(node)
-                if 'id' not in graph.nodes[node]:
-                    graph.nodes[node]['id'] = str(node)
+                if "label" not in graph.nodes[node]:
+                    graph.nodes[node]["label"] = str(node)
+                if "id" not in graph.nodes[node]:
+                    graph.nodes[node]["id"] = str(node)
         graphs.append(graph)
-    
+
     if args.use_whole_graphs:
         neighs = graphs
     else:
@@ -517,35 +609,45 @@ def pattern_growth(dataset, task, args):
             for i, graph in enumerate(graphs):
                 print(i)
                 for j, node in enumerate(graph.nodes):
-                    if len(dataset) <= 10 and j % 100 == 0: print(i, j)
+                    if len(dataset) <= 10 and j % 100 == 0:
+                        print(i, j)
                     if args.use_whole_graphs:
                         neigh = graph.nodes
                     else:
-                        neigh = list(nx.single_source_shortest_path_length(graph,
-                            node, cutoff=args.radius).keys())
+                        neigh = list(
+                            nx.single_source_shortest_path_length(
+                                graph, node, cutoff=args.radius
+                            ).keys()
+                        )
                         if args.subgraph_sample_size != 0:
-                            neigh = random.sample(neigh, min(len(neigh),
-                                args.subgraph_sample_size))
+                            neigh = random.sample(
+                                neigh, min(len(neigh), args.subgraph_sample_size)
+                            )
                     if len(neigh) > 1:
                         subgraph = graph.subgraph(neigh)
                         if args.subgraph_sample_size != 0:
-                            subgraph = subgraph.subgraph(max(
-                                nx.connected_components(subgraph), key=len))
-                        
+                            subgraph = subgraph.subgraph(
+                                max(nx.connected_components(subgraph), key=len)
+                            )
+
                         # Preserve anchor and type attributes if added elsewhere
-                        orig_attrs = {n: subgraph.nodes[n].copy() for n in subgraph.nodes()}
-                        edge_attrs = {(u,v): subgraph.edges[u,v].copy() 
-                                    for u,v in subgraph.edges()}
-                        
+                        orig_attrs = {
+                            n: subgraph.nodes[n].copy() for n in subgraph.nodes()
+                        }
+                        edge_attrs = {
+                            (u, v): subgraph.edges[u, v].copy()
+                            for u, v in subgraph.edges()
+                        }
+
                         mapping = {old: new for new, old in enumerate(subgraph.nodes())}
                         subgraph = nx.relabel_nodes(subgraph, mapping)
-                        
+
                         for old, new in mapping.items():
                             subgraph.nodes[new].update(orig_attrs[old])
-                        
+
                         for (old_u, old_v), attrs in edge_attrs.items():
                             subgraph.edges[mapping[old_u], mapping[old_v]].update(attrs)
-                        
+
                         subgraph.add_edge(0, 0)
                         neighs.append(subgraph)
                         if args.node_anchored:
@@ -553,9 +655,13 @@ def pattern_growth(dataset, task, args):
         elif args.sample_method == "tree":
             start_time = time.time()
             for j in tqdm(range(args.n_neighborhoods)):
-                graph, neigh = utils.sample_neigh(graphs,
-                    random.randint(args.min_neighborhood_size,
-                        args.max_neighborhood_size), args.graph_type)
+                graph, neigh = utils.sample_neigh(
+                    graphs,
+                    random.randint(
+                        args.min_neighborhood_size, args.max_neighborhood_size
+                    ),
+                    args.graph_type,
+                )
                 neigh = graph.subgraph(neigh)
                 neigh = nx.convert_node_labels_to_integers(neigh)
                 neigh.add_edge(0, 0)
@@ -567,56 +673,95 @@ def pattern_growth(dataset, task, args):
     if len(neighs) % args.batch_size != 0:
         print("WARNING: number of graphs not multiple of batch size")
     for i in range(len(neighs) // args.batch_size):
-        top = (i+1)*args.batch_size
+        top = (i + 1) * args.batch_size
         with torch.no_grad():
-            batch = utils.batch_nx_graphs(neighs[i*args.batch_size:top],
-                anchors=anchors if args.node_anchored else None)
+            batch = utils.batch_nx_graphs(
+                neighs[i * args.batch_size : top],
+                anchors=anchors if args.node_anchored else None,
+            )
             emb = model.emb_model(batch)
             emb = emb.to(torch.device("cpu"))
         embs.append(emb)
 
     if args.analyze:
         embs_np = torch.stack(embs).numpy()
-        plt.scatter(embs_np[:,0], embs_np[:,1], label="node neighborhood")
+        plt.scatter(embs_np[:, 0], embs_np[:, 1], label="node neighborhood")
 
-    if not hasattr(args, 'n_workers'):
+    if not hasattr(args, "n_workers"):
         args.n_workers = mp.cpu_count()
 
     # Initialize search agent
     if args.search_strategy == "mcts":
         assert args.method_type == "order"
         if args.memory_efficient:
-            agent = MemoryEfficientMCTSAgent(args.min_pattern_size, args.max_pattern_size,
-                model, graphs, embs, node_anchored=args.node_anchored,
-                analyze=args.analyze, out_batch_size=args.out_batch_size)
+            agent = MemoryEfficientMCTSAgent(
+                args.min_pattern_size,
+                args.max_pattern_size,
+                model,
+                graphs,
+                embs,
+                node_anchored=args.node_anchored,
+                analyze=args.analyze,
+                out_batch_size=args.out_batch_size,
+            )
         else:
-            agent = MCTSSearchAgent(args.min_pattern_size, args.max_pattern_size,
-                model, graphs, embs, node_anchored=args.node_anchored,
-                analyze=args.analyze, out_batch_size=args.out_batch_size)
+            agent = MCTSSearchAgent(
+                args.min_pattern_size,
+                args.max_pattern_size,
+                model,
+                graphs,
+                embs,
+                node_anchored=args.node_anchored,
+                analyze=args.analyze,
+                out_batch_size=args.out_batch_size,
+            )
     elif args.search_strategy == "greedy":
         if args.memory_efficient:
-            agent = MemoryEfficientGreedyAgent(args.min_pattern_size, args.max_pattern_size,
-                model, graphs, embs, node_anchored=args.node_anchored,
-                analyze=args.analyze, model_type=args.method_type,
-                out_batch_size=args.out_batch_size)
+            agent = MemoryEfficientGreedyAgent(
+                args.min_pattern_size,
+                args.max_pattern_size,
+                model,
+                graphs,
+                embs,
+                node_anchored=args.node_anchored,
+                analyze=args.analyze,
+                model_type=args.method_type,
+                out_batch_size=args.out_batch_size,
+            )
         else:
-            agent = GreedySearchAgent(args.min_pattern_size, args.max_pattern_size,
-                model, graphs, embs, node_anchored=args.node_anchored,
-                analyze=args.analyze, model_type=args.method_type,
-                out_batch_size=args.out_batch_size, n_beams=1,
-                n_workers=args.n_workers)
+            agent = GreedySearchAgent(
+                args.min_pattern_size,
+                args.max_pattern_size,
+                model,
+                graphs,
+                embs,
+                node_anchored=args.node_anchored,
+                analyze=args.analyze,
+                model_type=args.method_type,
+                out_batch_size=args.out_batch_size,
+                n_beams=1,
+                n_workers=args.n_workers,
+            )
         agent.args = args
     elif args.search_strategy == "beam":
-        agent = BeamSearchAgent(args.min_pattern_size, args.max_pattern_size,
-            model, graphs, embs, node_anchored=args.node_anchored,
-            analyze=args.analyze, model_type=args.method_type,
-            out_batch_size=args.out_batch_size, beam_width=args.beam_width)
-    
+        agent = BeamSearchAgent(
+            args.min_pattern_size,
+            args.max_pattern_size,
+            model,
+            graphs,
+            embs,
+            node_anchored=args.node_anchored,
+            analyze=args.analyze,
+            model_type=args.method_type,
+            out_batch_size=args.out_batch_size,
+            beam_width=args.beam_width,
+        )
+
     # Run search
     out_graphs = agent.run_search(args.n_trials)
     if not out_graphs:
         print("Warning: No patterns discovered by search agent.", flush=True)
-    
+
     print(time.time() - start_time, "TOTAL TIME")
     x = int(time.time() - start_time)
     print(x // 60, "mins", x % 60, "secs")
@@ -624,48 +769,52 @@ def pattern_growth(dataset, task, args):
     # Visualize discovered patterns with both static and interactive outputs
     count_by_size = defaultdict(int)
     warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
-    
+
     successful_visualizations = 0
     for pattern in out_graphs:
         # Static visualization (PNG/PDF)
         if visualize_pattern_graph(pattern, args, count_by_size):
             successful_visualizations += 1
-        
+
         # Interactive visualization (HTML)
         visualize_pattern_graph_ext(pattern, args, count_by_size)
         count_by_size[len(pattern)] += 1
 
-    print(f"Successfully visualized {successful_visualizations}/{len(out_graphs)} patterns", flush=True)
+    print(
+        f"Successfully visualized {successful_visualizations}/{len(out_graphs)} patterns",
+        flush=True,
+    )
 
     # Save results
     if not os.path.exists("/app/results"):  # Use absolute path
         os.makedirs("/app/results")
     with open(args.out_path, "wb") as f:
         pickle.dump(out_graphs, f)
-    
+
     return out_graphs
+
 
 def main():
     if not os.path.exists("/app/plots/cluster"):  # Use absolute path
         os.makedirs("/app/plots/cluster")
 
-    parser = argparse.ArgumentParser(description='Decoder arguments')
+    parser = argparse.ArgumentParser(description="Decoder arguments")
     parse_encoder(parser)
     parse_decoder(parser)
-    
+
     args = parser.parse_args()
 
     print("Using dataset {}".format(args.dataset))
     print("Graph type: {}".format(args.graph_type))
 
     # Load dataset based on graph type preference
-    if args.dataset.endswith('.pkl'):
-        with open(args.dataset, 'rb') as f:
+    if args.dataset.endswith(".pkl"):
+        with open(args.dataset, "rb") as f:
             data = pickle.load(f)
-            
+
             if isinstance(data, (nx.Graph, nx.DiGraph)):
                 graph = data
-                
+
                 # Convert graph type if needed
                 if args.graph_type == "directed" and not graph.is_directed():
                     print("Converting undirected graph to directed...")
@@ -673,49 +822,58 @@ def main():
                 elif args.graph_type == "undirected" and graph.is_directed():
                     print("Converting directed graph to undirected...")
                     graph = graph.to_undirected()
-                
+
                 graph_type = "directed" if graph.is_directed() else "undirected"
-                print(f"Using NetworkX {graph_type} graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
-                
+                print(
+                    f"Using NetworkX {graph_type} graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges"
+                )
+
                 # Show edge direction information if available
                 sample_edges = list(graph.edges(data=True))[:3]
                 if sample_edges:
                     print("Sample edge attributes:")
                     for u, v, attrs in sample_edges:
-                        direction_info = attrs.get('direction', f"{u} -> {v}" if graph.is_directed() else f"{u} -- {v}")
-                        edge_type = attrs.get('type', 'unknown')
+                        direction_info = attrs.get(
+                            "direction",
+                            f"{u} -> {v}" if graph.is_directed() else f"{u} -- {v}",
+                        )
+                        edge_type = attrs.get("type", "unknown")
                         print(f"  {direction_info} (type: {edge_type})")
-                
-            elif isinstance(data, dict) and 'nodes' in data and 'edges' in data:
+
+            elif isinstance(data, dict) and "nodes" in data and "edges" in data:
                 # Create graph based on specified type
                 if args.graph_type == "directed":
                     graph = nx.DiGraph()
                 else:
                     graph = nx.Graph()
-                graph.add_nodes_from(data['nodes'])
-                graph.add_edges_from(data['edges'])
-                print(f"Created {args.graph_type} graph from dict format with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
+                graph.add_nodes_from(data["nodes"])
+                graph.add_edges_from(data["edges"])
+                print(
+                    f"Created {args.graph_type} graph from dict format with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges"
+                )
             else:
-                raise ValueError(f"Unknown pickle format. Expected NetworkX graph or dict with 'nodes'/'edges' keys, got {type(data)}")
-                
+                raise ValueError(
+                    f"Unknown pickle format. Expected NetworkX graph or dict with 'nodes'/'edges' keys, got {type(data)}"
+                )
+
         dataset = [graph]
-        task = 'graph'
-    elif args.dataset == 'enzymes':
-        dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
-        task = 'graph'
-    elif args.dataset == 'cox2':
-        dataset = TUDataset(root='/tmp/cox2', name='COX2')
-        task = 'graph'
-    elif args.dataset == 'reddit-binary':
-        dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
-        task = 'graph'
-    elif args.dataset == 'dblp':
-        dataset = TUDataset(root='/tmp/dblp', name='DBLP_v1')
-        task = 'graph-truncate'
-    elif args.dataset == 'coil':
-        dataset = TUDataset(root='/tmp/coil', name='COIL-DEL')
-        task = 'graph'
-    elif args.dataset.startswith('roadnet-'):
+        task = "graph"
+    elif args.dataset == "enzymes":
+        dataset = TUDataset(root="/tmp/ENZYMES", name="ENZYMES")
+        task = "graph"
+    elif args.dataset == "cox2":
+        dataset = TUDataset(root="/tmp/cox2", name="COX2")
+        task = "graph"
+    elif args.dataset == "reddit-binary":
+        dataset = TUDataset(root="/tmp/REDDIT-BINARY", name="REDDIT-BINARY")
+        task = "graph"
+    elif args.dataset == "dblp":
+        dataset = TUDataset(root="/tmp/dblp", name="DBLP_v1")
+        task = "graph-truncate"
+    elif args.dataset == "coil":
+        dataset = TUDataset(root="/tmp/coil", name="COIL-DEL")
+        task = "graph"
+    elif args.dataset.startswith("roadnet-"):
         # Road networks are typically undirected
         graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
         with open("data/{}.txt".format(args.dataset), "r") as f:
@@ -724,31 +882,35 @@ def main():
                     a, b = row.split("\t")
                     graph.add_edge(int(a), int(b))
         dataset = [graph]
-        task = 'graph'
+        task = "graph"
     elif args.dataset == "ppi":
         dataset = PPI(root="/tmp/PPI")
-        task = 'graph'
-    elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
-        fn = {"diseasome": "bio-diseasome.mtx",
+        task = "graph"
+    elif args.dataset in ["diseasome", "usroads", "mn-roads", "infect"]:
+        fn = {
+            "diseasome": "bio-diseasome.mtx",
             "usroads": "road-usroads.mtx",
             "mn-roads": "mn-roads.mtx",
-            "infect": "infect-dublin.edges"}
+            "infect": "infect-dublin.edges",
+        }
         # These are typically undirected networks
         graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
         with open("data/{}".format(fn[args.dataset]), "r") as f:
             for line in f:
-                if not line.strip(): continue
+                if not line.strip():
+                    continue
                 a, b = line.strip().split(" ")
                 graph.add_edge(int(a), int(b))
         dataset = [graph]
-        task = 'graph'
-    elif args.dataset.startswith('plant-'):
+        task = "graph"
+    elif args.dataset.startswith("plant-"):
         size = int(args.dataset.split("-")[-1])
         dataset = make_plant_dataset(size)
-        task = 'graph'
+        task = "graph"
 
     # Run pattern growth
     pattern_growth(dataset, task, args)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

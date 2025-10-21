@@ -137,7 +137,7 @@ class CustomGraphDataset:
             self.graph = self.full_graph.G
 
     def _load_graph(self):
-        with open(self.graph_pkl_path, 'rb') as f:
+        with open(self.graph_pkl_path, "rb") as f:
             return pickle.load(f)
 
     def _build_graph(self):
@@ -145,10 +145,12 @@ class CustomGraphDataset:
         G.add_nodes_from(self.raw_data["nodes"])
 
         cleaned_edges = []
-        for edge in self.raw_data['edges']:
+        for edge in self.raw_data["edges"]:
             if len(edge) == 3:
                 u, v, attr = edge
-                cleaned_attr = {k: v for k, v in attr.items() if isinstance(v, (int, float))}
+                cleaned_attr = {
+                    k: v for k, v in attr.items() if isinstance(v, (int, float))
+                }
                 cleaned_edges.append((u, v, cleaned_attr))
             else:
                 cleaned_edges.append(edge)
@@ -161,7 +163,9 @@ class CustomGraphDataset:
             if "id" not in attrs:
                 attrs["id"] = str(node)
             if "label" not in attrs:
-                attrs["label"] = attrs.get("group", f"Product {node}")
+                attrs["label"] = attrs.get(
+                    "group", attrs.get("title", f"Product {node}")
+                )
             # Numeric defaults (DeepSNAP tensorizes ints/floats)
             for k, default_val in (
                 ("salesrank", -1),
@@ -202,7 +206,7 @@ class CustomGraphDataset:
                     visited.add(neighbor)
                     queue.append(neighbor)
             subg = graph.subgraph(visited).copy()
-           
+
             if subg.number_of_edges() > 0 and nx.is_connected(subg):
                 return subg
         # fallback: largest connected component
@@ -217,11 +221,12 @@ class CustomGraphDataset:
         if anchor is None:
             anchor = random.choice(list(g.nodes))
         for v in g.nodes:
-            g.nodes[v]["node_feature"] = (torch.ones(1) if anchor == v else torch.zeros(1))
+            g.nodes[v]["node_feature"] = (
+                torch.ones(1) if anchor == v else torch.zeros(1)
+            )
         return g
 
     def gen_batch(self, batch_size, *args, train=True, **kwargs):
-
         """
         Generate a batch of positive and negative graph pairs
         Returns:
@@ -233,29 +238,31 @@ class CustomGraphDataset:
         pos_a, pos_b, neg_a, neg_b = [], [], [], []
         tries = 0
         max_tries = 20  # Prevent infinite loops
-        
+
         # Generate positive pairs (nested subgraphs from same graph)
         while len(pos_a) < batch_size // 2 and tries < max_tries:
             size_a = random.randint(self.min_size + 1, self.max_size)
             size_b = random.randint(self.min_size, size_a - 1)
-            
+
             # Sample subgraphs
             sub_a = self._bfs_sample_subgraph(self.graph, size_a)
             sub_b = self._bfs_sample_subgraph(sub_a, size_b)
-            
+
             # Validate subgraphs
             if sub_a.number_of_edges() > 0 and sub_b.number_of_edges() > 0:
                 # Handle node anchoring if needed
                 if self.node_anchored:
                     anchor = random.choice(list(sub_a.nodes))
                     sub_a = self._add_anchor(sub_a, anchor)
-                    sub_b = self._add_anchor(sub_b, anchor if anchor in sub_b.nodes else None)
-                
+                    sub_b = self._add_anchor(
+                        sub_b, anchor if anchor in sub_b.nodes else None
+                    )
+
                 # Convert to DSGraph before adding to batch
                 pos_a.append(DSGraph(sub_a))
                 pos_b.append(DSGraph(sub_b))
             tries += 1
-        
+
         tries = 0
         # Generate negative pairs (subgraphs from different parts of graph)
         while len(neg_a) < batch_size // 2 and tries < max_tries:
@@ -786,10 +793,11 @@ class DiskImbalancedDataSource(OTFSynDataSource):
         neg_b = utils.batch_nx_graphs(neg_b)
         self.batch_idx += 1
         return pos_a, pos_b, neg_a, neg_b
-    
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
+
     plt.rcParams.update({"font.size": 14})
     for name in ["enzymes", "reddit-binary", "cox2"]:
         data_source = DiskDataSource(name)

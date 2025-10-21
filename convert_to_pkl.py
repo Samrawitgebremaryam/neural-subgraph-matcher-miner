@@ -211,7 +211,7 @@ def convert_to_pkl(
                 meta = metadata.get(meta_id)
         if meta:
             # Use metadata values and ensure label comes from group when available
-            label = meta.get("group", f"Product {node_id}")
+            label = meta.get("group", meta.get("title", f"Product {node_id}"))
             # coerce numeric fields to safe defaults (avoid None values)
             salesrank_val = meta.get("salesrank")
             salesrank_val = int(salesrank_val) if isinstance(salesrank_val, int) else -1
