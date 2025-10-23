@@ -95,7 +95,7 @@ def parse_decoder(parser):
         n_neighborhoods=2000,
         n_trials=1000,
         decode_thresh=0.5,
-        radius=3,
+        radius=2,
         subgraph_sample_size=0,
         sample_method="tree",
         skip="learnable",
@@ -105,7 +105,7 @@ def parse_decoder(parser):
         min_neighborhood_size=5,
         max_neighborhood_size=10,
         search_strategy="greedy",
-        out_batch_size=10,
+        out_batch_size=3,
         node_anchored=True,
         memory_limit=1000000,
     )
