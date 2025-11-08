@@ -91,23 +91,30 @@ def make_plant_dataset(size):
         graphs.append(graph)
     return graphs
 
-def _process_chunk(args_tuple):
-    chunk_dataset, task, args, chunk_index, total_chunks = args_tuple
-    start_time = time.time()
-    last_print = start_time
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}", flush=True)
-    try:
-        result = None
-        while result is None:
-            now = time.time()
-            if now - last_print >= 10:
-                print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} still processing chunk {chunk_index+1}/{total_chunks} ({int(now-start_time)}s elapsed)", flush=True)
-                last_print = now
-            result = pattern_growth(chunk_dataset, task, args)
-        print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {int(time.time()-start_time)}s", flush=True)
-        return result
-    except Exception as e:
-        print(f"Error processing chunk {chunk_index}: {e}", flush=True)
+def _process_chunk(args_tuple):  
+    chunk_dataset, task, args, chunk_index, total_chunks = args_tuple  
+    start_time = time.time()  
+      
+    # Disable nested multiprocessing for search agents  
+    original_n_workers = getattr(args, 'n_workers', 4)  
+    args.n_workers = 1  # Force single-threaded search within chunks  
+      
+    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}", flush=True)  
+      
+    try:  
+        result = pattern_growth(chunk_dataset, task, args)  
+          
+        elapsed = int(time.time() - start_time)  
+        print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {elapsed}s ({len(result)} patterns)", flush=True)  
+          
+        # Restore original n_workers  
+        args.n_workers = original_n_workers  
+        return result  
+    except Exception as e:  
+        print(f"[{time.strftime('%H:%M:%S')}] ERROR in chunk {chunk_index+1}: {str(e)}", flush=True)  
+        import traceback  
+        traceback.print_exc()  
+        args.n_workers = original_n_workers  
         return []
 
 def pattern_growth_streaming(dataset, task, args):    
@@ -138,7 +145,10 @@ def pattern_growth_streaming(dataset, task, args):
     # Split graph into chunks  
     print(f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...")  
     graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)  
-      
+    # Filter out tiny chunks that won't yield meaningful patterns  
+    min_chunk_size = max(args.min_pattern_size, 5)  
+    graph_chunks = [chunk for chunk in graph_chunks if chunk.number_of_nodes() >= min_chunk_size]  
+    print(f"Filtered to {len(graph_chunks)} chunks with >= {min_chunk_size} nodes") 
     print(f"Created {len(graph_chunks)} chunks")  
     for i, chunk in enumerate(graph_chunks):  
         print(f"  Chunk {i+1}: {chunk.number_of_nodes()} nodes, {chunk.number_of_edges()} edges")  
