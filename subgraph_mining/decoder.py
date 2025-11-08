@@ -103,7 +103,7 @@ def _process_chunk(args_tuple):
             if now - last_print >= 10:
                 print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} still processing chunk {chunk_index+1}/{total_chunks} ({int(now-start_time)}s elapsed)", flush=True)
                 last_print = now
-            result = pattern_growth([chunk_dataset], task, args)
+            result = pattern_growth(chunk_dataset, task, args)
         print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {int(time.time()-start_time)}s", flush=True)
         return result
     except Exception as e:
