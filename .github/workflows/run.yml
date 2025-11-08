@@ -14,6 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # Pull prebuilt Docker image from Docker Hub
       - name: Pull prebuilt Docker image
         run: |
           echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | docker login -u samribahta --password-stdin
@@ -38,6 +39,7 @@ jobs:
           echo "total_cpus=$TOTAL_CPUS" >> $GITHUB_OUTPUT
           echo "percent_used=$PERCENT_USED" >> $GITHUB_OUTPUT
 
+      #  Run decoder using prebuilt Docker image
       - name: Run decoder in Docker container
         run: |
           docker run --rm \
@@ -62,7 +64,7 @@ jobs:
       #     docker run --rm \
       #       -v ${{ github.workspace }}:/app \
       #       -e PYTHONUNBUFFERED=1 \
-      #       decoder-image:latest \
+      #       samribahta/decoder-image:latest \
       #       bash -c "
       #         set -e
       #         export PYTHONPATH=/app
@@ -81,7 +83,7 @@ jobs:
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -e PYTHONUNBUFFERED=1 \
-            decoder-image:latest \
+            samribahta/decoder-image:latest \
             bash -c "
               set -e
               echo 'Starting matcher run on custom gene graph...'
@@ -95,6 +97,7 @@ jobs:
               ls -la /app/results
               ls -la /app/plots
             "
+
       - name: Check for generated files
         run: |
           echo "Checking plots directory:"
