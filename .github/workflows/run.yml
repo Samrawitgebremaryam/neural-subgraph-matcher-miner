@@ -9,37 +9,15 @@ on:
 
 jobs:
   run-decoder:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Cache Docker layers
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          load: true
-          tags: decoder-image:latest
-          cache-from: |
-            type=local,src=/tmp/.buildx-cache
-          cache-to: |
-            type=local,dest=/tmp/.buildx-cache-new,mode=max
-
-      - name: Move cache
+      - name: Pull prebuilt Docker image
         run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | docker login -u samribahta --password-stdin
+          docker pull samribahta/decoder-image:latest
 
       - name: Create output directories
         run: |
@@ -65,7 +43,7 @@ jobs:
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -e PYTHONUNBUFFERED=1 \
-            decoder-image:latest \
+            samribahta/decoder-image:latest \
             bash -c "
               set -e
               echo 'Starting decoder run...'
@@ -78,7 +56,7 @@ jobs:
               echo 'Checking output directories...'
               ls -la /app/plots/cluster
               ls -la /app/results
-              "
+            "
       # - name: Run pattern counter in Docker container
       #   run: |
       #     docker run --rm \
