@@ -49,10 +49,7 @@ from sklearn.decomposition import PCA
 import warnings 
 
 def analyze_graph_for_streaming(graph, args):  
-    """  
-    Analyze graph characteristics to determine if streaming mode is beneficial.  
-    Returns (use_streaming, reason, graph_stats).  
-    """  
+    """Analyze graph characteristics to decide on streaming mode."""  
     import random  
       
     # Calculate basic metrics  
@@ -74,63 +71,48 @@ def analyze_graph_for_streaming(graph, args):
     else:  
         n_components = nx.number_connected_components(graph)  
       
-    # Estimate memory usage (rough approximation)  
-    estimated_memory_mb = (num_nodes * 1000 + num_edges * 500) / (1024 * 1024)  
+    # Estimate memory  
+    estimated_memory_mb = (num_nodes * 200 + num_edges * 100) / 1024  
       
-    graph_stats = {  
+    # Decision logic  
+    use_streaming = False  
+    reason = ""  
+      
+    if args.use_streaming:  
+        use_streaming = True  
+        reason = "explicitly requested via --use_streaming flag"  
+    elif num_nodes < 10000:  
+        use_streaming = False  
+        reason = f"small graph ({num_nodes} nodes), standard mode more efficient"  
+    elif num_nodes > args.auto_streaming_threshold:  
+        if avg_degree < 2.0:  
+            use_streaming = False  
+            reason = f"sparse disconnected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        elif n_components > 100:  
+            use_streaming = False  
+            reason = f"too many disconnected components ({n_components}), chunking inefficient"  
+        else:  
+            use_streaming = True  
+            reason = f"large well-connected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+    elif 10000 <= num_nodes <= args.auto_streaming_threshold:  
+        if avg_degree > args.dense_graph_threshold and clustering_coef > 0.2:  
+            use_streaming = True  
+            reason = f"dense clustered graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        else:  
+            use_streaming = False  
+            reason = f"medium graph, standard mode sufficient (degree={avg_degree:.2f})"  
+      
+    # Return as dictionary  
+    return {  
+        'use_streaming': use_streaming,  
+        'reason': reason,  
         'num_nodes': num_nodes,  
         'num_edges': num_edges,  
         'avg_degree': avg_degree,  
         'clustering_coef': clustering_coef,  
         'n_components': n_components,  
         'estimated_memory_mb': estimated_memory_mb  
-    }  
-      
-    # Decision logic  
-    use_streaming = False  
-    reason = ""  
-      
-    # Force streaming if explicitly requested  
-    if args.use_streaming:  
-        use_streaming = True  
-        reason = "explicitly requested via --use_streaming flag"  
-        return use_streaming, reason, graph_stats  
-      
-    # Small graphs: never use streaming (overhead not worth it)  
-    if num_nodes < 10000:  
-        use_streaming = False  
-        reason = f"small graph ({num_nodes} nodes), overhead not beneficial"  
-        return use_streaming, reason, graph_stats  
-      
-    # Very large graphs: check density and connectivity  
-    if num_nodes > args.auto_streaming_threshold:  
-        # Extremely sparse disconnected graphs: don't use streaming  
-        if avg_degree < 2.0 and clustering_coef < 0.15:  
-            use_streaming = False  
-            reason = f"sparse disconnected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
-        # Too many disconnected components: chunking inefficient  
-        elif n_components > args.max_components_threshold:  
-            use_streaming = False  
-            reason = f"too many disconnected components ({n_components}), chunking inefficient"  
-        # Well-connected large graph: use streaming  
-        else:  
-            use_streaming = True  
-            reason = f"large well-connected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
-        return use_streaming, reason, graph_stats  
-      
-    # Medium graphs (10K-50K nodes): density-based decision  
-    if 10000 <= num_nodes <= args.auto_streaming_threshold:  
-        # Dense clustered graphs benefit from chunking  
-        if avg_degree > args.dense_graph_threshold and clustering_coef > 0.2:  
-            use_streaming = True  
-            reason = f"dense clustered graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
-        # Sparse or poorly clustered: use standard mode  
-        else:  
-            use_streaming = False  
-            reason = f"medium graph with low density/clustering (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
-        return use_streaming, reason, graph_stats  
-      
-    return use_streaming, reason, graph_stats
+    }
 
 def bfs_chunk(graph, start_node, max_size):
     visited = set([start_node])
