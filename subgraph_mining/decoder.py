@@ -143,8 +143,13 @@ def pattern_growth_streaming(dataset, task, args):
     print(f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...", flush=True)  
     graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)  
       
-    # Filter out tiny chunks  
-    min_chunk_size = max(args.min_pattern_size, 5)  
+    # For sparse graphs, use larger minimum to reduce overhead      
+    if avg_degree < 2.0:    
+        min_chunk_size = max(args.min_pattern_size, 20)  # Skip very small components    
+        print(f"Sparse graph detected (avg degree < 2.0), using min chunk size: {min_chunk_size}", flush=True)  
+    else:    
+        min_chunk_size = max(args.min_pattern_size, 5)
+          
     graph_chunks = [chunk for chunk in graph_chunks if chunk.number_of_nodes() >= min_chunk_size]  
     print(f"Filtered to {len(graph_chunks)} chunks with >= {min_chunk_size} nodes", flush=True)  
       
@@ -152,15 +157,25 @@ def pattern_growth_streaming(dataset, task, args):
     for i, chunk in enumerate(graph_chunks[:10]):  # Show first 10  
         print(f"  Chunk {i+1}: {chunk.number_of_nodes()} nodes, {chunk.number_of_edges()} edges", flush=True)  
       
+    if len(graph_chunks) > 10:  
+        print(f"  ... and {len(graph_chunks) - 10} more chunks", flush=True)  
+     
     # Process chunks in parallel  
     all_discovered_patterns = []  
     total_chunks = len(graph_chunks)  
-      
+        
     # Wrap each chunk in a list for pattern_growth  
     chunk_args = [([chunk], task, args, idx, total_chunks)   
                   for idx, chunk in enumerate(graph_chunks)]  
       
     print(f"\nProcessing {total_chunks} chunks with {args.streaming_workers} workers...", flush=True)  
+      
+    # Estimate processing time based on chunk sizes  
+    avg_chunk_size = sum(c.number_of_nodes() for c in graph_chunks) / len(graph_chunks)  
+    estimated_time_per_chunk = 60 if avg_chunk_size > 50 else 30  # seconds  
+    estimated_total_minutes = (total_chunks * estimated_time_per_chunk) / (60 * args.streaming_workers)  
+    print(f"Estimated time: {estimated_total_minutes:.1f} minutes", flush=True)  
+      
     with mp.Pool(processes=args.streaming_workers) as pool:  
         results = pool.map(_process_chunk, chunk_args)  
       
