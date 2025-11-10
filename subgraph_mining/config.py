@@ -47,7 +47,11 @@ def parse_decoder(parser):
     dec_parser.add_argument('--streaming_workers', type=int, default=4,  
                         help='Number of parallel workers for streaming mode')  
     dec_parser.add_argument('--dense_graph_threshold', type=float, default=50.0,  
-                        help='Average degree threshold to consider graph dense')
+                        help='Average degree threshold for dense graphs')  
+    dec_parser.add_argument('--clustering_threshold', type=float, default=0.15,  
+                        help='Clustering coefficient threshold for community structure')  
+    dec_parser.add_argument('--max_components_threshold', type=int, default=100,  
+                        help='Maximum number of components for efficient chunking')
     
     # Beam search parameter
     parser.add_argument('--beam_width', type=int, default=5,
