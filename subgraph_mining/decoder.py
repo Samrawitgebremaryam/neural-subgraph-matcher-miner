@@ -52,8 +52,73 @@ import networkx as nx
 import torch.multiprocessing as mp
 from sklearn.decomposition import PCA
 
-import warnings
+import warnings 
 
+def analyze_graph_for_streaming(graph, args):  
+    """Analyze graph characteristics to decide on streaming mode."""  
+    import random  
+      
+    # Calculate basic metrics  
+    num_nodes = graph.number_of_nodes()  
+    num_edges = graph.number_of_edges()  
+    avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
+      
+    # Calculate clustering coefficient (sample for large graphs)  
+    if num_nodes > 10000:  
+        sample_nodes = random.sample(list(graph.nodes()), min(1000, num_nodes))  
+        subgraph = graph.subgraph(sample_nodes)  
+        clustering_coef = nx.average_clustering(subgraph)  
+    else:  
+        clustering_coef = nx.average_clustering(graph)  
+      
+    # Count connected components  
+    if graph.is_directed():  
+        n_components = nx.number_weakly_connected_components(graph)  
+    else:  
+        n_components = nx.number_connected_components(graph)  
+      
+    # Estimate memory  
+    estimated_memory_mb = (num_nodes * 200 + num_edges * 100) / 1024  
+      
+    # Decision logic  
+    use_streaming = False  
+    reason = ""  
+      
+    if args.use_streaming:  
+        use_streaming = True  
+        reason = "explicitly requested via --use_streaming flag"  
+    elif num_nodes < 10000:  
+        use_streaming = False  
+        reason = f"small graph ({num_nodes} nodes), standard mode more efficient"  
+    elif num_nodes > args.auto_streaming_threshold:  
+        if avg_degree < 2.0:  
+            use_streaming = False  
+            reason = f"sparse disconnected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        elif n_components > 100:  
+            use_streaming = False  
+            reason = f"too many disconnected components ({n_components}), chunking inefficient"  
+        else:  
+            use_streaming = True  
+            reason = f"large well-connected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+    elif 10000 <= num_nodes <= args.auto_streaming_threshold:  
+        if avg_degree > args.dense_graph_threshold and clustering_coef > 0.2:  
+            use_streaming = True  
+            reason = f"dense clustered graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        else:  
+            use_streaming = False  
+            reason = f"medium graph, standard mode sufficient (degree={avg_degree:.2f})"  
+      
+    # Return as dictionary  
+    return {  
+        'use_streaming': use_streaming,  
+        'reason': reason,  
+        'num_nodes': num_nodes,  
+        'num_edges': num_edges,  
+        'avg_degree': avg_degree,  
+        'clustering_coef': clustering_coef,  
+        'n_components': n_components,  
+        'estimated_memory_mb': estimated_memory_mb  
+    }
 
 def bfs_chunk(graph, start_node, max_size):
     visited = set([start_node])
@@ -100,56 +165,108 @@ def make_plant_dataset(size):
         graphs.append(graph)
     return graphs
 
-
-def _process_chunk(args_tuple):
-    chunk_dataset, task, args, chunk_index, total_chunks = args_tuple
-    start_time = time.time()
-    last_print = start_time
-    print(
-        f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}",
-        flush=True,
-    )
-    try:
-        result = None
-        while result is None:
-            now = time.time()
-            if now - last_print >= 10:
-                print(
-                    f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} still processing chunk {chunk_index+1}/{total_chunks} ({int(now-start_time)}s elapsed)",
-                    flush=True,
-                )
-                last_print = now
-            result = pattern_growth([chunk_dataset], task, args)
-        print(
-            f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {int(time.time()-start_time)}s",
-            flush=True,
-        )
-        return result
-    except Exception as e:
-        print(f"Error processing chunk {chunk_index}: {e}", flush=True)
+def _process_chunk(args_tuple):  
+    chunk_dataset, task, args, chunk_index, total_chunks = args_tuple  
+    start_time = time.time()  
+      
+    # Disable nested multiprocessing - set to 0 to prevent pool creation  
+    original_n_workers = getattr(args, 'n_workers', 4)  
+    args.n_workers = 0  # Setting to 0 signals single-threaded mode  
+      
+    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}", flush=True)  
+      
+    try:  
+        result = pattern_growth(chunk_dataset, task, args)  
+          
+        elapsed = int(time.time() - start_time)  
+        print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {elapsed}s ({len(result)} patterns)", flush=True)  
+          
+        # Restore original n_workers  
+        args.n_workers = original_n_workers  
+        return result  
+    except Exception as e:  
+        print(f"[{time.strftime('%H:%M:%S')}] ERROR in chunk {chunk_index+1}: {str(e)}", flush=True)  
+        import traceback  
+        traceback.print_exc()  
+        args.n_workers = original_n_workers  
         return []
-
-
-def pattern_growth_streaming(dataset, task, args):
-    graph = dataset[0]
-    graph_chunks = process_large_graph_in_chunks(graph, chunk_size=args.chunk_size)
-    dataset = graph_chunks
-
-    all_discovered_patterns = []
-
-    total_chunks = len(dataset)
-    chunk_args = [
-        (chunk_dataset, task, args, idx, total_chunks)
-        for idx, chunk_dataset in enumerate(dataset)
-    ]
-
-    with mp.Pool(processes=4) as pool:
-        results = pool.map(_process_chunk, chunk_args)
-
-    for chunk_out_graphs in results:
-        if chunk_out_graphs:
-            all_discovered_patterns.extend(chunk_out_graphs)
-
+    
+def pattern_growth_streaming(dataset, task, args):  
+    """  
+    Process large graphs in chunks with parallel workers.  
+    Automatically adjusts chunk size based on graph density.  
+    """  
+    graph = dataset[0]  
+      
+    # Calculate graph properties  
+    num_nodes = graph.number_of_nodes()  
+    num_edges = graph.number_of_edges()  
+    avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
+      
+    print(f"Graph statistics: {num_nodes} nodes, {num_edges} edges, avg degree: {avg_degree:.2f}", flush=True)  
+      
+    # Adaptive chunk sizing based on density  
+    if avg_degree > args.dense_graph_threshold:  
+        # Dense graphs: use smaller chunks to avoid memory issues  
+        effective_chunk_size = min(args.chunk_size, 5000)  
+        print(f"Dense graph detected (avg degree > {args.dense_graph_threshold})", flush=True)  
+        print(f"Reducing chunk size to {effective_chunk_size} nodes", flush=True)  
+    elif avg_degree > 20:  
+        # Medium density: slightly reduce chunk size  
+        effective_chunk_size = min(args.chunk_size, 7500)  
+        print(f"Medium density graph, using chunk size: {effective_chunk_size}", flush=True)  
+    else:  
+        # Sparse graphs: use larger chunks  
+        effective_chunk_size = args.chunk_size  
+        print(f"Sparse graph, using chunk size: {effective_chunk_size}", flush=True)  
+      
+    # Partition graph into chunks  
+    print(f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...", flush=True)  
+    graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)  
+      
+    # Filter out tiny chunks based on graph sparsity  
+    if avg_degree < 2.0:  
+        # Very sparse graphs: use higher minimum to reduce chunk count  
+        min_chunk_size = max(args.min_pattern_size, 20)  
+        print(f"Sparse graph detected (avg degree < 2.0), using min chunk size: {min_chunk_size}", flush=True)  
+    else:  
+        min_chunk_size = max(args.min_pattern_size, 5)  
+      
+    graph_chunks = [chunk for chunk in graph_chunks if chunk.number_of_nodes() >= min_chunk_size]  
+    print(f"Filtered to {len(graph_chunks)} chunks with >= {min_chunk_size} nodes", flush=True)  
+      
+    # Show chunk distribution  
+    print(f"Created {len(graph_chunks)} chunks", flush=True)  
+    for i, chunk in enumerate(graph_chunks[:10]):  
+        print(f"  Chunk {i+1}: {chunk.number_of_nodes()} nodes, {chunk.number_of_edges()} edges", flush=True)  
+    if len(graph_chunks) > 10:  
+        print(f"  ... and {len(graph_chunks) - 10} more chunks", flush=True)  
+      
+    # Process chunks in parallel  
+    all_discovered_patterns = []  
+    total_chunks = len(graph_chunks)  
+      
+    # Wrap each chunk in a list for pattern_growth  
+    chunk_args = [([chunk], task, args, idx, total_chunks)  
+                  for idx, chunk in enumerate(graph_chunks)]  
+      
+    # Estimate processing time  
+    avg_chunk_size = sum(c.number_of_nodes() for c in graph_chunks) / len(graph_chunks)  
+    estimated_time_per_chunk = 7.5  # seconds, based on your logs  
+    estimated_total_minutes = (total_chunks * estimated_time_per_chunk) / (60 * args.streaming_workers)  
+    print(f"\nProcessing {total_chunks} chunks with {args.streaming_workers} workers...", flush=True)  
+    print(f"Estimated time: {estimated_total_minutes:.1f} minutes", flush=True)  
+      
+    with mp.Pool(processes=args.streaming_workers) as pool:  
+        results = pool.map(_process_chunk, chunk_args)  
+      
+    # Aggregate results  
+    print("\nAggregating patterns from all chunks...", flush=True)  
+    for chunk_out_graphs in results:  
+        if chunk_out_graphs:  
+            all_discovered_patterns.extend(chunk_out_graphs)  
+      
+    print(f"Total patterns discovered: {len(all_discovered_patterns)}", flush=True)  
     return all_discovered_patterns
 
 
@@ -906,11 +1023,42 @@ def main():
     elif args.dataset.startswith("plant-"):
         size = int(args.dataset.split("-")[-1])
         dataset = make_plant_dataset(size)
-        task = "graph"
+        task = 'graph'
 
-    # Run pattern growth
-    pattern_growth(dataset, task, args)
+    # Adaptive mode selection based on comprehensive graph analysis  
+    if len(dataset) == 1 and isinstance(dataset[0], (nx.Graph, nx.DiGraph)):  
+        graph = dataset[0]  
+        
+        # Analyze graph characteristics  
+        graph_stats = analyze_graph_for_streaming(graph, args)  
+        use_streaming = graph_stats['use_streaming']  
+        reason = graph_stats['reason']  
+        
+        # Print analysis results  
+        print("=" * 60)  
+        print("GRAPH ANALYSIS")  
+        print("=" * 60)  
+        print(f"Nodes: {graph_stats['num_nodes']:,}")  
+        print(f"Edges: {graph_stats['num_edges']:,}")  
+        print(f"Average degree: {graph_stats['avg_degree']:.2f}")  
+        print(f"Clustering coefficient: {graph_stats['clustering_coef']:.3f}")  
+        print(f"Connected components: {graph_stats['n_components']}")  
+        print(f"Estimated memory: {int(graph_stats['estimated_memory_mb'])}MB")  
+        print(f"Decision: {'STREAMING MODE' if use_streaming else 'STANDARD MODE'}")  
+        print(f"Reason: {reason}")  
+        print("=" * 60)  
+        
+        if use_streaming:  
+            out_graphs = pattern_growth_streaming(dataset, task, args)  
+        else:  
+            out_graphs = pattern_growth(dataset, task, args)  
+    else:  
+        out_graphs = pattern_growth(dataset, task, args)  
+    
+    if not os.path.exists("results"):  
+        os.makedirs("results")  
+    with open(args.out_path, "wb") as f:  
+        pickle.dump(out_graphs, f)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
