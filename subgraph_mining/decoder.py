@@ -55,10 +55,8 @@ from sklearn.decomposition import PCA
 import warnings 
 
 def analyze_graph_for_streaming(graph, args):  
-    """Enhanced analysis with bipartite and degree distribution checks."""  
     import random  
       
-    # Calculate basic metrics  
     num_nodes = graph.number_of_nodes()  
     num_edges = graph.number_of_edges()  
     avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
@@ -81,17 +79,20 @@ def analyze_graph_for_streaming(graph, args):
     degree_seq = sorted([d for _, d in graph.degree()], reverse=True)  
     if len(degree_seq) > 1:  
         power_law_ratio = degree_seq[0] / max(np.median(degree_seq), 1)  
-        is_power_law = power_law_ratio > 10  # Hub-and-spoke structure  
+        is_power_law = power_law_ratio > 10  
     else:  
         is_power_law = False  
       
     # Connected components  
     n_components = nx.number_connected_components(graph.to_undirected() if graph.is_directed() else graph)  
       
-    # Connectivity ratio 
+    # Connectivity ratio (fraction of nodes in largest component)  
     if n_components > 0:  
-        largest_cc = max(nx.connected_components(graph.to_undirected() if graph.is_directed() else graph), key=len)  
-        connectivity_ratio = len(largest_cc) / num_nodes  
+        if graph.is_directed():  
+            largest_cc_size = max(len(c) for c in nx.weakly_connected_components(graph))  
+        else:  
+            largest_cc_size = max(len(c) for c in nx.connected_components(graph))  
+        connectivity_ratio = largest_cc_size / num_nodes  
     else:  
         connectivity_ratio = 0.0  
       
@@ -99,11 +100,9 @@ def analyze_graph_for_streaming(graph, args):
     use_streaming = False  
     reason = ""  
       
-    # Bipartite graphs should NEVER use streaming  
     if is_bipartite:  
         use_streaming = False  
         reason = "bipartite graph structure - clustering coefficient unreliable"  
-    # Power-law graphs with extreme hubs should avoid streaming  
     elif is_power_law:  
         use_streaming = False  
         reason = f"power-law degree distribution (max/median ratio: {power_law_ratio:.1f}) - BFS would create imbalanced chunks"  
