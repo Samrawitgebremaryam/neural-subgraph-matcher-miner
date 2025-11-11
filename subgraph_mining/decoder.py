@@ -49,7 +49,7 @@ from sklearn.decomposition import PCA
 import warnings 
 
 def analyze_graph_for_streaming(graph, args):  
-    """Analyze graph characteristics to decide on streaming mode."""  
+    """Enhanced analysis with bipartite and degree distribution checks."""  
     import random  
       
     # Calculate basic metrics  
@@ -57,52 +57,60 @@ def analyze_graph_for_streaming(graph, args):
     num_edges = graph.number_of_edges()  
     avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
       
-    # Calculate clustering coefficient (sample for large graphs)  
-    if num_nodes > 10000:  
-        sample_nodes = random.sample(list(graph.nodes()), min(1000, num_nodes))  
-        subgraph = graph.subgraph(sample_nodes)  
-        clustering_coef = nx.average_clustering(subgraph)  
+    # Bipartite detection 
+    is_bipartite = nx.is_bipartite(graph)  
+      
+    # Clustering coefficient
+    if graph.is_directed():  
+        undirected_graph = graph.to_undirected()  
+        if num_nodes > 10000:  
+            sample_nodes = random.sample(list(undirected_graph.nodes()), 1000)  
+            clustering_coef = nx.average_clustering(undirected_graph, nodes=sample_nodes)  
+        else:  
+            clustering_coef = nx.average_clustering(undirected_graph)  
     else:  
         clustering_coef = nx.average_clustering(graph)  
       
-    # Count connected components  
-    if graph.is_directed():  
-        n_components = nx.number_weakly_connected_components(graph)  
+    # Degree distribution analysis 
+    degree_seq = sorted([d for _, d in graph.degree()], reverse=True)  
+    if len(degree_seq) > 1:  
+        power_law_ratio = degree_seq[0] / max(np.median(degree_seq), 1)  
+        is_power_law = power_law_ratio > 10  # Hub-and-spoke structure  
     else:  
-        n_components = nx.number_connected_components(graph)  
+        is_power_law = False  
       
-    # Estimate memory  
-    estimated_memory_mb = (num_nodes * 200 + num_edges * 100) / 1024  
+    # Connected components  
+    n_components = nx.number_connected_components(graph.to_undirected() if graph.is_directed() else graph)  
       
-    # Decision logic  
+    # Connectivity ratio 
+    if n_components > 0:  
+        largest_cc = max(nx.connected_components(graph.to_undirected() if graph.is_directed() else graph), key=len)  
+        connectivity_ratio = len(largest_cc) / num_nodes  
+    else:  
+        connectivity_ratio = 0.0  
+      
+    # Enhanced decision logic  
     use_streaming = False  
     reason = ""  
       
-    if args.use_streaming:  
-        use_streaming = True  
-        reason = "explicitly requested via --use_streaming flag"  
-    elif num_nodes < 10000:  
+    # Bipartite graphs should NEVER use streaming  
+    if is_bipartite:  
         use_streaming = False  
-        reason = f"small graph ({num_nodes} nodes), standard mode more efficient"  
-    elif num_nodes > args.auto_streaming_threshold:  
-        if avg_degree < 2.0:  
-            use_streaming = False  
-            reason = f"sparse disconnected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
-        elif n_components > 100:  
-            use_streaming = False  
-            reason = f"too many disconnected components ({n_components}), chunking inefficient"  
-        else:  
-            use_streaming = True  
-            reason = f"large well-connected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
-    elif 10000 <= num_nodes <= args.auto_streaming_threshold:  
-        if avg_degree > args.dense_graph_threshold and clustering_coef > 0.2:  
-            use_streaming = True  
-            reason = f"dense clustered graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
-        else:  
-            use_streaming = False  
-            reason = f"medium graph, standard mode sufficient (degree={avg_degree:.2f})"  
+        reason = "bipartite graph structure - clustering coefficient unreliable"  
+    # Power-law graphs with extreme hubs should avoid streaming  
+    elif is_power_law:  
+        use_streaming = False  
+        reason = f"power-law degree distribution (max/median ratio: {power_law_ratio:.1f}) - BFS would create imbalanced chunks"  
+    elif connectivity_ratio > 0.9:  
+        use_streaming = False  
+        reason = f"well-connected graph (connectivity={connectivity_ratio:.2f}) - BFS chunking would cause memory issues"  
+    elif num_nodes > 100000 and avg_degree > 5.0 and clustering_coef > 0.3 and n_components < 100:  
+        use_streaming = True  
+        reason = f"large modular graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+    else:  
+        use_streaming = False  
+        reason = f"graph characteristics don't benefit from chunking"  
       
-    # Return as dictionary  
     return {  
         'use_streaming': use_streaming,  
         'reason': reason,  
@@ -111,7 +119,10 @@ def analyze_graph_for_streaming(graph, args):
         'avg_degree': avg_degree,  
         'clustering_coef': clustering_coef,  
         'n_components': n_components,  
-        'estimated_memory_mb': estimated_memory_mb  
+        'connectivity_ratio': connectivity_ratio,  
+        'is_bipartite': is_bipartite,  
+        'is_power_law': is_power_law,  
+        'estimated_memory_mb': (num_nodes * 200 + num_edges * 100) / 1024  
     }
 
 def bfs_chunk(graph, start_node, max_size):
@@ -741,6 +752,88 @@ def pattern_growth(dataset, task, args):
         pickle.dump(out_graphs, f)
     
     return out_graphs
+def analyze_graph_for_streaming(graph, args):  
+    """  
+    Analyze graph characteristics to determine if streaming mode should be used.  
+    Returns a dictionary with analysis results and decision.  
+    """  
+    import random  
+      
+    # Calculate basic metrics  
+    num_nodes = graph.number_of_nodes()  
+    num_edges = graph.number_of_edges()  
+    avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
+      
+    # Calculate clustering coefficient correctly  
+    clustering_coef = calculate_clustering_coefficient(graph)  
+      
+    # Count connected components  
+    if graph.is_directed():  
+        n_components = nx.number_weakly_connected_components(graph)  
+    else:  
+        n_components = nx.number_connected_components(graph)  
+      
+    # Estimate memory usage  
+    estimated_memory_mb = (num_nodes * 200 + num_edges * 100) / 1024  
+      
+    # Decision logic  
+    use_streaming = False  
+    reason = ""  
+      
+    # Rule 1: Very small graphs always use standard mode  
+    if num_nodes < 10000:  
+        use_streaming = False  
+        reason = f"small graph ({num_nodes} nodes), standard mode more efficient"  
+      
+    # Rule 2: Very large graphs (>100K nodes) with good structure use streaming  
+    elif num_nodes > 100000:  
+        if avg_degree > 2.0 and clustering_coef > 0.15 and n_components < 100:  
+            use_streaming = True  
+            reason = f"very large well-connected graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        else:  
+            use_streaming = False  
+            reason = f"large but sparse/disconnected graph (degree={avg_degree:.2f}, components={n_components})"  
+      
+    # Rule 3: Medium-large graphs (50K-100K) - be conservative  
+    elif num_nodes > 50000:  
+        # Only use streaming if graph is BOTH dense AND well-clustered  
+        if avg_degree > 5.0 and clustering_coef > 0.3 and n_components < 50:  
+            use_streaming = True  
+            reason = f"large dense clustered graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        else:  
+            use_streaming = False  
+            reason = f"medium-large graph, standard mode safer (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+      
+    # Rule 4: Medium graphs (10K-50K) - only if very dense and modular  
+    else:  
+        if avg_degree > 10.0 and clustering_coef > 0.4 and n_components < 20:  
+            use_streaming = True  
+            reason = f"dense modular graph benefits from chunking (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        else:  
+            use_streaming = False  
+            reason = f"medium graph, standard mode appropriate (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+      
+    return {  
+        'use_streaming': use_streaming,  
+        'reason': reason,  
+        'num_nodes': num_nodes,  
+        'num_edges': num_edges,  
+        'avg_degree': avg_degree,  
+        'clustering_coef': clustering_coef,  
+        'n_components': n_components,  
+        'estimated_memory_mb': estimated_memory_mb  
+    }
+def calculate_clustering_coefficient(graph):  
+    """  
+    Calculate clustering coefficient correctly for both directed and undirected graphs.  
+    For directed graphs, convert to undirected for clustering calculation.  
+    """  
+    if graph.is_directed():  
+        # Convert to undirected for clustering calculation  
+        undirected = graph.to_undirected()  
+        return nx.average_clustering(undirected)  
+    else:  
+        return nx.average_clustering(graph)
 
 def main():
     if not os.path.exists("plots/cluster"):
@@ -862,6 +955,7 @@ def main():
         print(f"Average degree: {graph_stats['avg_degree']:.2f}")  
         print(f"Clustering coefficient: {graph_stats['clustering_coef']:.3f}")  
         print(f"Connected components: {graph_stats['n_components']}")  
+        print(f"Connectivity ratio: {graph_stats['connectivity_ratio']:.2f}")  
         print(f"Estimated memory: {int(graph_stats['estimated_memory_mb'])}MB")  
         print(f"Decision: {'STREAMING MODE' if use_streaming else 'STANDARD MODE'}")  
         print(f"Reason: {reason}")  
@@ -872,12 +966,7 @@ def main():
         else:  
             out_graphs = pattern_growth(dataset, task, args)  
     else:  
-        out_graphs = pattern_growth(dataset, task, args)  
-    
-    if not os.path.exists("results"):  
-        os.makedirs("results")  
-    with open(args.out_path, "wb") as f:  
-        pickle.dump(out_graphs, f)
+        out_graphs = pattern_growth(dataset, task, args)
 
 if __name__ == '__main__':
     main()

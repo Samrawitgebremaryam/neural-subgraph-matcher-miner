@@ -397,9 +397,7 @@ class GreedySearchAgent(SearchAgent):
             # Initialize worker data once  
             init_greedy_worker(*init_args)  
             # Run trials sequentially  
-            results = []  
-            for trial_idx in tqdm(args_for_pool, total=n_trials):  
-                results.append(run_greedy_trial(trial_idx))  
+            results = [run_greedy_trial(i) for i in tqdm(args_for_pool, total=n_trials)]  
         else:  
             # Use multiprocessing pool for parallel execution  
             with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
