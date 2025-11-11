@@ -65,16 +65,14 @@ def parse_decoder(parser):
     # Streaming mode parameters  
     dec_parser.add_argument('--use_streaming', action='store_true',  
                         help='Force streaming mode for large graphs')  
-    dec_parser.add_argument('--auto_streaming_threshold', type=int, default=50000,  
+    dec_parser.add_argument('--auto_streaming_threshold', type=int, default=100000,  
                         help='Auto-enable streaming for graphs larger than this')  
     dec_parser.add_argument('--streaming_workers', type=int, default=4,  
-                        help='Number of parallel workers for streaming mode')  
-    dec_parser.add_argument('--dense_graph_threshold', type=float, default=50.0,  
+                        help='Number of parallel workers for chunk processing')  
+    dec_parser.add_argument('--dense_graph_threshold', type=float, default=5.0,  
                         help='Average degree threshold for dense graphs')  
-    dec_parser.add_argument('--clustering_threshold', type=float, default=0.15,  
-                        help='Clustering coefficient threshold for community structure')  
-    dec_parser.add_argument('--max_components_threshold', type=int, default=100,  
-                        help='Maximum number of components for efficient chunking')
+    dec_parser.add_argument('--clustering_threshold', type=float, default=0.3,  
+                        help='Clustering coefficient threshold for modular graphs')
     
     # Beam search parameter
     parser.add_argument(
