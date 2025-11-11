@@ -69,47 +69,68 @@ def analyze_graph_for_streaming(graph, args):
         else:  
             clustering_coef = nx.average_clustering(undirected_graph)  
     else:  
-        clustering_coef = nx.average_clustering(graph)  
+        if num_nodes > 10000:  
+            sample_nodes = random.sample(list(graph.nodes()), 1000)  
+            clustering_coef = nx.average_clustering(graph, nodes=sample_nodes)  
+        else:  
+            clustering_coef = nx.average_clustering(graph)  
       
-    # Degree distribution analysis 
-    degree_seq = sorted([d for _, d in graph.degree()], reverse=True)  
-    if len(degree_seq) > 1:  
-        power_law_ratio = degree_seq[0] / max(np.median(degree_seq), 1)  
-        is_power_law = power_law_ratio > 10  # Hub-and-spoke structure  
+    # Number of connected components  
+    if graph.is_directed():  
+        n_components = nx.number_weakly_connected_components(graph)  
     else:  
-        is_power_law = False  
+        n_components = nx.number_connected_components(graph)  
       
-    # Connected components  
-    n_components = nx.number_connected_components(graph.to_undirected() if graph.is_directed() else graph)  
-      
-    # Connectivity ratio 
-    if n_components > 0:  
-        largest_cc = max(nx.connected_components(graph.to_undirected() if graph.is_directed() else graph), key=len)  
-        connectivity_ratio = len(largest_cc) / num_nodes  
+    # Connectivity ratio
+    if num_nodes > 0:  
+        if graph.is_directed():  
+            largest_cc_size = max(len(c) for c in nx.weakly_connected_components(graph))  
+        else:  
+            largest_cc_size = max(len(c) for c in nx.connected_components(graph))  
+        connectivity_ratio = largest_cc_size / num_nodes  
     else:  
         connectivity_ratio = 0.0  
       
-    # Enhanced decision logic  
+    # Power-law degree distribution check  
+    degrees = [d for _, d in graph.degree()]  
+    if len(degrees) > 0:  
+        max_degree = max(degrees)  
+        median_degree = sorted(degrees)[len(degrees) // 2]  
+        is_power_law = (max_degree / max(median_degree, 1)) > 10  
+    else:  
+        is_power_law = False  
+      
+    # Decision logic  
     use_streaming = False  
     reason = ""  
       
     # Bipartite graphs should NEVER use streaming  
     if is_bipartite:  
         use_streaming = False  
-        reason = "bipartite graph structure - clustering coefficient unreliable"  
-    # Power-law graphs with extreme hubs should avoid streaming  
-    elif is_power_law:  
-        use_streaming = False  
-        reason = f"power-law degree distribution (max/median ratio: {power_law_ratio:.1f}) - BFS would create imbalanced chunks"  
+        reason = "bipartite graph structure - chunking inefficient"  
     elif connectivity_ratio > 0.9:  
         use_streaming = False  
         reason = f"well-connected graph (connectivity={connectivity_ratio:.2f}) - BFS chunking would cause memory issues"  
-    elif num_nodes > 100000 and avg_degree > 5.0 and clustering_coef > 0.3 and n_components < 100:  
-        use_streaming = True  
-        reason = f"large modular graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+    elif n_components > 100:  
+        use_streaming = False  
+        reason = f"too many components ({n_components}), chunking inefficient"  
+    elif num_nodes > 100000:  
+        if avg_degree >= 5.0 and avg_degree <= 20.0 and clustering_coef > 0.3 and connectivity_ratio < 0.9:  
+            use_streaming = True  
+            reason = f"large modular graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        else:  
+            use_streaming = False  
+            reason = f"large graph but structure unsuitable for chunking (degree={avg_degree:.2f}, clustering={clustering_coef:.3f}, connectivity={connectivity_ratio:.2f})"  
+    elif num_nodes >= 50000:  
+        if avg_degree >= 5.0 and avg_degree <= 20.0 and clustering_coef > 0.3 and connectivity_ratio < 0.9 and not is_power_law:  
+            use_streaming = True  
+            reason = f"medium-large modular graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"  
+        else:  
+            use_streaming = False  
+            reason = f"graph characteristics don't benefit from chunking"  
     else:  
         use_streaming = False  
-        reason = f"graph characteristics don't benefit from chunking"  
+        reason = f"graph size ({num_nodes} nodes) below threshold for streaming"  
       
     return {  
         'use_streaming': use_streaming,  
