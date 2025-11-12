@@ -2,9 +2,9 @@ name: Run Decoder
 
 on:
   push:
-    branches: [main]
+    branches: [main , feature/amazon-dataset-analysis ]
   pull_request:
-    branches: [main]
+    branches: [main , feature/amazon-dataset-analysis ]
   workflow_dispatch:
 
 jobs:
