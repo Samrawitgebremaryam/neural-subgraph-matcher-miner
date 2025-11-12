@@ -49,10 +49,8 @@ from sklearn.decomposition import PCA
 import warnings 
 
 def analyze_graph_for_streaming(graph, args):  
-    """Enhanced analysis with bipartite and degree distribution checks."""  
     import random  
       
-    # Calculate basic metrics  
     num_nodes = graph.number_of_nodes()  
     num_edges = graph.number_of_edges()  
     avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
@@ -101,7 +99,6 @@ def analyze_graph_for_streaming(graph, args):
     use_streaming = False  
     reason = ""  
       
-    # Bipartite graphs should NEVER use streaming  
     if is_bipartite:  
         use_streaming = False  
         reason = "bipartite graph structure - BFS chunking ineffective"  
