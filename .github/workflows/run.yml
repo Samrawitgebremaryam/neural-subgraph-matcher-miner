@@ -17,7 +17,6 @@ jobs:
       # Pull prebuilt Docker image from Docker Hub
       - name: Pull prebuilt Docker image
         run: |
-          echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | docker login -u samribahta --password-stdin
           docker pull samribahta/decoder-image:latest
       - name: Create output directories
         run: |
