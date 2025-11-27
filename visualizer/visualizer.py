@@ -7,7 +7,8 @@ import random
 import time
 import os
 import re
-
+import logging
+import os
 
 class GraphDataExtractor:
     """
@@ -847,3 +848,142 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         # Fallback to simple naming
         timestamp = int(time.time())
         return f"pattern_{timestamp}_interactive"
+
+def visualize_all_pattern_instances(pattern_instances, pattern_key, count, output_dir="plots/cluster"):
+
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    try:
+        pattern_dir = os.path.join(output_dir, pattern_key)
+        os.makedirs(pattern_dir, exist_ok=True)
+        
+        logger.info(f"Visualizing {count} instances for {pattern_key}")
+        
+        template_path = os.path.join(os.path.dirname(__file__), "template.html")
+        if not os.path.exists(template_path):
+            logger.error(f"Template not found: {template_path}")
+            return False
+        
+        processor = HTMLTemplateProcessor(template_path)
+        extractor = GraphDataExtractor()
+        
+        success_count = 0
+        for idx, pattern in enumerate(pattern_instances):
+            try:
+                graph_data = extractor.extract_graph_data(pattern)
+                
+                graph_data['metadata']['title'] = f"{pattern_key} - Instance {idx+1}/{count}"
+                
+                filename = f"instance_{idx+1:04d}.html"
+                
+                output_path = processor.process_template(
+                    graph_data=graph_data,
+                    output_filename=filename,
+                    output_dir=pattern_dir
+                )
+                
+                success_count += 1
+                
+                if (idx + 1) % 10 == 0 or (idx + 1) == count:
+                    logger.info(f"  Created {idx+1}/{count} visualizations")
+                    
+            except Exception as e:
+                logger.error(f"  Failed to process instance {idx+1}: {e}")
+                continue
+        
+        _create_pattern_index_html(pattern_key, count, pattern_dir)
+        
+        logger.info(f"✓ Successfully created {success_count}/{count} visualizations in {pattern_dir}")
+        return success_count > 0
+        
+    except Exception as e:
+        logger.error(f"Failed to visualize pattern instances: {e}")
+        return False
+
+
+def _create_pattern_index_html(pattern_key, count, pattern_dir):
+    """Create an index.html to browse all instances of a pattern."""
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{pattern_key} - All Instances</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 20px;
+            background: #fafafa;
+        }}
+        h1 {{
+            color: #333;
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 10px;
+        }}
+        .info {{
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        .grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }}
+        .instance-card {{
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }}
+        .instance-card:hover {{
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+            border-color: #0066cc;
+        }}
+        .instance-card a {{
+            text-decoration: none;
+            color: #0066cc;
+            font-weight: 500;
+            font-size: 16px;
+        }}
+        .instance-number {{
+            color: #666;
+            font-size: 14px;
+            margin-top: 5px;
+        }}
+    </style>
+</head>
+<body>
+    <h1>{pattern_key}</h1>
+    <div class="info">
+        <strong>Total instances:</strong> {count}<br>
+        <strong>Click any instance below to view its visualization</strong>
+    </div>
+    <div class="grid">
+"""
+    
+    for i in range(1, count + 1):
+        html_content += f"""
+        <div class="instance-card">
+            <a href="instance_{i:04d}.html" target="_blank">Instance {i}</a>
+            <div class="instance-number">#{i:04d}</div>
+        </div>
+"""
+    
+    html_content += """
+    </div>
+</body>
+</html>
+"""
+    
+    index_path = os.path.join(pattern_dir, "index.html")
+    with open(index_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
