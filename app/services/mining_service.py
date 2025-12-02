@@ -7,13 +7,16 @@ from ..config.settings import Config
 
 class MiningService:
     @staticmethod
-    def run_miner(input_file_path, job_id=None):
+    def run_miner(input_file_path, job_id=None, config=None):
         """
         Runs the subgraph miner on the given input file.
         Returns the parsed JSON results and file paths.
         """
         if job_id is None:
             job_id = str(uuid.uuid4())
+        
+        if config is None:
+            config = {}
         
         shared_job_dir = "/shared/output/{}".format(job_id)
         os.makedirs(shared_job_dir, exist_ok=True)
@@ -23,11 +26,20 @@ class MiningService:
         json_path = os.path.join(Config.RESULTS_FOLDER, out_filename.replace('.pkl', '.json'))
 
         try:
-            # Run the miner
+            # Build command with config parameters
             cmd = [
                 "python3", "-m", "subgraph_mining.decoder",
                 "--dataset={}".format(input_file_path),
-                "--n_trials=100",
+                "--n_trials={}".format(config.get('n_trials', 100)),
+                "--min_pattern_size={}".format(config.get('min_pattern_size', 5)),
+                "--max_pattern_size={}".format(config.get('max_pattern_size', 10)),
+                "--min_neighborhood_size={}".format(config.get('min_neighborhood_size', 5)),
+                "--max_neighborhood_size={}".format(config.get('max_neighborhood_size', 10)),
+                "--n_neighborhoods={}".format(config.get('n_neighborhoods', 2000)),
+                "--radius={}".format(config.get('radius', 3)),
+                "--graph_type={}".format(config.get('graph_type', 'undirected')),
+                "--search_strategy={}".format(config.get('search_strategy', 'greedy')),
+                "--sample_method={}".format(config.get('sample_method', 'tree')),
                 "--node_anchored",
                 "--out_path={}".format(out_path)
             ]
@@ -35,6 +47,7 @@ class MiningService:
             print("Running command: {}".format(' '.join(cmd)), flush=True)
             print("Mining started - this may take several minutes...", flush=True)
             print("Job ID: {}".format(job_id), flush=True)
+            print("Config: {}".format(json.dumps(config, indent=2)), flush=True)
             
             # Use Popen to stream output in real-time
             import os as os_module
