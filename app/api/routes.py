@@ -1,7 +1,7 @@
 import os
 import uuid
 import shutil
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from ..services.mining_service import MiningService
 from ..config.settings import Config
@@ -9,7 +9,10 @@ from ..config.settings import Config
 router = APIRouter()
 
 @router.post("/mine")
-def mine(graph_file: UploadFile = File(...)):
+def mine(
+    graph_file: UploadFile = File(...), 
+    job_id: str = Form(None)
+):
     # Validate file
     if not graph_file.filename:
         raise HTTPException(status_code=400, detail="No selected file")
@@ -22,21 +25,24 @@ def mine(graph_file: UploadFile = File(...)):
         with open(filepath, "wb") as buffer:
             shutil.copyfileobj(graph_file.file, buffer)
             
-        mining_results = MiningService.run_miner(filepath)
+        # Run miner with job_id and parameters
+        result = MiningService.run_miner(
+            filepath, 
+            job_id=job_id
+        )
 
-        # Construct response matching MinerService expectations
+        # Construct response
         response = {
-            'motifs': mining_results,
-            'statistics': {
-                'count': len(mining_results),
-                'status': 'success'
-            }
+            'job_id': result['job_id'],
+            'results_path': result['results_path'],
+            'plots_path': result['plots_path'],
+            'status': 'success'
         }
         
         return JSONResponse(content=response)
 
     except Exception as e:
-        print("Error: {}".format(str(e)))
+        print("Error: {}".format(str(e)), flush=True)
         return JSONResponse(status_code=500, content={'error': str(e)})
     finally:
         # Cleanup input file
