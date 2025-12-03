@@ -4,6 +4,8 @@ from itertools import combinations
 import time
 import os
 import pickle
+from torch_geometric.data.data import DataEdgeAttr
+
 
 from deepsnap.batch import Batch
 import numpy as np
