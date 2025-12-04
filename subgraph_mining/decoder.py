@@ -490,22 +490,31 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         return False
 
 
-def save_and_visualize_all_instances(agent, args):
+def save_and_visualize_all_instances(agent, args, representative_patterns=None):
     try:
         logger.info("="*70)
         logger.info("SAVING AND VISUALIZING ALL PATTERN INSTANCES")
         logger.info("="*70)
-        
+
         if not hasattr(agent, 'counts'):
             logger.error("Agent has no 'counts' attribute!")
             return None
-        
+
         if not agent.counts:
             logger.warning("Agent.counts is empty - no patterns to save")
             return None
-        
+
         logger.info(f"Agent.counts has {len(agent.counts)} size categories")
-        
+
+        # Build a mapping from WL hash to representative pattern
+        representative_map = {}
+        if representative_patterns:
+            logger.info(f"Building representative pattern mapping for {len(representative_patterns)} patterns...")
+            for rep_pattern in representative_patterns:
+                wl = utils.wl_hash(rep_pattern, node_anchored=args.node_anchored)
+                representative_map[wl] = rep_pattern
+            logger.info(f"  Mapped {len(representative_map)} representative patterns")
+
         output_data = {}
         total_instances = 0
         total_unique_instances = 0
@@ -587,21 +596,38 @@ def save_and_visualize_all_instances(agent, args):
                 else:
                     logger.info(f"  {pattern_key}: {count} instances")
                 
-                if VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
+                # Check if user wants to visualize instances
+                visualize_instances = getattr(args, 'visualize_instances', False)
+
+                if visualize_instances and VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
                     try:
+                        # Get the representative pattern for this WL hash
+                        representative_pattern = representative_map.get(wl_hash, None)
+
+                        if representative_pattern:
+                            logger.info(f"    Using decoder representative pattern for {pattern_key}")
+                        else:
+                            logger.warning(f"    No decoder representative found for {pattern_key}, will select from instances")
+
+                        logger.info(f"    Mode: Visualizing representative + {count} instances in subdirectory")
+
                         success = visualize_all_pattern_instances(
                             pattern_instances=unique_instances,
                             pattern_key=pattern_key,
                             count=count,
-                            output_dir=os.path.join("plots", "cluster")
+                            output_dir=os.path.join("plots", "cluster"),
+                            representative_pattern=representative_pattern,
+                            visualize_instances=True
                         )
                         if success:
                             total_visualizations += count
-                            logger.info(f"    ✓ Visualized {count} instances")
+                            logger.info(f"    ✓ Visualized representative + {count} instances in {pattern_key}/")
                         else:
                             logger.warning(f"    ✗ Visualization failed for {pattern_key}")
                     except Exception as e:
                         logger.error(f"    ✗ Visualization error: {e}")
+                elif not visualize_instances:
+                    logger.info(f"    Mode: Representatives will be visualized directly in plots/cluster/ (no subdirectories)")
                 else:
                     logger.warning(f"    ⚠ Skipping visualization (visualizer not available)")
         
@@ -816,8 +842,8 @@ def pattern_growth(dataset, task, args):
 
     if hasattr(agent, 'counts') and agent.counts:
         logger.info("\nSaving all pattern instances...")
-        pkl_path = save_and_visualize_all_instances(agent, args)
-        
+        pkl_path = save_and_visualize_all_instances(agent, args, out_graphs)
+
         if pkl_path:
             logger.info(f"✓ All instances saved to: {pkl_path}")
         else:
@@ -828,17 +854,23 @@ def pattern_growth(dataset, task, args):
 
     count_by_size = defaultdict(int)
     warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
-    
+
     successful_visualizations = 0
-    
-    if VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
-        logger.info("\nVisualizing representative patterns...")
+
+    # Only create direct representative visualizations if --visualize_instances is NOT set
+    # (When --visualize_instances IS set, representatives are already in subdirectories)
+    visualize_instances = getattr(args, 'visualize_instances', False)
+
+    if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
+        logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
         for pattern in out_graphs:
             if visualize_pattern_graph_ext(pattern, args, count_by_size):
                 successful_visualizations += 1
             count_by_size[len(pattern)] += 1
-        
+
         logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
+    elif visualize_instances:
+        logger.info("\nSkipping direct representative visualization (representatives already in subdirectories)")
     else:
         logger.warning("⚠ Skipping representative visualization (visualizer not available)")
 
