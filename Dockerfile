@@ -59,6 +59,18 @@ RUN pip install --no-cache-dir \
     test-tube==0.7.5 \
     tqdm==4.43.0
 
+# Install FastAPI and related packages
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    python-multipart
+
 # Copy the project
 COPY . .
+
+# Expose port
+EXPOSE 5000
+
+# Run the FastAPI app
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
 
