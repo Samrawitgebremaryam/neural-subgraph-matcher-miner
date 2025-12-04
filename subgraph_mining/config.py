@@ -54,7 +54,11 @@ def parse_decoder(parser):
     # Graph type selection
     dec_parser.add_argument('--graph_type', type=str,
         help='"directed" or "undirected" graph type')
-    
+
+    # Visualization options
+    dec_parser.add_argument('--visualize_instances', action='store_true',
+        help='Generate visualizations for all pattern instances (default: only representatives)')
+
     # Set default values
     parser.set_defaults(
         # Dataset defaults
@@ -63,20 +67,20 @@ def parse_decoder(parser):
         
         # Decoder defaults
         out_path="results/out-patterns.p",
-        n_neighborhoods=2000,
-        n_trials=1000,
+        n_neighborhoods=100,
+        n_trials=100,
         decode_thresh=0.5,
         radius=3,
         subgraph_sample_size=0,
         sample_method="tree",
         skip="learnable",
-        graph_type="undirected",
-        min_pattern_size=5,
-        max_pattern_size=10,
-        min_neighborhood_size=5,
-        max_neighborhood_size=10,
+        graph_type="directed",
+        min_pattern_size=3,
+        max_pattern_size=5,
+        min_neighborhood_size=2,
+        max_neighborhood_size=3,
         search_strategy="greedy",
-        out_batch_size=10,
+        out_batch_size=3,
         node_anchored=True,
         memory_limit=1000000
     )
