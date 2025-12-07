@@ -7,7 +7,8 @@ import random
 import time
 import os
 import re
-
+import logging
+import os
 
 class GraphDataExtractor:
     """
@@ -847,3 +848,426 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         # Fallback to simple naming
         timestamp = int(time.time())
         return f"pattern_{timestamp}_interactive"
+
+def _select_representative_pattern(pattern_instances):
+    """
+    Select a representative pattern from a list of instances.
+    Uses heuristics like centrality, average degree, etc.
+    """
+    if not pattern_instances:
+        return None
+
+    if len(pattern_instances) == 1:
+        return pattern_instances[0]
+
+    # Score each pattern based on various metrics
+    scores = []
+    for pattern in pattern_instances:
+        score = 0
+
+        # Prefer patterns with more balanced degree distribution
+        if len(pattern) > 1:
+            degrees = [pattern.degree(n) for n in pattern.nodes()]
+            avg_degree = sum(degrees) / len(degrees)
+            degree_variance = sum((d - avg_degree) ** 2 for d in degrees) / len(degrees)
+            score -= degree_variance  # Lower variance is better
+
+        # Prefer patterns with anchor nodes (more informative)
+        anchor_count = sum(1 for n in pattern.nodes() if pattern.nodes[n].get('anchor', 0) == 1)
+        score += anchor_count * 10
+
+        # Prefer patterns with more diverse node attributes
+        node_labels = set(pattern.nodes[n].get('label', '') for n in pattern.nodes())
+        score += len(node_labels) * 5
+
+        scores.append(score)
+
+    # Return pattern with highest score
+    max_idx = scores.index(max(scores))
+    return pattern_instances[max_idx]
+
+
+def visualize_all_pattern_instances(pattern_instances, pattern_key, count, output_dir="plots/cluster", representative_pattern=None, visualize_instances=False):
+
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+    try:
+        pattern_dir = os.path.join(output_dir, pattern_key)
+        os.makedirs(pattern_dir, exist_ok=True)
+
+        logger.info(f"Visualizing {pattern_key}")
+
+        template_path = os.path.join(os.path.dirname(__file__), "template.html")
+        if not os.path.exists(template_path):
+            logger.error(f"Template not found: {template_path}")
+            return False
+
+        processor = HTMLTemplateProcessor(template_path)
+        extractor = GraphDataExtractor()
+
+        # Use decoder representative if provided, otherwise select from instances
+        representative_data = None
+        if representative_pattern:
+            representative = representative_pattern
+            logger.info(f"  Using decoder representative pattern")
+        else:
+            representative = _select_representative_pattern(pattern_instances)
+            logger.info(f"  Selected representative from instances")
+
+        if representative:
+            try:
+                representative_data = extractor.extract_graph_data(representative)
+
+                # Create descriptive title with pattern characteristics
+                num_nodes = len(representative)
+                num_edges = representative.number_of_edges()
+                graph_type = "Directed" if representative.is_directed() else "Undirected"
+                has_anchors = any(representative.nodes[n].get('anchor', 0) == 1 for n in representative.nodes())
+                anchor_info = " with Anchors" if has_anchors else ""
+
+                representative_data['metadata']['title'] = f"{graph_type} Pattern ({num_nodes} nodes, {num_edges} edges){anchor_info}"
+
+                representative_path = processor.process_template(
+                    graph_data=representative_data,
+                    output_filename="representative.html",
+                    output_dir=pattern_dir
+                )
+                logger.info(f"  ✓ Created representative visualization")
+            except Exception as e:
+                logger.error(f"  Failed to create representative: {e}")
+                representative_data = None
+
+        success_count = 0
+
+        # Only visualize instances if the flag is set
+        if visualize_instances:
+            for idx, pattern in enumerate(pattern_instances):
+                try:
+                    graph_data = extractor.extract_graph_data(pattern)
+
+                    graph_data['metadata']['title'] = f"{pattern_key} - Instance {idx+1}/{count}"
+
+                    filename = f"instance_{idx+1:04d}.html"
+
+                    output_path = processor.process_template(
+                        graph_data=graph_data,
+                        output_filename=filename,
+                        output_dir=pattern_dir
+                    )
+
+                    success_count += 1
+
+                    if (idx + 1) % 10 == 0 or (idx + 1) == count:
+                        logger.info(f"  Created {idx+1}/{count} instance visualizations")
+
+                except Exception as e:
+                    logger.error(f"  Failed to process instance {idx+1}: {e}")
+                    continue
+        else:
+            logger.info(f"  Skipping instance visualizations (visualize_instances=False)")
+
+        _create_pattern_index_html(pattern_key, count, pattern_dir,
+                                   has_representative=(representative_data is not None),
+                                   has_instances=visualize_instances)
+
+        if visualize_instances:
+            logger.info(f"✓ Successfully created representative + {success_count}/{count} instance visualizations in {pattern_dir}")
+        else:
+            logger.info(f"✓ Successfully created representative visualization in {pattern_dir}")
+
+        return representative_data is not None
+
+    except Exception as e:
+        logger.error(f"Failed to visualize pattern: {e}")
+        return False
+
+
+def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representative=False, has_instances=False):
+    """Create an index.html to browse all instances of a pattern with tabs for representative and instances."""
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{pattern_key} - Pattern Overview</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #fafafa;
+        }}
+
+        .header {{
+            background: white;
+            padding: 20px;
+            border-bottom: 2px solid #e5e7eb;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }}
+
+        h1 {{
+            color: #111827;
+            font-size: 24px;
+            margin-bottom: 8px;
+        }}
+
+        .subtitle {{
+            color: #6b7280;
+            font-size: 14px;
+        }}
+
+        /* Tabs */
+        .tabs {{
+            display: {'flex' if has_instances else 'none'};
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }}
+
+        .tab {{
+            padding: 16px 24px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            font-weight: 500;
+            color: #6b7280;
+            background: none;
+            border: none;
+            font-size: 15px;
+        }}
+
+        .tab:hover {{
+            background: #f9fafb;
+            color: #111827;
+        }}
+
+        .tab.active {{
+            color: #2563eb;
+            border-bottom-color: #2563eb;
+        }}
+
+        /* Tab content */
+        .tab-content {{
+            display: {'none' if has_instances else 'block'};
+            padding: 24px;
+        }}
+
+        .tab-content.active {{
+            display: block;
+        }}
+
+        /* Representative pattern section */
+        .representative-section {{
+            max-width: 100%;
+            margin: 0 auto;
+            height: calc(100vh - 140px);
+        }}
+
+        .representative-frame {{
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: white;
+        }}
+
+        /* Instances grid */
+        .instances-section {{
+            max-width: 1400px;
+            margin: 0 auto;
+        }}
+
+        .stats {{
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }}
+
+        .stat-item {{
+            display: flex;
+            flex-direction: column;
+        }}
+
+        .stat-label {{
+            color: #6b7280;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }}
+
+        .stat-value {{
+            color: #111827;
+            font-size: 24px;
+            font-weight: 700;
+        }}
+
+        .grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 16px;
+        }}
+
+        .instance-card {{
+            background: white;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.2s;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }}
+
+        .instance-card:hover {{
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            transform: translateY(-4px);
+            border-color: #2563eb;
+        }}
+
+        .instance-card a {{
+            text-decoration: none;
+            color: #2563eb;
+            font-weight: 600;
+            font-size: 16px;
+            display: block;
+        }}
+
+        .instance-number {{
+            color: #9ca3af;
+            font-size: 13px;
+            margin-top: 8px;
+            font-family: 'Courier New', monospace;
+        }}
+
+        /* No representative message */
+        .no-representative {{
+            background: #fef3c7;
+            border: 1px solid #fbbf24;
+            color: #92400e;
+            padding: 16px;
+            border-radius: 8px;
+            margin: 20px auto;
+            max-width: 600px;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{pattern_key}</h1>
+        <div class="subtitle">Pattern Discovery and Analysis{' - Representative Only' if not has_instances else ''}</div>
+    </div>
+"""
+
+    if has_instances:
+        html_content += f"""
+    <div class="tabs">
+        <button class="tab active" onclick="openTab(event, 'representative-tab')">
+            📊 Representative Pattern
+        </button>
+        <button class="tab" onclick="openTab(event, 'instances-tab')">
+            📁 All Instances ({count})
+        </button>
+    </div>
+"""
+
+    html_content += """
+    <div id="representative-tab" class="tab-content active">
+        <div class="representative-section">
+"""
+
+    if has_representative:
+        html_content += """
+            <iframe src="representative.html" class="representative-frame"></iframe>
+"""
+    else:
+        html_content += """
+            <div class="no-representative">
+                <strong>⚠️ Representative pattern not available</strong>
+                <p>No representative visualization was created for this pattern.</p>
+            </div>
+"""
+
+    html_content += f"""
+        </div>
+    </div>
+"""
+
+    # Only add instances tab if instances were visualized
+    if has_instances:
+        html_content += f"""
+    <div id="instances-tab" class="tab-content">
+        <div class="instances-section">
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-label">Total Instances</div>
+                    <div class="stat-value">{count}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Pattern Type</div>
+                    <div class="stat-value">{pattern_key.split('_')[1] if '_' in pattern_key else 'N/A'}</div>
+                </div>
+            </div>
+
+            <div class="grid">
+"""
+
+        for i in range(1, count + 1):
+            html_content += f"""
+                <div class="instance-card">
+                    <a href="instance_{i:04d}.html" target="_blank">Instance {i}</a>
+                    <div class="instance-number">#{i:04d}</div>
+                </div>
+"""
+
+        html_content += """
+            </div>
+        </div>
+    </div>
+"""
+
+    # Only add tab switching script if we have tabs
+    if has_instances:
+        html_content += """
+    <script>
+        function openTab(evt, tabName) {
+            // Hide all tab contents
+            const tabContents = document.getElementsByClassName('tab-content');
+            for (let i = 0; i < tabContents.length; i++) {
+                tabContents[i].classList.remove('active');
+            }
+
+            // Remove active class from all tabs
+            const tabs = document.getElementsByClassName('tab');
+            for (let i = 0; i < tabs.length; i++) {
+                tabs[i].classList.remove('active');
+            }
+
+            // Show the selected tab content and mark tab as active
+            document.getElementById(tabName).classList.add('active');
+            evt.currentTarget.classList.add('active');
+        }
+    </script>
+"""
+
+    html_content += """
+</body>
+</html>
+"""
+
+    index_path = os.path.join(pattern_dir, "index.html")
+    with open(index_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
