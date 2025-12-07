@@ -21,6 +21,12 @@ class MiningService:
         shared_job_dir = "/shared/output/{}".format(job_id)
         os.makedirs(shared_job_dir, exist_ok=True)
         
+        # Clean plots directory to prevent old results from mixing with new ones
+        plots_cluster_dir = "/app/plots/cluster"
+        if os.path.exists(plots_cluster_dir):
+            shutil.rmtree(plots_cluster_dir)
+        os.makedirs(plots_cluster_dir, exist_ok=True)
+        
         out_filename = str(uuid.uuid4()) + '.pkl'
         out_path = os.path.join(Config.RESULTS_FOLDER, out_filename)
         json_path = os.path.join(Config.RESULTS_FOLDER, out_filename.replace('.pkl', '.json'))
@@ -47,8 +53,7 @@ class MiningService:
             if config.get('visualize_instances', False):
                 cmd.append("--visualize_instances")
             
-            print("DEBUG MINING_SERVICE: config={}".format(json.dumps(config)), flush=True)
-            print("DEBUG MINING_SERVICE: Running command: {}".format(' '.join(cmd)), flush=True)
+            print("Running command: {}".format(' '.join(cmd)), flush=True)
             print("Mining started - this may take several minutes...", flush=True)
             print("Job ID: {}".format(job_id), flush=True)
             print("Config: {}".format(json.dumps(config, indent=2)), flush=True)

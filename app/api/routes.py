@@ -24,10 +24,6 @@ def mine(
     sample_method: str = Form("tree"),
     visualize_instances: bool = Form(...)
 ):
-    print(f"DEBUG NEURAL_MINER ROUTES: Received mine request", flush=True)
-    print(f"DEBUG NEURAL_MINER ROUTES: min_pattern_size={min_pattern_size}, max_pattern_size={max_pattern_size}", flush=True)
-    print(f"DEBUG NEURAL_MINER ROUTES: graph_type={graph_type}, visualize_instances={visualize_instances}", flush=True)
-    
     # Validate file
     if not graph_file.filename:
         raise HTTPException(status_code=400, detail="No selected file")
