@@ -11,8 +11,23 @@ router = APIRouter()
 @router.post("/mine")
 def mine(
     graph_file: UploadFile = File(...), 
-    job_id: str = Form(None)
+    job_id: str = Form(...),
+    min_pattern_size: int = Form(...),
+    max_pattern_size: int = Form(...),
+    min_neighborhood_size: int = Form(...),
+    max_neighborhood_size: int = Form(...),
+    n_neighborhoods: int = Form(...),
+    n_trials: int = Form(...),
+    radius: int = Form(3), # Radius kept with default as removed from pipeline
+    graph_type: str = Form(...),
+    search_strategy: str = Form("greedy"),
+    sample_method: str = Form("tree"),
+    visualize_instances: bool = Form(...)
 ):
+    print(f"DEBUG NEURAL_MINER ROUTES: Received mine request", flush=True)
+    print(f"DEBUG NEURAL_MINER ROUTES: min_pattern_size={min_pattern_size}, max_pattern_size={max_pattern_size}", flush=True)
+    print(f"DEBUG NEURAL_MINER ROUTES: graph_type={graph_type}, visualize_instances={visualize_instances}", flush=True)
+    
     # Validate file
     if not graph_file.filename:
         raise HTTPException(status_code=400, detail="No selected file")
@@ -24,11 +39,27 @@ def mine(
     try:
         with open(filepath, "wb") as buffer:
             shutil.copyfileobj(graph_file.file, buffer)
+        
+        # Prepare mining config
+        mining_config = {
+            'min_pattern_size': min_pattern_size,
+            'max_pattern_size': max_pattern_size,
+            'min_neighborhood_size': min_neighborhood_size,
+            'max_neighborhood_size': max_neighborhood_size,
+            'n_neighborhoods': n_neighborhoods,
+            'n_trials': n_trials,
+            'radius': radius,
+            'graph_type': graph_type,
+            'search_strategy': search_strategy,
+            'sample_method': sample_method,
+            'visualize_instances': visualize_instances
+        }
             
-        # Run miner with job_id and parameters
+        # Run miner with job_id and config
         result = MiningService.run_miner(
             filepath, 
-            job_id=job_id
+            job_id=job_id,
+            config=mining_config
         )
 
         # Construct response

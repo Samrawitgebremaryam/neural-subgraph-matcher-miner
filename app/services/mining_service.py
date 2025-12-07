@@ -7,7 +7,7 @@ from ..config.settings import Config
 
 class MiningService:
     @staticmethod
-    def run_miner(input_file_path, job_id=None):
+    def run_miner(input_file_path, job_id=None, config=None):
         """
         Runs the subgraph miner on the given input file.
         Returns the parsed JSON results and file paths.
@@ -32,7 +32,11 @@ class MiningService:
                 "--out_path={}".format(out_path)
             ]
             
-            print("Running command: {}".format(' '.join(cmd)), flush=True)
+            if config.get('visualize_instances', False):
+                cmd.append("--visualize_instances")
+            
+            print("DEBUG MINING_SERVICE: config={}".format(json.dumps(config)), flush=True)
+            print("DEBUG MINING_SERVICE: Running command: {}".format(' '.join(cmd)), flush=True)
             print("Mining started - this may take several minutes...", flush=True)
             print("Job ID: {}".format(job_id), flush=True)
             
@@ -76,12 +80,13 @@ class MiningService:
             if os.path.exists(json_path):
                 shutil.copy(json_path, os.path.join(shared_results_dir, "patterns.json"))
             
+            # Recursively copy plots/cluster directory including subdirectories
             plots_cluster_dir = "/app/plots/cluster"
             if os.path.exists(plots_cluster_dir):
-                for filename in os.listdir(plots_cluster_dir):
-                    src_file = os.path.join(plots_cluster_dir, filename)
-                    if os.path.isfile(src_file):
-                        shutil.copy(src_file, os.path.join(shared_plots_dir, filename))
+                # Remove old plots first to avoid mixing old and new results
+                if os.path.exists(shared_plots_dir):
+                    shutil.rmtree(shared_plots_dir)
+                shutil.copytree(plots_cluster_dir, os.path.join(shared_plots_dir, "cluster"))
             
             print("Results saved to shared volume: {}".format(shared_job_dir), flush=True)
             
