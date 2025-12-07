@@ -46,10 +46,12 @@ def parse_decoder(parser):
                         help='Auto-enable streaming for graphs larger than this')  
     dec_parser.add_argument('--streaming_workers', type=int, default=4,  
                         help='Number of parallel workers for chunk processing')  
-    dec_parser.add_argument('--dense_graph_threshold', type=float, default=5.0,  
+    dec_parser.add_argument('--dense_graph_threshold', type=float, default=10.0,  
                         help='Average degree threshold for dense graphs')  
     dec_parser.add_argument('--clustering_threshold', type=float, default=0.3,  
                         help='Clustering coefficient threshold for modular graphs')
+    dec_parser.add_argument('--max_components_threshold', type=int, default=1000,
+                        help='Maximum number of components before chunking becomes inefficient')
     
     # Beam search parameter
     parser.add_argument('--beam_width', type=int, default=5,
@@ -95,6 +97,7 @@ def parse_decoder(parser):
         chunk_size=10000,  
         auto_streaming_threshold=50000,  
         streaming_workers=4,  
-        dense_graph_threshold=50.0,  
+        dense_graph_threshold=10.0,  
+        max_components_threshold=1000,
         use_streaming=False
     )

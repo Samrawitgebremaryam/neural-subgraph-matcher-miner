@@ -48,86 +48,128 @@ from sklearn.decomposition import PCA
 
 import warnings 
 
-def analyze_graph_for_streaming(graph, args):  
-    import random  
-      
-    num_nodes = graph.number_of_nodes()  
-    num_edges = graph.number_of_edges()  
-    avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
-      
-    # Bipartite detection 
-    is_bipartite = nx.is_bipartite(graph)  
-      
-    # Clustering coefficient
-    if graph.is_directed():  
-        undirected_graph = graph.to_undirected()  
-        if num_nodes > 10000:  
-            sample_nodes = random.sample(list(undirected_graph.nodes()), 1000)  
-            clustering_coef = nx.average_clustering(undirected_graph, nodes=sample_nodes)  
-        else:  
-            clustering_coef = nx.average_clustering(undirected_graph)  
-    else:  
-        if num_nodes > 10000:  
-            sample_nodes = random.sample(list(graph.nodes()), 1000)  
-            clustering_coef = nx.average_clustering(graph, nodes=sample_nodes)  
-        else:  
-            clustering_coef = nx.average_clustering(graph)  
-      
-    # Power-law degree distribution check  
-    degrees = [d for n, d in graph.degree()]  
-    if degrees:  
-        max_degree = max(degrees)  
-        median_degree = sorted(degrees)[len(degrees) // 2]  
-        is_power_law = (max_degree / (median_degree + 1)) > 10  
-    else:  
-        is_power_law = False  
-      
-    # Calculate connectivity ratio
-    if graph.is_directed():  
-        components = list(nx.weakly_connected_components(graph))  
-    else:  
-        components = list(nx.connected_components(graph))  
-      
-    n_components = len(components)  
-    if n_components > 0:  
-        largest_cc_size = len(max(components, key=len))  
-        connectivity_ratio = largest_cc_size / num_nodes  
-    else:  
-        connectivity_ratio = 0.0  
-      
-    # Decision logic  
-    use_streaming = False  
-    reason = ""  
-      
-    if is_bipartite:  
-        use_streaming = False  
-        reason = "bipartite graph structure - BFS chunking ineffective"  
-
-    elif connectivity_ratio > 0.9:  
-        use_streaming = False  
-        reason = f"well-connected graph (connectivity={connectivity_ratio:.2f}) - BFS chunking would cause memory issues"  
-
-    elif is_power_law:
-        use_streaming = False
-        reason = (
-            "power-law degree distribution - hub nodes would cause imbalanced chunks"
-        )
-
-    elif (
-        num_nodes > 100000
-        and 5.0 <= avg_degree <= 20.0
-        and clustering_coef > 0.3
-        and n_components < 100
-    ):
+def analyze_graph_for_streaming(graph, args):
+    import random
+    
+    # Calculate basic metrics
+    num_nodes = graph.number_of_nodes()
+    num_edges = graph.number_of_edges()
+    avg_degree = num_edges / num_nodes if num_nodes > 0 else 0
+    
+    # Clustering coefficient (sample for large graphs)
+    if graph.is_directed():
+        undirected_graph = graph.to_undirected()
+        if num_nodes > 10000:
+            sample_nodes = random.sample(list(undirected_graph.nodes()), min(1000, num_nodes))
+            clustering_coef = nx.average_clustering(undirected_graph, nodes=sample_nodes)
+        else:
+            clustering_coef = nx.average_clustering(undirected_graph)
+    else:
+        if num_nodes > 10000:
+            sample_nodes = random.sample(list(graph.nodes()), min(1000, num_nodes))
+            clustering_coef = nx.average_clustering(graph, nodes=sample_nodes)
+        else:
+            clustering_coef = nx.average_clustering(graph)
+    
+    # Connected components
+    if graph.is_directed():
+        components = list(nx.weakly_connected_components(graph))
+    else:
+        components = list(nx.connected_components(graph))
+    
+    n_components = len(components)
+    largest_cc_size = len(max(components, key=len)) if n_components > 0 else 0
+    connectivity_ratio = largest_cc_size / num_nodes if num_nodes > 0 else 0
+    
+    # Bipartite detection (only for small graphs - expensive check)
+    if num_nodes < 10000:
+        is_bipartite = nx.is_bipartite(graph)
+    else:
+        is_bipartite = False 
+    
+    estimated_memory_mb = (num_nodes * avg_degree * 0.2 + num_nodes * 0.1)
+    
+    try:
+        import psutil
+        available_memory_mb = psutil.virtual_memory().available / (1024 * 1024)
+        memory_pressure = estimated_memory_mb > (available_memory_mb * 0.6)
+    except ImportError:
+        available_memory_mb = 8000 
+        memory_pressure = estimated_memory_mb > 4800  
+    
+    use_streaming = False
+    reason = ""
+    priority = ""
+    
+    # Memory Constraint 
+    if memory_pressure:
         use_streaming = True
-        reason = f"large modular graph (degree={avg_degree:.2f}, clustering={clustering_coef:.3f})"
+        reason = f"memory pressure: estimated {estimated_memory_mb:.0f}MB > {available_memory_mb*0.6:.0f}MB available"
+        priority = "CRITICAL_MEMORY"
+    
+    #Cannot Partition 
+    elif is_bipartite:
+        use_streaming = False
+        reason = "bipartite structure - BFS chunking would create imbalanced partitions"
+        priority = "STRUCTURAL_BLOCK"
+    
+    elif connectivity_ratio > 0.95 and num_nodes > 20000:
+        # Nearly fully connected - BFS would touch all nodes
+        use_streaming = False
+        reason = f"nearly fully connected (connectivity={connectivity_ratio:.2f}) - BFS cannot partition"
+        priority = "STRUCTURAL_BLOCK"
+    
+    #Too Fragmented 
+    elif n_components > args.max_components_threshold:
+        use_streaming = False
+        reason = f"highly fragmented ({n_components} components) - component-level parallelization more efficient"
+        priority = "NATURAL_PARALLEL"
+    
+    # Too Small 
+    elif num_nodes < 30000:
+        use_streaming = False
+        reason = f"small graph ({num_nodes} nodes) - overhead (15-25%) > potential speedup"
+        priority = "TOO_SMALL"
+    
+    #  Good Candidate for Streaming (benefit > overhead)
+    elif num_nodes >= 30000:
+        # Large enough to benefit from parallelization
+        # Check if graph structure allows effective chunking
+        
+        if n_components == 1 and avg_degree < 3.0:
+            use_streaming = True
+            reason = f"large sparse connected graph (degree={avg_degree:.2f}) - clean BFS partitioning"
+            priority = "OPTIMAL"
+        
+        elif 2 <= n_components <= 50 and clustering_coef > 0.15:
+            use_streaming = True
+            reason = f"modular structure ({n_components} communities, clustering={clustering_coef:.2f}) - parallel speedup likely"
+            priority = "OPTIMAL"
+        
+        elif num_nodes > 100000:
+            use_streaming = True
+            reason = f"very large graph ({num_nodes} nodes) - memory management beneficial"
+            priority = "SIZE_BENEFIT"
+        
+        else:
+            use_streaming = False
+            reason = f"medium-large graph but structure not ideal for chunking (degree={avg_degree:.2f}, components={n_components})"
+            priority = "STRUCTURE_MISMATCH"
+    
     else:
         use_streaming = False
-        reason = f"graph characteristics don't benefit from chunking"
-
+        reason = "default: standard mode"
+        priority = "DEFAULT"
+    
+    if hasattr(args, 'use_streaming') and args.use_streaming:
+        use_streaming = True
+        reason = "MANUAL OVERRIDE: --use_streaming flag set"
+        priority = "MANUAL"
+    
     return {
         "use_streaming": use_streaming,
         "reason": reason,
+        "priority": priority,
         "num_nodes": num_nodes,
         "num_edges": num_edges,
         "avg_degree": avg_degree,
@@ -135,9 +177,10 @@ def analyze_graph_for_streaming(graph, args):
         "n_components": n_components,
         "connectivity_ratio": connectivity_ratio,
         "is_bipartite": is_bipartite,
-        "is_power_law": is_power_law,
-        "estimated_memory_mb": (num_nodes * 200 + num_edges * 100) / 1024,
+        "estimated_memory_mb": estimated_memory_mb,
+        "available_memory_mb": available_memory_mb,
     }
+
 
 def bfs_chunk(graph, start_node, max_size):
     visited = set([start_node])
@@ -187,9 +230,8 @@ def _process_chunk(args_tuple):
     chunk_dataset, task, args, chunk_index, total_chunks = args_tuple
     start_time = time.time()
 
-    # Disable nested multiprocessing - set to 0 to prevent pool creation
     original_n_workers = getattr(args, "n_workers", 4)
-    args.n_workers = 0  # Setting to 0 signals single-threaded mode
+    args.n_workers = 0  
 
     print(
         f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}",
@@ -205,7 +247,6 @@ def _process_chunk(args_tuple):
             flush=True,
         )
 
-        # Restore original n_workers
         args.n_workers = original_n_workers
         return result
     except Exception as e:
@@ -239,7 +280,6 @@ def pattern_growth_streaming(dataset, task, args):
 
     # Adaptive chunk sizing based on density
     if avg_degree > args.dense_graph_threshold:
-        # Dense graphs: use smaller chunks to avoid memory issues
         effective_chunk_size = min(args.chunk_size, 5000)
         print(
             f"Dense graph detected (avg degree > {args.dense_graph_threshold})",
@@ -247,27 +287,22 @@ def pattern_growth_streaming(dataset, task, args):
         )
         print(f"Reducing chunk size to {effective_chunk_size} nodes", flush=True)
     elif avg_degree > 20:
-        # Medium density: slightly reduce chunk size
         effective_chunk_size = min(args.chunk_size, 7500)
         print(
             f"Medium density graph, using chunk size: {effective_chunk_size}",
             flush=True,
         )
     else:
-        # Sparse graphs: use larger chunks
         effective_chunk_size = args.chunk_size
         print(f"Sparse graph, using chunk size: {effective_chunk_size}", flush=True)
 
-    # Partition graph into chunks
     print(
         f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...",
         flush=True,
     )
     graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)
 
-    # Filter out tiny chunks based on graph sparsity
     if avg_degree < 2.0:
-        # Very sparse graphs: use higher minimum to reduce chunk count
         min_chunk_size = max(args.min_pattern_size, 20)
         print(
             f"Sparse graph detected (avg degree < 2.0), using min chunk size: {min_chunk_size}",
@@ -325,8 +360,29 @@ def pattern_growth_streaming(dataset, task, args):
         if chunk_out_graphs:
             all_discovered_patterns.extend(chunk_out_graphs)
 
-    print(f"Total patterns discovered: {len(all_discovered_patterns)}", flush=True)
-    return all_discovered_patterns
+    print(f"Total patterns discovered (with duplicates): {len(all_discovered_patterns)}", flush=True)
+    
+    # Deduplicate patterns across chunks
+    if len(all_discovered_patterns) > 0:
+        print("Deduplicating patterns across chunks...", flush=True)
+        seen_hashes = set()
+        unique_patterns = []
+        
+        for pattern in all_discovered_patterns:
+            wl = utils.wl_hash(pattern, node_anchored=args.node_anchored)
+            if wl not in seen_hashes:
+                seen_hashes.add(wl)
+                unique_patterns.append(pattern)
+        
+        duplicates_removed = len(all_discovered_patterns) - len(unique_patterns)
+        if duplicates_removed > 0:
+            print(f"Removed {duplicates_removed} duplicate patterns ({duplicates_removed/len(all_discovered_patterns)*100:.1f}%)", flush=True)
+        print(f"Final unique patterns: {len(unique_patterns)}", flush=True)
+        
+        return unique_patterns
+    else:
+        print("No patterns discovered", flush=True)
+        return all_discovered_patterns
 
 def visualize_pattern_graph(pattern, args, count_by_size):
     try:
@@ -921,19 +977,22 @@ def main():
         reason = graph_stats['reason']  
         
         # Print analysis results  
-        print("=" * 60)  
+        print("=" * 70)  
         print("GRAPH ANALYSIS")  
-        print("=" * 60)  
+        print("=" * 70)  
         print(f"Nodes: {graph_stats['num_nodes']:,}")  
         print(f"Edges: {graph_stats['num_edges']:,}")  
         print(f"Average degree: {graph_stats['avg_degree']:.2f}")  
         print(f"Clustering coefficient: {graph_stats['clustering_coef']:.3f}")  
         print(f"Connected components: {graph_stats['n_components']}")  
         print(f"Connectivity ratio: {graph_stats['connectivity_ratio']:.2f}")  
-        print(f"Estimated memory: {int(graph_stats['estimated_memory_mb'])}MB")  
-        print(f"Decision: {'STREAMING MODE' if use_streaming else 'STANDARD MODE'}")  
+        print(f"Estimated memory: {graph_stats['estimated_memory_mb']:.0f}MB")
+        print(f"Available memory: {graph_stats.get('available_memory_mb', 'unknown'):.0f}MB")
+        print()
+        print(f"DECISION: {'🚀 STREAMING MODE' if use_streaming else '📊 STANDARD MODE'}")
+        print(f"Priority: {graph_stats.get('priority', 'unknown')}")
         print(f"Reason: {reason}")  
-        print("=" * 60)  
+        print("=" * 70)  
         
         if use_streaming:  
             out_graphs = pattern_growth_streaming(dataset, task, args)  
