@@ -101,15 +101,46 @@ def bfs_chunk(graph, start_node, max_size):
     return graph.subgraph(visited).copy()
 
 
-def process_large_graph_in_chunks(graph, chunk_size=10000):
-    all_nodes = set(graph.nodes())
-    graph_chunks = []
-    while all_nodes:
-        start_node = next(iter(all_nodes))
-        chunk = bfs_chunk(graph, start_node, chunk_size)
-        graph_chunks.append(chunk)
-        all_nodes -= set(chunk.nodes())
-    return graph_chunks
+def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20):
+    # Find connected components
+    if graph.is_directed():
+        components = list(nx.weakly_connected_components(graph))
+    else:
+        components = list(nx.connected_components(graph))
+    
+    # Sort by size (largest first)
+    components = sorted(components, key=len, reverse=True)
+    
+    chunks = []
+    small_components_buffer = []
+    
+    for component in components:
+        component_size = len(component)
+        
+        # Skip tiny components (too small to mine)
+        if component_size < min_chunk_size:
+            continue
+        
+        # Medium component: use as single chunk
+        elif component_size <= chunk_size:
+            chunk_graph = graph.subgraph(component).copy()
+            chunks.append(chunk_graph)
+        
+        # Large component: need to split
+        else:
+            # For very large components, split using BFS
+            component_graph = graph.subgraph(component).copy()
+            component_nodes = set(component_graph.nodes())
+            
+            while component_nodes:
+                start_node = next(iter(component_nodes))
+                chunk = bfs_chunk(component_graph, start_node, chunk_size)
+                chunks.append(chunk)
+                component_nodes -= set(chunk.nodes())
+    
+    print(f"Component-based chunking: {len(components)} components → {len(chunks)} chunks", flush=True)
+    
+    return chunks
 
 
 def analyze_graph_for_streaming(graph, args):
@@ -155,8 +186,10 @@ def analyze_graph_for_streaming(graph, args):
     else:
         is_bipartite = False
     
-    # Memory estimation
-    estimated_memory_mb = (num_nodes * avg_degree * 0.2 + num_nodes * 0.1)
+    # CORRECTED Memory estimation (realistic formula)
+    # NetworkX graph memory: ~200 bytes per node + ~100 bytes per edge
+    # Plus embeddings: ~1KB per node for model data
+    estimated_memory_mb = (num_nodes * 1.2 + num_edges * 0.1) / 1024  # Convert KB to MB
     
     try:
         import psutil
@@ -166,18 +199,28 @@ def analyze_graph_for_streaming(graph, args):
         available_memory_mb = 8000
         memory_pressure = estimated_memory_mb > 4800
     
-    # DECISION LOGIC: Ordered by priority
+    # Estimate chunk count for overhead calculation
+    chunk_size = getattr(args, 'chunk_size', 10000)
+    estimated_chunks = max(num_nodes // chunk_size, n_components)
+    
+    # DECISION LOGIC: Ordered by priority (CORRECTED ORDER)
     use_streaming = False
     reason = ""
     priority = ""
     
-    # PRIORITY 1: Memory Constraint (HIGHEST)
-    if memory_pressure:
-        use_streaming = True
-        reason = f"memory pressure: estimated {estimated_memory_mb:.0f}MB > {available_memory_mb*0.6:.0f}MB available"
-        priority = "CRITICAL_MEMORY"
+    # PRIORITY 1: Too Fragmented (MOVED TO TOP - blocks streaming)
+    if n_components > 100:
+        use_streaming = False
+        reason = f"highly fragmented ({n_components} components > 100) - chunking overhead dominates benefit"
+        priority = "TOO_FRAGMENTED"
     
-    # PRIORITY 2: Cannot Partition (blocks streaming)
+    # PRIORITY 2: Too Many Estimated Chunks
+    elif estimated_chunks > 300:
+        use_streaming = False
+        reason = f"would create ~{estimated_chunks} chunks - overhead (>5min) > speedup"
+        priority = "TOO_MANY_CHUNKS"
+    
+    # PRIORITY 3: Structural Blocks (cannot partition effectively)
     elif is_bipartite:
         use_streaming = False
         reason = "bipartite structure - BFS chunking would create imbalanced partitions"
@@ -189,19 +232,19 @@ def analyze_graph_for_streaming(graph, args):
         reason = f"nearly fully connected (connectivity={connectivity_ratio:.2f}) - BFS cannot partition"
         priority = "STRUCTURAL_BLOCK"
     
-    # PRIORITY 3: Too Fragmented
-    elif n_components > args.max_components_threshold:
-        use_streaming = False
-        reason = f"highly fragmented ({n_components} components) - component-level parallelization more efficient"
-        priority = "NATURAL_PARALLEL"
-    
     # PRIORITY 4: Too Small
     elif num_nodes < 30000:
         use_streaming = False
-        reason = f"small graph ({num_nodes} nodes) - overhead (15-25%) > potential speedup"
+        reason = f"small graph ({num_nodes} nodes < 30K) - standard mode faster"
         priority = "TOO_SMALL"
     
-    # PRIORITY 5: Good Candidate for Streaming (benefit > overhead)
+    # PRIORITY 5: Memory Constraint (now lower priority after fragmentation check)
+    elif memory_pressure:
+        use_streaming = True
+        reason = f"memory pressure: estimated {estimated_memory_mb:.0f}MB > {available_memory_mb*0.6:.0f}MB available"
+        priority = "CRITICAL_MEMORY"
+    
+    # PRIORITY 6: Good Candidate for Streaming (benefit > overhead)
     elif num_nodes >= 30000:
         # Large enough to benefit from parallelization
         # Check if graph structure allows effective chunking
@@ -250,6 +293,7 @@ def analyze_graph_for_streaming(graph, args):
         "is_bipartite": is_bipartite,
         "estimated_memory_mb": estimated_memory_mb,
         "available_memory_mb": available_memory_mb,
+        "estimated_chunks": estimated_chunks,
     }
 
 
@@ -288,7 +332,11 @@ def _process_chunk(args_tuple):
     
     try:
         # Process this chunk with spawn context for nested parallelization
-        result = pattern_growth([chunk_dataset], task, args, mp_context=spawn_ctx)
+        # Skip visualization and saving to avoid overhead
+        result = pattern_growth([chunk_dataset], task, args, 
+                               mp_context=spawn_ctx,
+                               skip_visualization=True,
+                               skip_save=True)
         
         elapsed = int(time.time() - start_time)
         print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {elapsed}s ({len(result)} patterns)", flush=True)
@@ -355,19 +403,20 @@ def pattern_growth_streaming(dataset, task, args):
     
     print(f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...", flush=True)
     chunk_start = time.time()
-    graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)
-    chunk_time = time.time() - chunk_start
     
-    # Filter out chunks that are too small
+    # Determine minimum chunk size based on graph density
     if avg_degree < 2.0:
         min_chunk_size = max(args.min_pattern_size, 20)
         print(f"Sparse graph detected (avg degree < 2.0), using min chunk size: {min_chunk_size}", flush=True)
     else:
         min_chunk_size = max(args.min_pattern_size, 5)
     
-    graph_chunks = [chunk for chunk in graph_chunks if chunk.number_of_nodes() >= min_chunk_size]
+    # Component-based chunking (handles filtering internally)
+    graph_chunks = process_large_graph_in_chunks(graph, 
+                                                 chunk_size=effective_chunk_size,
+                                                 min_chunk_size=min_chunk_size)
+    chunk_time = time.time() - chunk_start
     print(f"Partitioning completed in {chunk_time:.1f}s", flush=True)
-    print(f"Filtered to {len(graph_chunks)} chunks with >= {min_chunk_size} nodes", flush=True)
     
     # Show chunk distribution
     print(f"Created {len(graph_chunks)} chunks", flush=True)
@@ -954,11 +1003,13 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
         return None
 
 
-def pattern_growth(dataset, task, args, mp_context=None):
+def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=False, skip_save=False):
     """Main pattern mining function.
     
     Args:
         mp_context: Optional multiprocessing context (e.g., spawn) for nested parallelization.
+        skip_visualization: If True, skip visualization (for chunk processing).
+        skip_save: If True, skip file saving (for chunk processing).
     """
     start_time = time.time()
     
@@ -1122,92 +1173,83 @@ def pattern_growth(dataset, task, args, mp_context=None):
     elapsed = time.time() - start_time
     logger.info(f"Total time: {elapsed:.2f}s ({int(elapsed)//60}m {int(elapsed)%60}s)")
 
-    if hasattr(agent, 'counts') and agent.counts:
-        logger.info("\nSaving all pattern instances...")
-        pkl_path = save_and_visualize_all_instances(agent, args, out_graphs)
+    if not skip_visualization:
+        if hasattr(agent, 'counts') and agent.counts:
+            logger.info("\nSaving all pattern instances...")
+            pkl_path = save_and_visualize_all_instances(agent, args, out_graphs)
 
-        if pkl_path:
-            logger.info(f"✓ All instances saved to: {pkl_path}")
+            if pkl_path:
+                logger.info(f"✓ All instances saved to: {pkl_path}")
+            else:
+                logger.error("✗ Failed to save all instances")
         else:
-            logger.error("✗ Failed to save all instances")
-    else:
-        logger.warning("⚠ Agent.counts not found - cannot save all instances")
-        logger.warning("  Check that your search agent populates agent.counts")
+            logger.warning("⚠ Agent.counts not found - cannot save all instances")
+            logger.warning("  Check that your search agent populates agent.counts")
 
-    count_by_size = defaultdict(int)
-    warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
+        count_by_size = defaultdict(int)
+        warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 
-    successful_visualizations = 0
+        successful_visualizations = 0
 
-    # Only create direct representative visualizations if --visualize_instances is NOT set
-    # (When --visualize_instances IS set, representatives are already in subdirectories)
-    visualize_instances = getattr(args, 'visualize_instances', False)
+        # Only create direct representative visualizations if --visualize_instances is NOT set
+        # (When --visualize_instances IS set, representatives are already in subdirectories)
+        visualize_instances = getattr(args, 'visualize_instances', False)
 
-    if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
-        logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
+        if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
+            logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
+            for pattern in out_graphs:
+                if visualize_pattern_graph_ext(pattern, args, count_by_size):
+                    successful_visualizations += 1
+                count_by_size[len(pattern)] += 1
+
+            logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
+        elif visualize_instances:
+            logger.info("\nSkipping direct representative visualization (representatives already in subdirectories)")
+        else:
+            logger.warning("⚠ Skipping representative visualization (visualizer not available)")
+
+    if not skip_save:
+        ensure_directories()
+        
+        logger.info(f"\nSaving representative patterns to: {args.out_path}")
+        
+        if not os.path.exists("results"):
+            os.makedirs("results")
+        with open(args.out_path, "wb") as f:
+            pickle.dump(out_graphs, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        if os.path.exists(args.out_path):
+            file_size = os.path.getsize(args.out_path) / 1024
+            logger.info(f"✓ Representatives saved ({file_size:.1f} KB)")
+        else:
+            logger.error("✗ Failed to save representatives")
+        
+        json_results = []
         for pattern in out_graphs:
-            if visualize_pattern_graph_ext(pattern, args, count_by_size):
-                successful_visualizations += 1
-            count_by_size[len(pattern)] += 1
-
-        logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
-    elif visualize_instances:
-        logger.info("\nSkipping direct representative visualization (representatives already in subdirectories)")
-    else:
-        logger.warning("⚠ Skipping representative visualization (visualizer not available)")
-
-    ensure_directories()
-    
-    logger.info(f"\nSaving representative patterns to: {args.out_path}")
-    
-    if not os.path.exists("results"):
-        os.makedirs("results")
-    with open(args.out_path, "wb") as f:
-        pickle.dump(out_graphs, f, protocol=pickle.HIGHEST_PROTOCOL)
-    
-    if os.path.exists(args.out_path):
-        file_size = os.path.getsize(args.out_path) / 1024
-        logger.info(f"✓ Representatives saved ({file_size:.1f} KB)")
-    else:
-        logger.error("✗ Failed to save representatives")
-    
-    json_results = []
-    for pattern in out_graphs:
-        pattern_data = {
-            'nodes': [
-                {
-                    'id': str(node),
-                    'label': pattern.nodes[node].get('label', ''),
-                    'anchor': pattern.nodes[node].get('anchor', 0),
-                    **{k: v for k, v in pattern.nodes[node].items() 
-                       if k not in ['label', 'anchor']}
-                }
-                for node in pattern.nodes()
-            ],
-            'edges': [
-                {
-                    'source': str(u),
-                    'target': str(v),
-                    'type': data.get('type', ''),
-                    **{k: v for k, v in data.items() if k != 'type'}
-                }
-                for u, v, data in pattern.edges(data=True)
-            ],
-            'metadata': {
-                'num_nodes': len(pattern),
-                'num_edges': pattern.number_of_edges(),
-                'is_directed': pattern.is_directed()
+            pattern_data = {
+                'nodes': [
+                    {
+                        'id': str(node),
+                        'label': pattern.nodes[node].get('label', ''),
+                        'anchor': pattern.nodes[node].get('anchor', 0),
+                        **{k: v for k, v in pattern.nodes[node].items() 
+                           if k not in ['label', 'anchor']}
+                    }
+                    for node in pattern.nodes()
+                ],
+                'edges': [
+                    {
+                        'source': str(u),
+                        'target': str(v),
+                        'type': pattern.edges[u, v].get('type', ''),
+                        **{k: v for k, v in pattern.edges[u, v].items() 
+                           if k != 'type'}
+                    }
+                    for u, v in pattern.edges()
+                ],
+                'size': len(pattern),
+                'is_directed': isinstance(pattern, nx.DiGraph)
             }
-        }
-        json_results.append(pattern_data)
-    
-    base_path = os.path.splitext(args.out_path)[0]
-    if base_path.endswith('.json'):
-        base_path = os.path.splitext(base_path)[0]
-    
-    json_path = base_path + '.json'
-    with open(json_path, 'w') as f:
-        json.dump(json_results, f, indent=2)
     
     logger.info(f"✓ JSON version saved to: {json_path}")
     
@@ -1374,6 +1416,8 @@ def main():
         print(f"Connectivity ratio: {graph_stats['connectivity_ratio']:.2f}")
         print(f"Estimated memory: {graph_stats['estimated_memory_mb']:.0f}MB")
         print(f"Available memory: {graph_stats.get('available_memory_mb', 'unknown'):.0f}MB")
+        if 'estimated_chunks' in graph_stats:
+            print(f"Estimated chunks (if streaming): {graph_stats['estimated_chunks']}")
         print()
         print(f"DECISION: {'🚀 STREAMING MODE' if use_streaming else '📊 STANDARD MODE'}")
         print(f"Priority: {graph_stats.get('priority', 'unknown')}")
