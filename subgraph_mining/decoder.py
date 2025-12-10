@@ -275,32 +275,30 @@ def make_plant_dataset(size):
 
 
 def _process_chunk(args_tuple):
-    """Process a single graph chunk in parallel."""
+    """Process a single graph chunk with parallel execution using spawn context."""
     chunk_dataset, task, args, chunk_index, total_chunks = args_tuple
     start_time = time.time()
     
-    # Disable nested parallelism for worker processes
-    original_n_workers = getattr(args, "n_workers", 4)
-    args.n_workers = 0
+    # Use spawn context to avoid daemon process error
+    # Spawn creates fresh processes that don't inherit daemon flag
+    import multiprocessing as mp
+    spawn_ctx = mp.get_context('spawn')
     
     print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}", flush=True)
     
     try:
-        # Process this chunk
-        result = pattern_growth([chunk_dataset], task, args)
+        # Process this chunk with spawn context for nested parallelization
+        result = pattern_growth([chunk_dataset], task, args, mp_context=spawn_ctx)
         
         elapsed = int(time.time() - start_time)
         print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {elapsed}s ({len(result)} patterns)", flush=True)
         
-        # Restore original workers setting
-        args.n_workers = original_n_workers
         return result
         
     except Exception as e:
         print(f"[{time.strftime('%H:%M:%S')}] ERROR in chunk {chunk_index+1}: {str(e)}", flush=True)
         import traceback
         traceback.print_exc()
-        args.n_workers = original_n_workers
         return []
 
 
@@ -308,7 +306,32 @@ def pattern_growth_streaming(dataset, task, args):
     """
     Process large graphs in chunks with parallel workers.
     Automatically adjusts chunk size based on graph density.
+    Includes performance tracking for comparison with standard mode.
     """
+    # Try to import psutil for memory tracking (optional)
+    try:
+        import psutil
+        import os
+        process = psutil.Process(os.getpid())
+        initial_memory_mb = process.memory_info().rss / (1024 * 1024)
+        has_psutil = True
+    except ImportError:
+        has_psutil = False
+        initial_memory_mb = 0
+    
+    # Start timing
+    start_time = time.time()
+    
+    print("\n" + "="*70)
+    print("STREAMING MODE PERFORMANCE TRACKING")
+    print("="*70)
+    print(f"Start time: {time.strftime('%H:%M:%S')}")
+    if has_psutil:
+        print(f"Initial memory: {initial_memory_mb:.1f} MB")
+    else:
+        print("Memory tracking unavailable (psutil not installed)")
+    print("="*70 + "\n")
+    
     graph = dataset[0]
     
     # Calculate graph properties
@@ -331,7 +354,9 @@ def pattern_growth_streaming(dataset, task, args):
         print(f"Sparse graph, using chunk size: {effective_chunk_size}", flush=True)
     
     print(f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...", flush=True)
+    chunk_start = time.time()
     graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)
+    chunk_time = time.time() - chunk_start
     
     # Filter out chunks that are too small
     if avg_degree < 2.0:
@@ -341,6 +366,7 @@ def pattern_growth_streaming(dataset, task, args):
         min_chunk_size = max(args.min_pattern_size, 5)
     
     graph_chunks = [chunk for chunk in graph_chunks if chunk.number_of_nodes() >= min_chunk_size]
+    print(f"Partitioning completed in {chunk_time:.1f}s", flush=True)
     print(f"Filtered to {len(graph_chunks)} chunks with >= {min_chunk_size} nodes", flush=True)
     
     # Show chunk distribution
@@ -360,9 +386,12 @@ def pattern_growth_streaming(dataset, task, args):
     # Use configurable worker count
     worker_count = getattr(args, 'streaming_workers', 4)
     print(f"\nProcessing {total_chunks} chunks with {worker_count} workers...", flush=True)
+    mining_start = time.time()
     
     with mp.Pool(processes=worker_count) as pool:
         results = pool.map(_process_chunk, chunk_args)
+    
+    mining_time = time.time() - mining_start
     
     # Aggregate results
     print("\nAggregating patterns from all chunks...", flush=True)
@@ -375,6 +404,7 @@ def pattern_growth_streaming(dataset, task, args):
     # Deduplicate patterns across chunks
     if len(all_discovered_patterns) > 0:
         print("Deduplicating patterns across chunks...", flush=True)
+        dedup_start = time.time()
         seen_hashes = set()
         unique_patterns = []
         
@@ -384,14 +414,39 @@ def pattern_growth_streaming(dataset, task, args):
                 seen_hashes.add(wl)
                 unique_patterns.append(pattern)
         
+        dedup_time = time.time() - dedup_start
         duplicates_removed = len(all_discovered_patterns) - len(unique_patterns)
         if duplicates_removed > 0:
-            print(f"Removed {duplicates_removed} duplicate patterns ({duplicates_removed/len(all_discovered_patterns)*100:.1f}%)", flush=True)
+            print(f"Removed {duplicates_removed} duplicate patterns ({duplicates_removed/len(all_discovered_patterns)*100:.1f}%) in {dedup_time:.1f}s", flush=True)
         print(f"Final unique patterns: {len(unique_patterns)}", flush=True)
+        
+        # Final performance summary
+        total_time = time.time() - start_time
+        
+        if has_psutil:
+            current_memory_mb = process.memory_info().rss / (1024 * 1024)
+        
+        print("\n" + "="*70)
+        print("STREAMING MODE PERFORMANCE SUMMARY")
+        print("="*70)
+        print(f"Total time: {total_time/60:.1f} minutes ({total_time:.1f}s)")
+        print(f"  - Chunking time: {chunk_time:.1f}s ({chunk_time/total_time*100:.1f}%)")
+        print(f"  - Mining time: {mining_time/60:.1f} minutes ({mining_time/total_time*100:.1f}%)")
+        print(f"  - Deduplication time: {dedup_time:.1f}s ({dedup_time/total_time*100:.1f}%)")
+        
+        if has_psutil:
+            print(f"Memory used: {current_memory_mb - initial_memory_mb:.1f} MB")
+            print(f"Current memory: {current_memory_mb:.1f} MB")
+        
+        print(f"Chunks processed: {total_chunks}")
+        print(f"Patterns found: {len(unique_patterns)}")
+        print(f"Throughput: {total_chunks/mining_time*60:.1f} chunks/minute")
+        print("="*70 + "\n")
         
         return unique_patterns
     else:
-        print("No patterns discovered", flush=True)
+        total_time = time.time() - start_time
+        print(f"No patterns discovered (completed in {total_time:.1f}s)", flush=True)
         return all_discovered_patterns
 
 
@@ -899,8 +954,12 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
         return None
 
 
-def pattern_growth(dataset, task, args):
-    """Main pattern mining function."""
+def pattern_growth(dataset, task, args, mp_context=None):
+    """Main pattern mining function.
+    
+    Args:
+        mp_context: Optional multiprocessing context (e.g., spawn) for nested parallelization.
+    """
     start_time = time.time()
     
     ensure_directories()
@@ -1047,7 +1106,7 @@ def pattern_growth(dataset, task, args):
                 model, graphs, embs, node_anchored=args.node_anchored,
                 analyze=args.analyze, model_type=args.method_type,
                 out_batch_size=args.out_batch_size, n_beams=1,
-                n_workers=args.n_workers)
+                n_workers=args.n_workers, mp_context=mp_context)
         agent.args = args
     
     elif args.search_strategy == "beam":

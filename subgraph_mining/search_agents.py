@@ -367,13 +367,14 @@ def run_greedy_trial(trial_idx):
 class GreedySearchAgent(SearchAgent):
     def __init__(self, min_pattern_size, max_pattern_size, model, dataset,
         embs, node_anchored=False, analyze=False, rank_method="counts",
-        model_type="order", out_batch_size=20, n_beams=1, n_workers=4):
+        model_type="order", out_batch_size=20, n_beams=1, n_workers=4, mp_context=None):
         super().__init__(min_pattern_size, max_pattern_size, model, dataset,
             embs, node_anchored=node_anchored, analyze=analyze,
             model_type=model_type, out_batch_size=out_batch_size)
         self.rank_method = rank_method
         self.n_beams = n_beams
         self.n_workers = n_workers
+        self.mp_context = mp_context if mp_context is not None else mp
         print("Rank Method:", rank_method)
         if self.n_workers > 1:
             print(f"Using {self.n_workers} worker processes for parallel search.")
@@ -381,6 +382,7 @@ class GreedySearchAgent(SearchAgent):
     def run_search(self, n_trials=1000):
         """
         Overridden run_search that uses an initializer to avoid repetitive data transfer.
+        Handles both parallel (normal) and sequential (streaming chunk) execution.
         """
         self.cand_patterns = defaultdict(list)
         self.counts = defaultdict(lambda: defaultdict(list))
@@ -390,9 +392,24 @@ class GreedySearchAgent(SearchAgent):
         
         args_for_pool = range(n_trials)
 
-        print(f"Starting {n_trials} search trials on {self.n_workers} cores...")
-        with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
-            results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
+        # Check if we're running inside a streaming chunk (sequential mode)
+        if hasattr(self.args, '_streaming_no_mp') and self.args._streaming_no_mp:
+            # SEQUENTIAL execution for streaming chunks (no multiprocessing)
+            print(f"Running {n_trials} search trials sequentially (streaming mode)...")
+            
+            # Initialize worker globals once
+            init_greedy_worker(*init_args)
+            
+            # Run trials sequentially
+            results = []
+            for trial_idx in tqdm(args_for_pool, total=n_trials):
+                results.append(run_greedy_trial(trial_idx))
+                
+        else:
+            # PARALLEL execution using provided context (spawn for nested, default for normal)
+            print(f"Starting {n_trials} search trials on {self.n_workers} cores...")
+            with self.mp_context.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
+                results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
 
         print("Aggregating results from all worker processes...")
         for trial_patterns, trial_counts in results:
