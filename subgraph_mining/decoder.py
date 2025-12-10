@@ -5,6 +5,7 @@ import time
 import os
 import pickle
 import sys
+from collections import deque
 from pathlib import Path
 
 from deepsnap.batch import Batch
@@ -86,22 +87,196 @@ def ensure_directories():
         logger.info(f"Ensured directory exists: {directory}")
 
 
+def analyze_graph_for_streaming(graph, args):  
+    """
+    Analyze graph characteristics to decide if streaming mode is beneficial.
+    Returns dict with decision and analysis stats.
+    """
+    import random  
+      
+    # Basic metrics
+    num_nodes = graph.number_of_nodes()  
+    num_edges = graph.number_of_edges()  
+    avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
+    
+    # Calculate Edge Density (Crucial for decision)
+    # For undirected: 2 * E / (N * (N-1))
+    # For directed: E / (N * (N-1))
+    max_possible_edges = num_nodes * (num_nodes - 1)
+    if not graph.is_directed():
+        max_possible_edges /= 2
+    
+    edge_density = num_edges / max_possible_edges if max_possible_edges > 0 else 0
 
-def bfs_chunk(graph, start_node, max_size):
+    # Bipartite detection (only for smaller graphs)
+    if num_nodes < 10000:
+        is_bipartite = nx.is_bipartite(graph)  
+    else:
+        is_bipartite = False # Skip for large graphs
+      
+    # Clustering coefficient (Sampled for speed)
+    if graph.is_directed():  
+        undirected_graph = graph.to_undirected()  
+        if num_nodes > 5000:  
+            sample_nodes = random.sample(list(undirected_graph.nodes()), 1000)  
+            clustering_coef = nx.average_clustering(undirected_graph, nodes=sample_nodes)  
+        else:  
+            clustering_coef = nx.average_clustering(undirected_graph)  
+    else:  
+        if num_nodes > 5000:  
+            sample_nodes = random.sample(list(graph.nodes()), 1000)  
+            clustering_coef = nx.average_clustering(graph, nodes=sample_nodes)  
+        else:  
+            clustering_coef = nx.average_clustering(graph)  
+      
+    # Components
+    if graph.is_directed():  
+        components = list(nx.weakly_connected_components(graph))  
+    else:  
+        components = list(nx.connected_components(graph))  
+      
+    n_components = len(components)  
+    if n_components > 0:  
+        largest_cc_size = len(max(components, key=len))  
+        connectivity_ratio = largest_cc_size / num_nodes  
+    else:  
+        largest_cc_size = 0
+        connectivity_ratio = 0.0  
+      
+    # Memory estimation (Realistic: ~1.2KB per node + ~0.1KB per edge overhead)
+    estimated_memory_mb = (num_nodes * 1.2 + num_edges * 0.1) / 1024
+    
+    # Estimate chunks
+    chunk_size = getattr(args, 'chunk_size', 10000)
+    # If 1 component, chunks ~ nodes/chunk_size. If fragmented, max(chunks, components)
+    estimated_chunks = max(num_nodes // chunk_size, n_components) if n_components > 0 else 0
+
+    # --- DECISION LOGIC ---
+    use_streaming = False  
+    reason = ""  
+    priority = "DEFAULT"
+
+    # 1. Reject if too fragmented (Overhead > Benefit)
+    if n_components > 100:
+        use_streaming = False
+        reason = f"highly fragmented ({n_components} components) - chunking overhead high"
+        priority = "TOO_FRAGMENTED"
+
+    # 2. Reject if too small (Standard is faster)
+    elif num_nodes < 30000:
+        use_streaming = False
+        reason = f"small graph ({num_nodes} nodes < 30K) - standard mode faster"
+        priority = "TOO_SMALL"
+
+    # 3. Reject if structure blocks partitioning (Bipartite or Ultra-Dense)
+    elif is_bipartite:  
+        use_streaming = False  
+        reason = "bipartite structure - BFS chunking ineffective"
+        priority = "STRUCTURAL_BLOCK"
+
+    elif edge_density > 0.1: # >10% density is very dense for large graphs
+        use_streaming = False
+        reason = f"dense graph (density={edge_density:.4f}) - BFS partitions would overlap heavily"
+        priority = "TOO_DENSE"
+
+    # 4. Accept if Sparse & Connected/Modular (OPTIMAL for Streaming)
+    # This covers Amazon (1 component, sparse)
+    elif avg_degree < 10 and connectivity_ratio > 0.9:
+        use_streaming = True
+        reason = f"large sparse connected graph (degree={avg_degree:.2f}) - optimal for BFS chunking"
+        priority = "OPTIMAL_SPARSE"
+
+    # 5. Accept if Modular
+    elif clustering_coef > 0.15 and n_components < 50:
+         use_streaming = True
+         reason = f"modular graph (clustering={clustering_coef:.3f}) - good for partitioning"
+         priority = "OPTIMAL_MODULAR"
+
+    # 6. Accept if Very Large (Memory benefit)
+    elif num_nodes > 100000:
+        use_streaming = True
+        reason = f"very large graph ({num_nodes} nodes) - streaming recommended for stability"
+        priority = "SIZE_BENEFIT"
+        
+    else:
+        use_streaming = False
+        reason = "graph characteristics favor standard mode"
+        priority = "DEFAULT_STANDARD"
+
+    return {
+        "use_streaming": use_streaming,
+        "reason": reason,
+        "priority": priority,
+        "num_nodes": num_nodes,
+        "num_edges": num_edges,
+        "avg_degree": avg_degree,
+        "edge_density": edge_density,
+        "clustering_coef": clustering_coef,
+        "n_components": n_components,
+        "connectivity_ratio": connectivity_ratio,
+        "estimated_memory_mb": estimated_memory_mb,
+        "estimated_chunks": estimated_chunks
+    }
+
+
+def bfs_chunk(graph, start_node, max_size, valid_nodes=None):
+    """Optimized BFS chunking using deque. 
+    If valid_nodes is provided, only traverses nodes in that set.
+    """
     visited = set([start_node])
-    queue = [start_node]
-    while queue and len(visited) < max_size:
-        node = queue.pop(0)
-        for neighbor in graph.neighbors(node):
+    queue = deque([start_node]) # Use deque for O(1) pops
+    
+    # Track which valid nodes are still available (if restricted)
+    available_nodes = valid_nodes if valid_nodes is not None else None
+    
+    while len(visited) < max_size:
+        # If queue empty but we need more nodes, find a new start node from available set
+        if not queue:
+            # If we are restricted to a valid set, we MUST pick another node from it
+            # to fill the chunk, otherwise we get thousands of tiny chunks.
+            if available_nodes:
+                # Iterate to find the first unvisited valid node
+                # Note: available_nodes is a set that is being modified in the outer loop 
+                # via difference_update, so it shrinks. 
+                # But here we need to pick one that is NOT in 'visited' of the current chunk.
+                found_new = False
+                
+                # Check if we can efficiently pop from valid_nodes?
+                # No, valid_nodes belongs to the caller.
+                # Heuristic: The outer loop knows the valid nodes.
+                # We can't easily jump to a new random node without iterating.
+                # BUT, since we want to be fast, we can return what we have 
+                # if the component is truly disconnected.
+                pass
+            
+            # Since standard BFS consumes connected components, if the queue dies,
+            # we have finished a connected subgraph. 
+            # Force quit to avoid slow scanning.
+            break
+
+        node = queue.popleft()
+        neighbors = graph[node] 
+        
+        for neighbor in neighbors:
             if neighbor not in visited:
+                if valid_nodes is not None and neighbor not in valid_nodes:
+                    continue
+                    
                 visited.add(neighbor)
                 queue.append(neighbor)
                 if len(visited) >= max_size:
                     break
+    
     return graph.subgraph(visited).copy()
 
 
 def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20):
+    """
+    Intelligent component-based chunking.
+    1. Keeps medium components intact.
+    2. Splits large components (>chunk_size) using BFS.
+    3. Filters tiny components (<min_chunk_size).
+    """
     # Find connected components
     if graph.is_directed():
         components = list(nx.weakly_connected_components(graph))
@@ -112,189 +287,71 @@ def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20):
     components = sorted(components, key=len, reverse=True)
     
     chunks = []
-    small_components_buffer = []
     
     for component in components:
         component_size = len(component)
         
-        # Skip tiny components (too small to mine)
+        # Skip tiny components
         if component_size < min_chunk_size:
             continue
         
-        # Medium component: use as single chunk
+        # Medium component: use as is
         elif component_size <= chunk_size:
             chunk_graph = graph.subgraph(component).copy()
             chunks.append(chunk_graph)
         
-        # Large component: need to split
+        # Large component: split
         else:
-            # For very large components, split using BFS
+            print(f"Splitting large component ({component_size} nodes)...", flush=True)
             component_graph = graph.subgraph(component).copy()
             component_nodes = set(component_graph.nodes())
             
+            chunk_idx = 0
+            
+            # Aggregate small fragments into a full chunk
+            current_chunk = nx.Graph()
+            if graph.is_directed():
+                current_chunk = nx.DiGraph()
+            
             while component_nodes:
                 start_node = next(iter(component_nodes))
-                chunk = bfs_chunk(component_graph, start_node, chunk_size)
-                chunks.append(chunk)
-                component_nodes -= set(chunk.nodes())
+                
+                # Determine how much simpler to fetch
+                remaining_capacity = chunk_size - current_chunk.number_of_nodes()
+                if remaining_capacity <= 0:
+                     remaining_capacity = chunk_size # Should not happen if logic is correct, but safe fallback
+                
+                # Pass component_nodes as valid_nodes to prevent overlap
+                fragment = bfs_chunk(component_graph, start_node, remaining_capacity, valid_nodes=component_nodes)
+                
+                # Add to current chunk
+                current_chunk.add_nodes_from(fragment.nodes(data=True))
+                current_chunk.add_edges_from(fragment.edges(data=True))
+                
+                # Update accounting
+                fragment_nodes = set(fragment.nodes())
+                component_nodes.difference_update(fragment_nodes)
+                
+                # If chunk is full enough, save it
+                if current_chunk.number_of_nodes() >= chunk_size:
+                    chunks.append(current_chunk)
+                    
+                    if graph.is_directed():
+                        current_chunk = nx.DiGraph()
+                    else:
+                        current_chunk = nx.Graph()
+                        
+                    chunk_idx += 1
+                    if chunk_idx % 5 == 0:
+                         print(f"  Created {chunk_idx} full chunks from component... ({len(component_nodes)} nodes left)", flush=True)
+
+            # Add any leftover partial chunk
+            if current_chunk.number_of_nodes() > 0:
+                 chunks.append(current_chunk)
     
     print(f"Component-based chunking: {len(components)} components → {len(chunks)} chunks", flush=True)
-    
     return chunks
 
-
-def analyze_graph_for_streaming(graph, args):
-    """
-    Analyze graph characteristics to decide if streaming mode is beneficial.
-    Returns dict with decision and analysis stats.
-    """
-    import random
-    
-    # Calculate basic metrics
-    num_nodes = graph.number_of_nodes()
-    num_edges = graph.number_of_edges()
-    avg_degree = num_edges / num_nodes if num_nodes > 0 else 0
-    
-    # Clustering coefficient (sample for large graphs)
-    if graph.is_directed():
-        undirected_graph = graph.to_undirected()
-        if num_nodes > 10000:
-            sample_nodes = random.sample(list(undirected_graph.nodes()), min(1000, num_nodes))
-            clustering_coef = nx.average_clustering(undirected_graph, nodes=sample_nodes)
-        else:
-            clustering_coef = nx.average_clustering(undirected_graph)
-    else:
-        if num_nodes > 10000:
-            sample_nodes = random.sample(list(graph.nodes()), min(1000, num_nodes))
-            clustering_coef = nx.average_clustering(graph, nodes=sample_nodes)
-        else:
-            clustering_coef = nx.average_clustering(graph)
-    
-    # Connected components
-    if graph.is_directed():
-        components = list(nx.weakly_connected_components(graph))
-    else:
-        components = list(nx.connected_components(graph))
-    
-    n_components = len(components)
-    largest_cc_size = len(max(components, key=len)) if n_components > 0 else 0
-    connectivity_ratio = largest_cc_size / num_nodes if num_nodes > 0 else 0
-    
-    # Bipartite detection (only for small graphs - expensive check)
-    if num_nodes < 10000:
-        is_bipartite = nx.is_bipartite(graph)
-    else:
-        is_bipartite = False
-    
-    # CORRECTED Memory estimation (realistic formula)
-    # NetworkX graph memory: ~200 bytes per node + ~100 bytes per edge
-    # Plus embeddings: ~1KB per node for model data
-    estimated_memory_mb = (num_nodes * 1.2 + num_edges * 0.1) / 1024  # Convert KB to MB
-    
-    try:
-        import psutil
-        available_memory_mb = psutil.virtual_memory().available / (1024 * 1024)
-        memory_pressure = estimated_memory_mb > (available_memory_mb * 0.6)
-    except ImportError:
-        available_memory_mb = 8000
-        memory_pressure = estimated_memory_mb > 4800
-    
-    # Estimate chunk count for overhead calculation
-    chunk_size = getattr(args, 'chunk_size', 10000)
-    estimated_chunks = max(num_nodes // chunk_size, n_components)
-    
-    # DECISION LOGIC: Ordered by priority (CORRECTED ORDER)
-    use_streaming = False
-    reason = ""
-    priority = ""
-    
-    # PRIORITY 1: Too Fragmented (MOVED TO TOP - blocks streaming)
-    if n_components > 100:
-        use_streaming = False
-        reason = f"highly fragmented ({n_components} components > 100) - chunking overhead dominates benefit"
-        priority = "TOO_FRAGMENTED"
-    
-    # PRIORITY 2: Too Many Estimated Chunks
-    elif estimated_chunks > 300:
-        use_streaming = False
-        reason = f"would create ~{estimated_chunks} chunks - overhead (>5min) > speedup"
-        priority = "TOO_MANY_CHUNKS"
-    
-    # PRIORITY 3: Structural Blocks (cannot partition effectively)
-    elif is_bipartite:
-        use_streaming = False
-        reason = "bipartite structure - BFS chunking would create imbalanced partitions"
-        priority = "STRUCTURAL_BLOCK"
-    
-    elif connectivity_ratio > 0.95 and num_nodes > 20000:
-        # Nearly fully connected - BFS would touch all nodes
-        use_streaming = False
-        reason = f"nearly fully connected (connectivity={connectivity_ratio:.2f}) - BFS cannot partition"
-        priority = "STRUCTURAL_BLOCK"
-    
-    # PRIORITY 4: Too Small
-    elif num_nodes < 30000:
-        use_streaming = False
-        reason = f"small graph ({num_nodes} nodes < 30K) - standard mode faster"
-        priority = "TOO_SMALL"
-    
-    # PRIORITY 5: Memory Constraint (now lower priority after fragmentation check)
-    elif memory_pressure:
-        use_streaming = True
-        reason = f"memory pressure: estimated {estimated_memory_mb:.0f}MB > {available_memory_mb*0.6:.0f}MB available"
-        priority = "CRITICAL_MEMORY"
-    
-    # PRIORITY 6: Good Candidate for Streaming (benefit > overhead)
-    elif num_nodes >= 30000:
-        # Large enough to benefit from parallelization
-        # Check if graph structure allows effective chunking
-        
-        if n_components == 1 and avg_degree < 3.0:
-            use_streaming = True
-            reason = f"large sparse connected graph (degree={avg_degree:.2f}) - clean BFS partitioning"
-            priority = "OPTIMAL"
-        
-        elif 2 <= n_components <= 50 and clustering_coef > 0.15:
-            use_streaming = True
-            reason = f"modular structure ({n_components} communities, clustering={clustering_coef:.2f}) - parallel speedup likely"
-            priority = "OPTIMAL"
-        
-        elif num_nodes > 100000:
-            use_streaming = True
-            reason = f"very large graph ({num_nodes} nodes) - memory management beneficial"
-            priority = "SIZE_BENEFIT"
-        
-        else:
-            use_streaming = False
-            reason = f"medium-large graph but structure not ideal for chunking (degree={avg_degree:.2f}, components={n_components})"
-            priority = "STRUCTURE_MISMATCH"
-    
-    else:
-        use_streaming = False
-        reason = "default: standard mode"
-        priority = "DEFAULT"
-    
-    # Manual override
-    if hasattr(args, 'use_streaming') and args.use_streaming:
-        use_streaming = True
-        reason = "MANUAL OVERRIDE: --use_streaming flag set"
-        priority = "MANUAL"
-    
-    return {
-        "use_streaming": use_streaming,
-        "reason": reason,
-        "priority": priority,
-        "num_nodes": num_nodes,
-        "num_edges": num_edges,
-        "avg_degree": avg_degree,
-        "clustering_coef": clustering_coef,
-        "n_components": n_components,
-        "connectivity_ratio": connectivity_ratio,
-        "is_bipartite": is_bipartite,
-        "estimated_memory_mb": estimated_memory_mb,
-        "available_memory_mb": available_memory_mb,
-        "estimated_chunks": estimated_chunks,
-    }
 
 
 def make_plant_dataset(size):
@@ -303,7 +360,7 @@ def make_plant_dataset(size):
     np.random.seed(14853)
     pattern = generator.generate(size=10)
     nx.draw(pattern, with_labels=True)
-    plt.savefig("plots/cluster/plant-pattern.png")
+    plt.savefig("plots/cluster/plant-pattern.png")  # Use absolute path in Docker
     plt.close()
     graphs = []
     for i in range(1000):
@@ -318,185 +375,153 @@ def make_plant_dataset(size):
     return graphs
 
 
+
 def _process_chunk(args_tuple):
-    """Process a single graph chunk with parallel execution using spawn context."""
     chunk_dataset, task, args, chunk_index, total_chunks = args_tuple
     start_time = time.time()
-    
-    # Use spawn context to avoid daemon process error
-    # Spawn creates fresh processes that don't inherit daemon flag
-    import multiprocessing as mp
-    spawn_ctx = mp.get_context('spawn')
-    
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}", flush=True)
-    
+
+    # Disable nested multiprocessing - set to 0 to prevent pool creation
+    original_n_workers = getattr(args, "n_workers", 4)
+    args.n_workers = 0  # Setting to 0 signals single-threaded mode
+
+    print(
+        f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}",
+        flush=True,
+    )
+
     try:
-        # Process this chunk with spawn context for nested parallelization
-        # Skip visualization and saving to avoid overhead
-        result = pattern_growth([chunk_dataset], task, args, 
-                               mp_context=spawn_ctx,
-                               skip_visualization=True,
-                               skip_save=True)
-        
+        result = pattern_growth(chunk_dataset, task, args)
+
         elapsed = int(time.time() - start_time)
-        print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {elapsed}s ({len(result)} patterns)", flush=True)
-        
+        print(
+            f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} finished chunk {chunk_index+1}/{total_chunks} in {elapsed}s ({len(result)} patterns)",
+            flush=True,
+        )
+
+        # Restore original n_workers
+        args.n_workers = original_n_workers
         return result
-        
     except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] ERROR in chunk {chunk_index+1}: {str(e)}", flush=True)
+        print(
+            f"[{time.strftime('%H:%M:%S')}] ERROR in chunk {chunk_index+1}: {str(e)}",
+            flush=True,
+        )
         import traceback
+
         traceback.print_exc()
+        args.n_workers = original_n_workers
         return []
+
 
 
 def pattern_growth_streaming(dataset, task, args):
     """
     Process large graphs in chunks with parallel workers.
     Automatically adjusts chunk size based on graph density.
-    Includes performance tracking for comparison with standard mode.
     """
-    # Try to import psutil for memory tracking (optional)
-    try:
-        import psutil
-        import os
-        process = psutil.Process(os.getpid())
-        initial_memory_mb = process.memory_info().rss / (1024 * 1024)
-        has_psutil = True
-    except ImportError:
-        has_psutil = False
-        initial_memory_mb = 0
-    
-    # Start timing
-    start_time = time.time()
-    
-    print("\n" + "="*70)
-    print("STREAMING MODE PERFORMANCE TRACKING")
-    print("="*70)
-    print(f"Start time: {time.strftime('%H:%M:%S')}")
-    if has_psutil:
-        print(f"Initial memory: {initial_memory_mb:.1f} MB")
-    else:
-        print("Memory tracking unavailable (psutil not installed)")
-    print("="*70 + "\n")
-    
     graph = dataset[0]
-    
+
     # Calculate graph properties
     num_nodes = graph.number_of_nodes()
     num_edges = graph.number_of_edges()
     avg_degree = num_edges / num_nodes if num_nodes > 0 else 0
-    
-    print(f"Graph statistics: {num_nodes} nodes, {num_edges} edges, avg degree: {avg_degree:.2f}", flush=True)
-    
+
+    print(
+        f"Graph statistics: {num_nodes} nodes, {num_edges} edges, avg degree: {avg_degree:.2f}",
+        flush=True,
+    )
+
     # Adaptive chunk sizing based on density
     if avg_degree > args.dense_graph_threshold:
+        # Dense graphs: use smaller chunks to avoid memory issues
         effective_chunk_size = min(args.chunk_size, 5000)
-        print(f"Dense graph detected (avg degree > {args.dense_graph_threshold})", flush=True)
+        print(
+            f"Dense graph detected (avg degree > {args.dense_graph_threshold})",
+            flush=True,
+        )
         print(f"Reducing chunk size to {effective_chunk_size} nodes", flush=True)
     elif avg_degree > 20:
+        # Medium density: slightly reduce chunk size
         effective_chunk_size = min(args.chunk_size, 7500)
-        print(f"Medium density graph, using chunk size: {effective_chunk_size}", flush=True)
+        print(
+            f"Medium density graph, using chunk size: {effective_chunk_size}",
+            flush=True,
+        )
     else:
+        # Sparse graphs: use larger chunks
         effective_chunk_size = args.chunk_size
         print(f"Sparse graph, using chunk size: {effective_chunk_size}", flush=True)
-    
-    print(f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...", flush=True)
-    chunk_start = time.time()
-    
-    # Determine minimum chunk size based on graph density
+
+    # Partition graph into chunks
+    print(
+        f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...",
+        flush=True,
+    )
+    graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)
+
+    # Filter out tiny chunks based on graph sparsity
     if avg_degree < 2.0:
+        # Very sparse graphs: use higher minimum to reduce chunk count
         min_chunk_size = max(args.min_pattern_size, 20)
-        print(f"Sparse graph detected (avg degree < 2.0), using min chunk size: {min_chunk_size}", flush=True)
+        print(
+            f"Sparse graph detected (avg degree < 2.0), using min chunk size: {min_chunk_size}",
+            flush=True,
+        )
     else:
         min_chunk_size = max(args.min_pattern_size, 5)
-    
-    # Component-based chunking (handles filtering internally)
-    graph_chunks = process_large_graph_in_chunks(graph, 
-                                                 chunk_size=effective_chunk_size,
-                                                 min_chunk_size=min_chunk_size)
-    chunk_time = time.time() - chunk_start
-    print(f"Partitioning completed in {chunk_time:.1f}s", flush=True)
-    
+
+    graph_chunks = [
+        chunk for chunk in graph_chunks if chunk.number_of_nodes() >= min_chunk_size
+    ]
+    print(
+        f"Filtered to {len(graph_chunks)} chunks with >= {min_chunk_size} nodes",
+        flush=True,
+    )
+
     # Show chunk distribution
     print(f"Created {len(graph_chunks)} chunks", flush=True)
     for i, chunk in enumerate(graph_chunks[:10]):
-        print(f"  Chunk {i+1}: {chunk.number_of_nodes()} nodes, {chunk.number_of_edges()} edges", flush=True)
+        print(
+            f"  Chunk {i+1}: {chunk.number_of_nodes()} nodes, {chunk.number_of_edges()} edges",
+            flush=True,
+        )
     if len(graph_chunks) > 10:
         print(f"  ... and {len(graph_chunks) - 10} more chunks", flush=True)
-    
+
     # Process chunks in parallel
     all_discovered_patterns = []
     total_chunks = len(graph_chunks)
-    
+
     # Wrap each chunk in a list for pattern_growth
-    chunk_args = [(chunk, task, args, idx, total_chunks) for idx, chunk in enumerate(graph_chunks)]
-    
-    # Use configurable worker count
-    worker_count = getattr(args, 'streaming_workers', 4)
-    print(f"\nProcessing {total_chunks} chunks with {worker_count} workers...", flush=True)
-    mining_start = time.time()
-    
-    with mp.Pool(processes=worker_count) as pool:
+    chunk_args = [
+        ([chunk], task, args, idx, total_chunks)
+        for idx, chunk in enumerate(graph_chunks)
+    ]
+
+    # Estimate processing time
+    avg_chunk_size = sum(c.number_of_nodes() for c in graph_chunks) / len(graph_chunks)
+    estimated_time_per_chunk = 7.5  # seconds, based on your logs
+    estimated_total_minutes = (total_chunks * estimated_time_per_chunk) / (
+        60 * args.streaming_workers
+    )
+    print(
+        f"\nProcessing {total_chunks} chunks with {args.streaming_workers} workers...",
+        flush=True,
+    )
+    print(f"Estimated time: {estimated_total_minutes:.1f} minutes", flush=True)
+
+    with mp.Pool(processes=args.streaming_workers) as pool:
         results = pool.map(_process_chunk, chunk_args)
-    
-    mining_time = time.time() - mining_start
-    
+
     # Aggregate results
     print("\nAggregating patterns from all chunks...", flush=True)
     for chunk_out_graphs in results:
         if chunk_out_graphs:
             all_discovered_patterns.extend(chunk_out_graphs)
-    
-    print(f"Total patterns discovered (with duplicates): {len(all_discovered_patterns)}", flush=True)
-    
-    # Deduplicate patterns across chunks
-    if len(all_discovered_patterns) > 0:
-        print("Deduplicating patterns across chunks...", flush=True)
-        dedup_start = time.time()
-        seen_hashes = set()
-        unique_patterns = []
-        
-        for pattern in all_discovered_patterns:
-            wl = utils.wl_hash(pattern, node_anchored=args.node_anchored)
-            if wl not in seen_hashes:
-                seen_hashes.add(wl)
-                unique_patterns.append(pattern)
-        
-        dedup_time = time.time() - dedup_start
-        duplicates_removed = len(all_discovered_patterns) - len(unique_patterns)
-        if duplicates_removed > 0:
-            print(f"Removed {duplicates_removed} duplicate patterns ({duplicates_removed/len(all_discovered_patterns)*100:.1f}%) in {dedup_time:.1f}s", flush=True)
-        print(f"Final unique patterns: {len(unique_patterns)}", flush=True)
-        
-        # Final performance summary
-        total_time = time.time() - start_time
-        
-        if has_psutil:
-            current_memory_mb = process.memory_info().rss / (1024 * 1024)
-        
-        print("\n" + "="*70)
-        print("STREAMING MODE PERFORMANCE SUMMARY")
-        print("="*70)
-        print(f"Total time: {total_time/60:.1f} minutes ({total_time:.1f}s)")
-        print(f"  - Chunking time: {chunk_time:.1f}s ({chunk_time/total_time*100:.1f}%)")
-        print(f"  - Mining time: {mining_time/60:.1f} minutes ({mining_time/total_time*100:.1f}%)")
-        print(f"  - Deduplication time: {dedup_time:.1f}s ({dedup_time/total_time*100:.1f}%)")
-        
-        if has_psutil:
-            print(f"Memory used: {current_memory_mb - initial_memory_mb:.1f} MB")
-            print(f"Current memory: {current_memory_mb:.1f} MB")
-        
-        print(f"Chunks processed: {total_chunks}")
-        print(f"Patterns found: {len(unique_patterns)}")
-        print(f"Throughput: {total_chunks/mining_time*60:.1f} chunks/minute")
-        print("="*70 + "\n")
-        
-        return unique_patterns
-    else:
-        total_time = time.time() - start_time
-        print(f"No patterns discovered (completed in {total_time:.1f}s)", flush=True)
-        return all_discovered_patterns
+
+    print(f"Total patterns discovered: {len(all_discovered_patterns)}", flush=True)
+    return all_discovered_patterns
+
 
 
 def visualize_pattern_graph(pattern, args, count_by_size):
@@ -505,48 +530,60 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         num_nodes = len(pattern)
         num_edges = pattern.number_of_edges()
         edge_density = num_edges / (num_nodes * (num_nodes - 1)) if num_nodes > 1 else 0
-        
+
+        # Cap figsize to prevent oversized images
         base_size = max(12, min(20, num_nodes * 2))
         if edge_density > 0.3:
             figsize = (base_size * 1.2, base_size)
         else:
-            figsize = (base_size, base_size * 0.8)
-        
+            figsize = (min(base_size, 20), min(base_size * 0.8, 20))
+
         plt.figure(figsize=figsize)
 
         node_labels = {}
         for n in pattern.nodes():
             node_data = pattern.nodes[n]
-            node_id = node_data.get('id', str(n))
-            node_label = node_data.get('label', 'unknown')
-            
-            label_parts = [f"{node_label}:{node_id}"]
-            
-            other_attrs = {k: v for k, v in node_data.items() 
-                          if k not in ['id', 'label', 'anchor'] and v is not None}
-            
-            if other_attrs:
-                for key, value in other_attrs.items():
-                    if isinstance(value, str):
-                        if edge_density > 0.5 and len(value) > 8:
-                            value = value[:5] + "..."
-                        elif edge_density > 0.3 and len(value) > 12:
-                            value = value[:9] + "..."
-                        elif len(value) > 15:
-                            value = value[:12] + "..."
-                    elif isinstance(value, (int, float)):
-                        if isinstance(value, float):
-                            value = f"{value:.2f}" if abs(value) < 1000 else f"{value:.1e}"
-                    
-                    if edge_density > 0.5:
-                        label_parts.append(f"{key}:{value}")
-                    else:
-                        label_parts.append(f"{key}: {value}")
-            
-            if edge_density > 0.5:
-                node_labels[n] = "; ".join(label_parts)
-            else:
-                node_labels[n] = "\n".join(label_parts)
+            node_id = node_data.get("id", str(n))
+            # Build label parts with only the 4 specified attributes in order: label, id, title, salesrank
+            label_parts = []
+
+            # 1. Label (from group) - must appear first
+            node_label = node_data.get("label", "unknown")
+            if node_label is None:
+                node_label = "unknown"
+            node_label = (
+                str(node_label)[:15]
+                .replace("/", "_")
+                .replace(":", "_")
+                .replace("#", "")
+            )
+            label_parts.append(f"Label: {node_label}")
+
+            # 2. ID
+            label_parts.append(f"ID: {node_id}")
+
+            # 3. Title
+            title = node_data.get("title", "Unknown")
+            if isinstance(title, str):
+                if edge_density > 0.5 and len(title) > 8:
+                    title = title[:5] + "..."
+                elif edge_density > 0.3 and len(title) > 12:
+                    title = title[:9] + "..."
+                elif len(title) > 15:
+                    title = title[:12] + "..."
+            label_parts.append(f"Title: {title}")
+
+            # 4. Sales Rank
+            salesrank = node_data.get("salesrank", -1)
+            if salesrank != -1:
+                label_parts.append(f"Sales Rank: {salesrank}")
+
+            # Use newline for sparse, semicolon for dense to improve readability
+            node_labels[n] = (
+                "\n".join(label_parts)
+                if edge_density <= 0.5
+                else "; ".join(label_parts)
+            )
 
         if edge_density > 0.3:
             if num_nodes <= 20:
@@ -556,18 +593,27 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         else:
             pos = nx.spring_layout(pattern, k=2.0, seed=42, iterations=50)
 
-        unique_labels = sorted(set(pattern.nodes[n].get('label', 'unknown') for n in pattern.nodes()))
-        label_color_map = {label: plt.cm.Set3(i) for i, label in enumerate(unique_labels)}
+        unique_labels = sorted(
+            set(pattern.nodes[n].get("label", "unknown") for n in pattern.nodes())
+        )
+        label_color_map = {
+            label: plt.cm.Set3(i) for i, label in enumerate(unique_labels)
+        }
 
-        unique_edge_types = sorted(set(data.get('type', 'default') for u, v, data in pattern.edges(data=True)))
-        edge_color_map = {edge_type: plt.cm.tab20(i % 20) for i, edge_type in enumerate(unique_edge_types)}
+        unique_edge_types = sorted(
+            set(data.get("type", "default") for u, v, data in pattern.edges(data=True))
+        )
+        edge_color_map = {
+            edge_type: plt.cm.tab20(i % 20)
+            for i, edge_type in enumerate(unique_edge_types)
+        }
 
         colors = []
         node_sizes = []
         shapes = []
         node_list = list(pattern.nodes())
-        
-        if edge_density > 0.5:
+
+        if edge_density > 0.5:  # Very dense
             base_node_size = 2500
             anchor_node_size = base_node_size * 1.3
         elif edge_density > 0.3:
@@ -576,20 +622,27 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         else:
             base_node_size = 5000
             anchor_node_size = base_node_size * 1.2
-        
+
+        # Adjust node sizes based on salesrank (lower rank = larger size, capped)
         for i, node in enumerate(node_list):
             node_data = pattern.nodes[node]
-            node_label = node_data.get('label', 'unknown')
-            is_anchor = node_data.get('anchor', 0) == 1
-            
+            node_label = node_data.get("label", "unknown")
+            is_anchor = node_data.get("anchor", 0) == 1
+            salesrank = node_data.get(
+                "salesrank", 1000000
+            )  # Default to high rank if missing
+            size_factor = max(
+                50, min(5000, 5000 / (salesrank + 1))
+            )  # Inverse scaling, capped
+
             if is_anchor:
-                colors.append('red')
-                node_sizes.append(anchor_node_size)
-                shapes.append('s')
+                colors.append("red")
+                node_sizes.append(min(anchor_node_size, size_factor * 1.3))
+                shapes.append("s")
             else:
                 colors.append(label_color_map[node_label])
-                node_sizes.append(base_node_size)
-                shapes.append('o')
+                node_sizes.append(min(base_node_size, size_factor))
+                shapes.append("o")
 
         anchor_nodes = []
         regular_nodes = []
@@ -597,9 +650,9 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         regular_colors = []
         anchor_sizes = []
         regular_sizes = []
-        
+
         for i, node in enumerate(node_list):
-            if shapes[i] == 's':
+            if shapes[i] == "s":
                 anchor_nodes.append(node)
                 anchor_colors.append(colors[i])
                 anchor_sizes.append(node_sizes[i])
@@ -609,24 +662,30 @@ def visualize_pattern_graph(pattern, args, count_by_size):
                 regular_sizes.append(node_sizes[i])
 
         if anchor_nodes:
-            nx.draw_networkx_nodes(pattern, pos, 
-                    nodelist=anchor_nodes,
-                    node_color=anchor_colors, 
-                    node_size=anchor_sizes, 
-                    node_shape='s',
-                    edgecolors='black', 
-                    linewidths=3,
-                    alpha=0.9)
+            nx.draw_networkx_nodes(
+                pattern,
+                pos,
+                nodelist=anchor_nodes,
+                node_color=anchor_colors,
+                node_size=anchor_sizes,
+                node_shape="o",
+                edgecolors="black",
+                linewidths=3,
+                alpha=0.9,
+            )
 
         if regular_nodes:
-            nx.draw_networkx_nodes(pattern, pos, 
-                    nodelist=regular_nodes,
-                    node_color=regular_colors, 
-                    node_size=regular_sizes, 
-                    node_shape='o',
-                    edgecolors='black', 
-                    linewidths=2,
-                    alpha=0.8)
+            nx.draw_networkx_nodes(
+                pattern,
+                pos,
+                nodelist=regular_nodes,
+                node_color=regular_colors,
+                node_size=regular_sizes,
+                node_shape="o",
+                edgecolors="black",
+                linewidths=2,
+                alpha=0.8,
+            )
 
         if edge_density > 0.5:
             edge_width = 1.5
@@ -637,109 +696,147 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         else:
             edge_width = 3
             edge_alpha = 0.8
-        
+
         if pattern.is_directed():
-            arrow_size = 30 if edge_density < 0.3 else (20 if edge_density < 0.5 else 15)
+            arrow_size = (
+                30 if edge_density < 0.3 else (20 if edge_density < 0.5 else 15)
+            )
             connectionstyle = "arc3,rad=0.1" if edge_density < 0.5 else "arc3,rad=0.15"
-            
+
             for u, v, data in pattern.edges(data=True):
-                edge_type = data.get('type', 'default')
+                edge_type = data.get("type", "default")
                 edge_color = edge_color_map[edge_type]
-                
+
                 nx.draw_networkx_edges(
-                    pattern, pos,
+                    pattern,
+                    pos,
                     edgelist=[(u, v)],
                     width=edge_width,
                     edge_color=[edge_color],
                     alpha=edge_alpha,
                     arrows=True,
                     arrowsize=arrow_size,
-                    arrowstyle='-|>',
+                    arrowstyle="-|>",
                     connectionstyle=connectionstyle,
                     node_size=max(node_sizes) * 1.3,
                     min_source_margin=15,
-                    min_target_margin=15
+                    min_target_margin=15,
                 )
         else:
             for u, v, data in pattern.edges(data=True):
-                edge_type = data.get('type', 'default')
+                edge_type = data.get("type", "default")
                 edge_color = edge_color_map[edge_type]
-                
+
                 nx.draw_networkx_edges(
-                    pattern, pos,
+                    pattern,
+                    pos,
                     edgelist=[(u, v)],
                     width=edge_width,
                     edge_color=[edge_color],
                     alpha=edge_alpha,
-                    arrows=False
+                    arrows=False,
                 )
 
-        max_attrs_per_node = max(len([k for k in pattern.nodes[n].keys() 
-                                     if k not in ['id', 'label', 'anchor'] and pattern.nodes[n][k] is not None]) 
-                                for n in pattern.nodes())
-        
+        max_attrs_per_node = max(
+            len(
+                [
+                    k
+                    for k in pattern.nodes[n].keys()
+                    if k not in ["id", "label", "anchor", "salesrank"]
+                    and pattern.nodes[n][k] is not None
+                ]
+            )
+            for n in pattern.nodes()
+        )
+
         if edge_density > 0.5:
             font_size = max(6, min(9, 150 // (num_nodes + max_attrs_per_node * 5)))
         elif edge_density > 0.3:
             font_size = max(7, min(10, 200 // (num_nodes + max_attrs_per_node * 3)))
         else:
             font_size = max(8, min(12, 250 // (num_nodes + max_attrs_per_node * 2)))
-        
+
         for node, (x, y) in pos.items():
             label = node_labels[node]
             node_data = pattern.nodes[node]
-            is_anchor = node_data.get('anchor', 0) == 1
-            
+            is_anchor = node_data.get("anchor", 0) == 1
+
             if edge_density > 0.5:
                 pad = 0.15
             elif edge_density > 0.3:
                 pad = 0.2
             else:
                 pad = 0.3
-            
+
             bbox_props = dict(
-                facecolor='lightcoral' if is_anchor else (1, 0.8, 0.8, 0.6),
-                edgecolor='darkred' if is_anchor else 'gray',
+                facecolor="lightcoral" if is_anchor else (1, 0.8, 0.8, 0.6),
+                edgecolor="darkred" if is_anchor else "gray",
                 alpha=0.8,
-                boxstyle=f'round,pad={pad}'
+                boxstyle=f"round,pad={pad}",
             )
-            
-            plt.text(x, y, label, 
-                    fontsize=font_size, 
-                    fontweight='bold' if is_anchor else 'normal',
-                    color='black',
-                    ha='center', va='center',
-                    bbox=bbox_props)
+
+            plt.text(
+                x,
+                y,
+                label,
+                fontsize=font_size,
+                fontweight="bold" if is_anchor else "normal",
+                color="black",
+                ha="center",
+                va="center",
+                bbox=bbox_props,
+            )
 
         if edge_density < 0.5 and num_edges < 25:
             edge_labels = {}
             for u, v, data in pattern.edges(data=True):
-                edge_type = (data.get('type') or 
-                           data.get('label') or 
-                           data.get('input_label') or
-                           data.get('relation') or
-                           data.get('edge_type'))
+                edge_type = (
+                    data.get("type")
+                    or data.get("label")
+                    or data.get("input_label")
+                    or data.get("relation")
+                    or data.get("edge_type", "default")
+                )  # Fallback to 'default'
                 if edge_type:
-                    edge_labels[(u, v)] = str(edge_type)
+                    edge_labels[(u, v)] = str(edge_type)[:10]  # Truncate edge labels
 
             if edge_labels:
                 edge_font_size = max(5, font_size - 2)
-                nx.draw_networkx_edge_labels(pattern, pos, 
-                          edge_labels=edge_labels, 
-                          font_size=edge_font_size, 
-                          font_color='black',
-                          bbox=dict(facecolor='white', edgecolor='lightgray', 
-                                  alpha=0.8, boxstyle='round,pad=0.1'))
+                nx.draw_networkx_edge_labels(
+                    pattern,
+                    pos,
+                    edge_labels=edge_labels,
+                    font_size=edge_font_size,
+                    font_color="black",
+                    bbox=dict(
+                        facecolor="white",
+                        edgecolor="lightgray",
+                        alpha=0.8,
+                        boxstyle="round,pad=0.1",
+                    ),
+                )
 
         graph_type = "Directed" if pattern.is_directed() else "Undirected"
-        has_anchors = any(pattern.nodes[n].get('anchor', 0) == 1 for n in pattern.nodes())
+        has_anchors = any(
+            pattern.nodes[n].get("anchor", 0) == 1 for n in pattern.nodes()
+        )
         anchor_info = " (Red squares = anchor nodes)" if has_anchors else ""
-        
-        total_node_attrs = sum(len([k for k in pattern.nodes[n].keys() 
-                                  if k not in ['id', 'label', 'anchor'] and pattern.nodes[n][k] is not None]) 
-                             for n in pattern.nodes())
-        attr_info = f", {total_node_attrs} total node attrs" if total_node_attrs > 0 else ""
-        
+
+        total_node_attrs = sum(
+            len(
+                [
+                    k
+                    for k in pattern.nodes[n].keys()
+                    if k not in ["id", "label", "anchor", "salesrank"]
+                    and pattern.nodes[n][k] is not None
+                ]
+            )
+            for n in pattern.nodes()
+        )
+        attr_info = (
+            f", {total_node_attrs} total node attrs" if total_node_attrs > 0 else ""
+        )
+
         density_info = f"Density: {edge_density:.2f}"
         if edge_density > 0.5:
             density_info += " (Very Dense)"
@@ -747,70 +844,92 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             density_info += " (Dense)"
         else:
             density_info += " (Sparse)"
-        
+
         title = f"{graph_type} Pattern Graph{anchor_info}\n"
-        title += f"(Size: {num_nodes} nodes, {num_edges} edges{attr_info}, {density_info})"
-        
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.axis('off')
+        title += (
+            f"(Size: {num_nodes} nodes, {num_edges} edges{attr_info}, {density_info})"
+        )
+
+        plt.title(title, fontsize=14, fontweight="bold")
+        plt.axis("off")
 
         if unique_edge_types and len(unique_edge_types) > 1:
             x_pos = 1.2
             y_pos = 1.0
-            
+
             edge_legend_elements = [
-                plt.Line2D([0], [0], 
-                          color=color, 
-                          linewidth=3, 
-                          label=f'{edge_type}')
+                plt.Line2D(
+                    [0], [0], color=color, linewidth=3, label=f"{edge_type[:10]}"
+                )  # Truncate legend labels
                 for edge_type, color in edge_color_map.items()
             ]
-            
+
             legend = plt.legend(
                 handles=edge_legend_elements,
-                loc='upper left',
+                loc="upper left",
                 bbox_to_anchor=(x_pos, y_pos),
-                borderaxespad=0.,
+                borderaxespad=0.0,
                 framealpha=0.9,
                 title="Edge Types",
-                fontsize=9
+                fontsize=9,
             )
             legend.get_title().set_fontsize(10)
-            
+
             plt.tight_layout(rect=[0, 0, 0.85, 1])
         else:
             plt.tight_layout()
 
-        pattern_info = [f"{num_nodes}-{count_by_size[num_nodes]}"]
-
-        node_types = sorted(set(pattern.nodes[n].get('label', '') for n in pattern.nodes()))
-        if any(node_types):
-            pattern_info.append('nodes-' + '-'.join(node_types))
-
-        edge_types = sorted(set(pattern.edges[e].get('type', '') for e in pattern.edges()))
-        if any(edge_types):
-            pattern_info.append('edges-' + '-'.join(edge_types))
-
+        # Generate a shorter filename
+        pattern_info = [f"{num_nodes}-{count_by_size.get(num_nodes, 1)}"]
+        node_types = sorted(
+            set(str(pattern.nodes[n].get("label", ""))[:10] for n in pattern.nodes())
+        )  # Truncate labels
+        if node_types:
+            pattern_info.append("nodes-" + "-".join(node_types))
+        edge_types = sorted(
+            set(
+                (data.get("type", "") or "default")[:10]
+                for _, _, data in pattern.edges(data=True)
+            )
+        )
+        if edge_types:
+            pattern_info.append("edges-" + "-".join(edge_types))
         if has_anchors:
-            pattern_info.append('anchored')
-
+            pattern_info.append("anchored")
         if total_node_attrs > 0:
-            pattern_info.append(f'{total_node_attrs}attrs')
-
+            pattern_info.append(f"{min(total_node_attrs, 9)}attrs")  # Cap attributes
         if edge_density > 0.5:
-            pattern_info.append('very-dense')
+            pattern_info.append("very-dense")
         elif edge_density > 0.3:
-            pattern_info.append('dense')
+            pattern_info.append("dense")
         else:
-            pattern_info.append('sparse')
+            pattern_info.append("sparse")
 
         graph_type_short = "dir" if pattern.is_directed() else "undir"
-        filename = f"{graph_type_short}_{('_'.join(pattern_info))}"
+        filename = f"{graph_type_short}_{'_'.join(pattern_info)}"
+        filename = re.sub(r'[<>:"/\\|?*]', "_", filename)  # Sanitize filename
+        if len(filename) > 200:
+            filename = filename[:190] + "_" + str(hash(filename) % 1000) + ".png"
 
-        plt.savefig(f"plots/cluster/{filename}.png", bbox_inches='tight', dpi=300)
-        plt.savefig(f"plots/cluster/{filename}.pdf", bbox_inches='tight')
-        plt.close()
-        
+        # Ensure output directory exists
+        os.makedirs("plots/cluster", exist_ok=True)
+        plt.savefig(f"plots/cluster/{filename}.png", bbox_inches="tight", dpi=300)
+        plt.savefig(f"plots/cluster/{filename}.pdf", bbox_inches="tight")
+        plt.close()  # Clean up figure
+        print(
+            f"Successfully saved static plot to plots/cluster/{filename}.png",
+            flush=True,
+        )
+
+        # Interactive visualization using visualizer.py
+        if hasattr(args, "interactive") and args.interactive:
+            success = visualize_pattern_graph_ext(pattern, args, count_by_size)
+            if success:
+                print(
+                    f"Successfully generated interactive HTML for pattern", flush=True
+                )
+            else:
+                print(f"Failed to generate interactive HTML for pattern", flush=True)
         return True
     except Exception as e:
         logger.error(f"Error visualizing pattern graph: {e}")
@@ -1003,14 +1122,8 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
         return None
 
 
-def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=False, skip_save=False):
-    """Main pattern mining function.
-    
-    Args:
-        mp_context: Optional multiprocessing context (e.g., spawn) for nested parallelization.
-        skip_visualization: If True, skip visualization (for chunk processing).
-        skip_save: If True, skip file saving (for chunk processing).
-    """
+def pattern_growth(dataset, task, args):
+    """Main pattern mining function."""
     start_time = time.time()
     
     ensure_directories()
@@ -1025,8 +1138,7 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
     
     model.to(utils.get_device())
     model.eval()
-    model.load_state_dict(torch.load(args.model_path,
-        map_location=utils.get_device()))
+    model.load_state_dict(torch.load(args.model_path, map_location=utils.get_device()))
 
     if task == "graph-labeled":
         dataset, labels = dataset
@@ -1049,12 +1161,12 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
         if not type(graph) == nx.Graph and not type(graph) == nx.DiGraph:
             graph = pyg_utils.to_networkx(graph).to_undirected()
             for node in graph.nodes():
-                if 'label' not in graph.nodes[node]:
-                    graph.nodes[node]['label'] = str(node)
-                if 'id' not in graph.nodes[node]:
-                    graph.nodes[node]['id'] = str(node)
+                if "label" not in graph.nodes[node]:
+                    graph.nodes[node]["label"] = str(node)
+                if "id" not in graph.nodes[node]:
+                    graph.nodes[node]["id"] = str(node)
         graphs.append(graph)
-    
+
     if args.use_whole_graphs:
         neighs = graphs
     else:
@@ -1069,8 +1181,11 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
                     if args.use_whole_graphs:
                         neigh = graph.nodes
                     else:
-                        neigh = list(nx.single_source_shortest_path_length(graph,
-                            node, cutoff=args.radius).keys())
+                        neigh = list(
+                            nx.single_source_shortest_path_length(
+                                graph, node, cutoff=args.radius
+                            ).keys()
+                        )
                         if args.subgraph_sample_size != 0:
                             neigh = random.sample(neigh, min(len(neigh),
                                 args.subgraph_sample_size))
@@ -1078,22 +1193,28 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
                     if len(neigh) > 1:
                         subgraph = graph.subgraph(neigh)
                         if args.subgraph_sample_size != 0:
-                            subgraph = subgraph.subgraph(max(
-                                nx.connected_components(subgraph), key=len))
-                        
-                        orig_attrs = {n: subgraph.nodes[n].copy() for n in subgraph.nodes()}
-                        edge_attrs = {(u,v): subgraph.edges[u,v].copy() 
-                                    for u,v in subgraph.edges()}
-                        
+                            subgraph = subgraph.subgraph(
+                                max(nx.connected_components(subgraph), key=len)
+                            )
+
+                        # Preserve anchor and type attributes if added elsewhere
+                        orig_attrs = {
+                            n: subgraph.nodes[n].copy() for n in subgraph.nodes()
+                        }
+                        edge_attrs = {
+                            (u, v): subgraph.edges[u, v].copy()
+                            for u, v in subgraph.edges()
+                        }
+
                         mapping = {old: new for new, old in enumerate(subgraph.nodes())}
                         subgraph = nx.relabel_nodes(subgraph, mapping)
-                        
+
                         for old, new in mapping.items():
                             subgraph.nodes[new].update(orig_attrs[old])
-                        
+
                         for (old_u, old_v), attrs in edge_attrs.items():
                             subgraph.edges[mapping[old_u], mapping[old_v]].update(attrs)
-                        
+
                         subgraph.add_edge(0, 0)
                         neighs.append(subgraph)
                         if args.node_anchored:
@@ -1102,9 +1223,13 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
         elif args.sample_method == "tree":
             start_time_sample = time.time()
             for j in tqdm(range(args.n_neighborhoods)):
-                graph, neigh = utils.sample_neigh(graphs,
-                    random.randint(args.min_neighborhood_size,
-                        args.max_neighborhood_size), args.graph_type)
+                graph, neigh = utils.sample_neigh(
+                    graphs,
+                    random.randint(
+                        args.min_neighborhood_size, args.max_neighborhood_size
+                    ),
+                    args.graph_type,
+                )
                 neigh = graph.subgraph(neigh)
                 neigh = nx.convert_node_labels_to_integers(neigh)
                 neigh.add_edge(0, 0)
@@ -1117,19 +1242,21 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
         logger.warning("Number of graphs not multiple of batch size")
     
     for i in range(len(neighs) // args.batch_size):
-        top = (i+1)*args.batch_size
+        top = (i + 1) * args.batch_size
         with torch.no_grad():
-            batch = utils.batch_nx_graphs(neighs[i*args.batch_size:top],
-                anchors=anchors if args.node_anchored else None)
+            batch = utils.batch_nx_graphs(
+                neighs[i * args.batch_size : top],
+                anchors=anchors if args.node_anchored else None,
+            )
             emb = model.emb_model(batch)
             emb = emb.to(torch.device("cpu"))
         embs.append(emb)
 
     if args.analyze:
         embs_np = torch.stack(embs).numpy()
-        plt.scatter(embs_np[:,0], embs_np[:,1], label="node neighborhood")
+        plt.scatter(embs_np[:, 0], embs_np[:, 1], label="node neighborhood")
 
-    if not hasattr(args, 'n_workers'):
+    if not hasattr(args, "n_workers"):
         args.n_workers = mp.cpu_count()
 
     # Initialize search agent
@@ -1138,34 +1265,70 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
     if args.search_strategy == "mcts":
         assert args.method_type == "order"
         if args.memory_efficient:
-            agent = MemoryEfficientMCTSAgent(args.min_pattern_size, args.max_pattern_size,
-                model, graphs, embs, node_anchored=args.node_anchored,
-                analyze=args.analyze, out_batch_size=args.out_batch_size)
+            agent = MemoryEfficientMCTSAgent(
+                args.min_pattern_size,
+                args.max_pattern_size,
+                model,
+                graphs,
+                embs,
+                node_anchored=args.node_anchored,
+                analyze=args.analyze,
+                out_batch_size=args.out_batch_size,
+            )
         else:
-            agent = MCTSSearchAgent(args.min_pattern_size, args.max_pattern_size,
-                model, graphs, embs, node_anchored=args.node_anchored,
-                analyze=args.analyze, out_batch_size=args.out_batch_size)
-    
+            agent = MCTSSearchAgent(
+                args.min_pattern_size,
+                args.max_pattern_size,
+                model,
+                graphs,
+                embs,
+                node_anchored=args.node_anchored,
+                analyze=args.analyze,
+                out_batch_size=args.out_batch_size,
+            )
     elif args.search_strategy == "greedy":
         if args.memory_efficient:
-            agent = MemoryEfficientGreedyAgent(args.min_pattern_size, args.max_pattern_size,
-                model, graphs, embs, node_anchored=args.node_anchored,
-                analyze=args.analyze, model_type=args.method_type,
-                out_batch_size=args.out_batch_size)
+            agent = MemoryEfficientGreedyAgent(
+                args.min_pattern_size,
+                args.max_pattern_size,
+                model,
+                graphs,
+                embs,
+                node_anchored=args.node_anchored,
+                analyze=args.analyze,
+                model_type=args.method_type,
+                out_batch_size=args.out_batch_size,
+            )
         else:
-            agent = GreedySearchAgent(args.min_pattern_size, args.max_pattern_size,
-                model, graphs, embs, node_anchored=args.node_anchored,
-                analyze=args.analyze, model_type=args.method_type,
-                out_batch_size=args.out_batch_size, n_beams=1,
-                n_workers=args.n_workers, mp_context=mp_context)
+            agent = GreedySearchAgent(
+                args.min_pattern_size,
+                args.max_pattern_size,
+                model,
+                graphs,
+                embs,
+                node_anchored=args.node_anchored,
+                analyze=args.analyze,
+                model_type=args.method_type,
+                out_batch_size=args.out_batch_size,
+                n_beams=1,
+                n_workers=args.n_workers,
+            )
         agent.args = args
     
     elif args.search_strategy == "beam":
-        agent = BeamSearchAgent(args.min_pattern_size, args.max_pattern_size,
-            model, graphs, embs, node_anchored=args.node_anchored,
-            analyze=args.analyze, model_type=args.method_type,
-            out_batch_size=args.out_batch_size, beam_width=args.beam_width)
-    
+        agent = BeamSearchAgent(
+            args.min_pattern_size,
+            args.max_pattern_size,
+            model,
+            graphs,
+            embs,
+            node_anchored=args.node_anchored,
+            analyze=args.analyze,
+            model_type=args.method_type,
+            out_batch_size=args.out_batch_size,
+            beam_width=args.beam_width,
+        )
+
     # Run search
     logger.info(f"Running search with {args.n_trials} trials...")
     out_graphs = agent.run_search(args.n_trials)
@@ -1173,83 +1336,93 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
     elapsed = time.time() - start_time
     logger.info(f"Total time: {elapsed:.2f}s ({int(elapsed)//60}m {int(elapsed)%60}s)")
 
-    if not skip_visualization:
-        if hasattr(agent, 'counts') and agent.counts:
-            logger.info("\nSaving all pattern instances...")
-            pkl_path = save_and_visualize_all_instances(agent, args, out_graphs)
+    if hasattr(agent, 'counts') and agent.counts:
+        logger.info("\nSaving all pattern instances...")
+        pkl_path = save_and_visualize_all_instances(agent, args, out_graphs)
 
-            if pkl_path:
-                logger.info(f"✓ All instances saved to: {pkl_path}")
-            else:
-                logger.error("✗ Failed to save all instances")
+        if pkl_path:
+            logger.info(f"✓ All instances saved to: {pkl_path}")
         else:
-            logger.warning("⚠ Agent.counts not found - cannot save all instances")
-            logger.warning("  Check that your search agent populates agent.counts")
+            logger.error("✗ Failed to save all instances")
+    else:
+        logger.warning("⚠ Agent.counts not found - cannot save all instances")
+        logger.warning("  Check that your search agent populates agent.counts")
 
-        count_by_size = defaultdict(int)
-        warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
+    count_by_size = defaultdict(int)
+    warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 
-        successful_visualizations = 0
 
-        # Only create direct representative visualizations if --visualize_instances is NOT set
-        # (When --visualize_instances IS set, representatives are already in subdirectories)
-        visualize_instances = getattr(args, 'visualize_instances', False)
+    successful_visualizations = 0
 
-        if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
-            logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
-            for pattern in out_graphs:
-                if visualize_pattern_graph_ext(pattern, args, count_by_size):
-                    successful_visualizations += 1
-                count_by_size[len(pattern)] += 1
+    # Only create direct representative visualizations if --visualize_instances is NOT set
+    # (When --visualize_instances IS set, representatives are already in subdirectories)
+    visualize_instances = getattr(args, 'visualize_instances', False)
 
-            logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
-        elif visualize_instances:
-            logger.info("\nSkipping direct representative visualization (representatives already in subdirectories)")
-        else:
-            logger.warning("⚠ Skipping representative visualization (visualizer not available)")
-
-    if not skip_save:
-        ensure_directories()
-        
-        logger.info(f"\nSaving representative patterns to: {args.out_path}")
-        
-        if not os.path.exists("results"):
-            os.makedirs("results")
-        with open(args.out_path, "wb") as f:
-            pickle.dump(out_graphs, f, protocol=pickle.HIGHEST_PROTOCOL)
-        
-        if os.path.exists(args.out_path):
-            file_size = os.path.getsize(args.out_path) / 1024
-            logger.info(f"✓ Representatives saved ({file_size:.1f} KB)")
-        else:
-            logger.error("✗ Failed to save representatives")
-        
-        json_results = []
+    if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
+        logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
         for pattern in out_graphs:
-            pattern_data = {
-                'nodes': [
-                    {
-                        'id': str(node),
-                        'label': pattern.nodes[node].get('label', ''),
-                        'anchor': pattern.nodes[node].get('anchor', 0),
-                        **{k: v for k, v in pattern.nodes[node].items() 
-                           if k not in ['label', 'anchor']}
-                    }
-                    for node in pattern.nodes()
-                ],
-                'edges': [
-                    {
-                        'source': str(u),
-                        'target': str(v),
-                        'type': pattern.edges[u, v].get('type', ''),
-                        **{k: v for k, v in pattern.edges[u, v].items() 
-                           if k != 'type'}
-                    }
-                    for u, v in pattern.edges()
-                ],
-                'size': len(pattern),
-                'is_directed': isinstance(pattern, nx.DiGraph)
+            if visualize_pattern_graph_ext(pattern, args, count_by_size):
+                successful_visualizations += 1
+            count_by_size[len(pattern)] += 1
+
+        logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
+    elif visualize_instances:
+        logger.info("\nSkipping direct representative visualization (representatives already in subdirectories)")
+    else:
+        logger.warning("⚠ Skipping representative visualization (visualizer not available)")
+
+    ensure_directories()
+    
+    logger.info(f"\nSaving representative patterns to: {args.out_path}")
+    
+    if not os.path.exists("results"):
+        os.makedirs("results")
+    with open(args.out_path, "wb") as f:
+        pickle.dump(out_graphs, f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    if os.path.exists(args.out_path):
+        file_size = os.path.getsize(args.out_path) / 1024
+        logger.info(f"✓ Representatives saved ({file_size:.1f} KB)")
+    else:
+        logger.error("✗ Failed to save representatives")
+    
+    json_results = []
+    for pattern in out_graphs:
+        pattern_data = {
+            'nodes': [
+                {
+                    'id': str(node),
+                    'label': pattern.nodes[node].get('label', ''),
+                    'anchor': pattern.nodes[node].get('anchor', 0),
+                    **{k: v for k, v in pattern.nodes[node].items() 
+                       if k not in ['label', 'anchor']}
+                }
+                for node in pattern.nodes()
+            ],
+            'edges': [
+                {
+                    'source': str(u),
+                    'target': str(v),
+                    'type': data.get('type', ''),
+                    **{k: v for k, v in data.items() if k != 'type'}
+                }
+                for u, v, data in pattern.edges(data=True)
+            ],
+            'metadata': {
+                'num_nodes': len(pattern),
+                'num_edges': pattern.number_of_edges(),
+                'is_directed': pattern.is_directed()
             }
+        }
+        json_results.append(pattern_data)
+    
+    base_path = os.path.splitext(args.out_path)[0]
+    if base_path.endswith('.json'):
+        base_path = os.path.splitext(base_path)[0]
+    
+    json_path = base_path + '.json'
+    with open(json_path, 'w') as f:
+        json.dump(json_results, f, indent=2)
     
     logger.info(f"✓ JSON version saved to: {json_path}")
     
@@ -1296,13 +1469,16 @@ def pattern_growth(dataset, task, args, mp_context=None, skip_visualization=Fals
     return out_graphs
 
 
+
 def main():
     ensure_directories()
+    if not os.path.exists("/app/plots/cluster"):  # Use absolute path
+        os.makedirs("/app/plots/cluster")
 
-    parser = argparse.ArgumentParser(description='Decoder arguments')
+    parser = argparse.ArgumentParser(description="Decoder arguments")
     parse_encoder(parser)
     parse_decoder(parser)
-    
+
     args = parser.parse_args()
 
     logger.info(f"Using dataset: {args.dataset}")
@@ -1311,7 +1487,7 @@ def main():
     if args.dataset.endswith('.pkl'):
         with open(args.dataset, 'rb') as f:
             data = pickle.load(f)
-            
+
             if isinstance(data, (nx.Graph, nx.DiGraph)):
                 graph = data
                 
@@ -1321,7 +1497,7 @@ def main():
                 elif args.graph_type == "undirected" and graph.is_directed():
                     logger.info("Converting directed graph to undirected...")
                     graph = graph.to_undirected()
-                
+
                 graph_type = "directed" if graph.is_directed() else "undirected"
                 logger.info(f"Using NetworkX {graph_type} graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
                 
@@ -1342,8 +1518,10 @@ def main():
                 graph.add_edges_from(data['edges'])
                 logger.info(f"Created {args.graph_type} graph from dict format with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
             else:
-                raise ValueError(f"Unknown pickle format. Expected NetworkX graph or dict with 'nodes'/'edges' keys, got {type(data)}")
-                
+                raise ValueError(
+                    f"Unknown pickle format. Expected NetworkX graph or dict with 'nodes'/'edges' keys, got {type(data)}"
+                )
+
         dataset = [graph]
         task = 'graph'
     
@@ -1370,12 +1548,13 @@ def main():
                     a, b = row.split("\t")
                     graph.add_edge(int(a), int(b))
         dataset = [graph]
-        task = 'graph'
+        task = "graph"
     elif args.dataset == "ppi":
         dataset = PPI(root="/tmp/PPI")
-        task = 'graph'
-    elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
-        fn = {"diseasome": "bio-diseasome.mtx",
+        task = "graph"
+    elif args.dataset in ["diseasome", "usroads", "mn-roads", "infect"]:
+        fn = {
+            "diseasome": "bio-diseasome.mtx",
             "usroads": "road-usroads.mtx",
             "mn-roads": "mn-roads.mtx",
             "infect": "infect-dublin.edges"}
@@ -1384,55 +1563,47 @@ def main():
             for line in f:
                 if not line.strip():
                     continue
+                if not line.strip():
+                    continue
                 a, b = line.strip().split(" ")
                 graph.add_edge(int(a), int(b))
         dataset = [graph]
-        task = 'graph'
-    elif args.dataset.startswith('plant-'):
+        task = "graph"
+    elif args.dataset.startswith("plant-"):
         size = int(args.dataset.split("-")[-1])
         dataset = make_plant_dataset(size)
         task = 'graph'
 
-    logger.info("\nStarting pattern mining...")
-    
-    # Adaptive mode selection based on comprehensive graph analysis
-    if len(dataset) == 1 and isinstance(dataset[0], (nx.Graph, nx.DiGraph)):
-        graph = dataset[0]
+    # Adaptive mode selection based on comprehensive graph analysis  
+    if len(dataset) == 1 and isinstance(dataset[0], (nx.Graph, nx.DiGraph)):  
+        graph = dataset[0]  
         
-        # Analyze graph characteristics
-        graph_stats = analyze_graph_for_streaming(graph, args)
-        use_streaming = graph_stats['use_streaming']
-        reason = graph_stats['reason']
+        # Analyze graph characteristics  
+        graph_stats = analyze_graph_for_streaming(graph, args)  
+        use_streaming = graph_stats['use_streaming']  
+        reason = graph_stats['reason']  
         
-        # Print analysis results
-        print("=" * 70)
-        print("GRAPH ANALYSIS")
-        print("=" * 70)
-        print(f"Nodes: {graph_stats['num_nodes']:,}")
-        print(f"Edges: {graph_stats['num_edges']:,}")
-        print(f"Average degree: {graph_stats['avg_degree']:.2f}")
-        print(f"Clustering coefficient: {graph_stats['clustering_coef']:.3f}")
-        print(f"Connected components: {graph_stats['n_components']}")
-        print(f"Connectivity ratio: {graph_stats['connectivity_ratio']:.2f}")
-        print(f"Estimated memory: {graph_stats['estimated_memory_mb']:.0f}MB")
-        print(f"Available memory: {graph_stats.get('available_memory_mb', 'unknown'):.0f}MB")
-        if 'estimated_chunks' in graph_stats:
-            print(f"Estimated chunks (if streaming): {graph_stats['estimated_chunks']}")
-        print()
-        print(f"DECISION: {'🚀 STREAMING MODE' if use_streaming else '📊 STANDARD MODE'}")
-        print(f"Priority: {graph_stats.get('priority', 'unknown')}")
-        print(f"Reason: {reason}")
-        print("=" * 70)
+        # Print analysis results  
+        print("=" * 60)  
+        print("GRAPH ANALYSIS")  
+        print("=" * 60)  
+        print(f"Nodes: {graph_stats['num_nodes']:,}")  
+        print(f"Edges: {graph_stats['num_edges']:,}")  
+        print(f"Average degree: {graph_stats['avg_degree']:.2f}")  
+        print(f"Clustering coefficient: {graph_stats['clustering_coef']:.3f}")  
+        print(f"Connected components: {graph_stats['n_components']}")  
+        print(f"Connectivity ratio: {graph_stats['connectivity_ratio']:.2f}")  
+        print(f"Estimated memory: {int(graph_stats['estimated_memory_mb'])}MB")  
+        print(f"Decision: {'STREAMING MODE' if use_streaming else 'STANDARD MODE'}")  
+        print(f"Reason: {reason}")  
+        print("=" * 60)  
         
-        if use_streaming:
-            pattern_growth_streaming(dataset, task, args)
-        else:
-            pattern_growth(dataset, task, args)
-    else:
-        pattern_growth(dataset, task, args)
-    
-    logger.info("\n✓ Pattern mining complete!")
-
+        if use_streaming:  
+            out_graphs = pattern_growth_streaming(dataset, task, args)  
+        else:  
+            out_graphs = pattern_growth(dataset, task, args)  
+    else:  
+        out_graphs = pattern_growth(dataset, task, args)
 
 if __name__ == '__main__':
     main()
