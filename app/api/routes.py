@@ -11,17 +11,18 @@ router = APIRouter()
 @router.post("/mine")
 def mine(
     graph_file: UploadFile = File(...), 
-    job_id: str = Form(None),
-    min_pattern_size: int = Form(5),
-    max_pattern_size: int = Form(10),
-    min_neighborhood_size: int = Form(5),
-    max_neighborhood_size: int = Form(10),
-    n_neighborhoods: int = Form(2000),
-    n_trials: int = Form(100),
-    radius: int = Form(3),
-    graph_type: str = Form("undirected"),
+    job_id: str = Form(...),
+    min_pattern_size: int = Form(...),
+    max_pattern_size: int = Form(...),
+    min_neighborhood_size: int = Form(...),
+    max_neighborhood_size: int = Form(...),
+    n_neighborhoods: int = Form(...),
+    n_trials: int = Form(...),
+    radius: int = Form(3), # Radius kept with default as removed from pipeline
+    graph_type: str = Form(...),
     search_strategy: str = Form("greedy"),
-    sample_method: str = Form("tree")
+    sample_method: str = Form("tree"),
+    visualize_instances: bool = Form(...)
 ):
     # Validate file
     if not graph_file.filename:
@@ -46,7 +47,8 @@ def mine(
             'radius': radius,
             'graph_type': graph_type,
             'search_strategy': search_strategy,
-            'sample_method': sample_method
+            'sample_method': sample_method,
+            'visualize_instances': visualize_instances
         }
             
         # Run miner with job_id and config
