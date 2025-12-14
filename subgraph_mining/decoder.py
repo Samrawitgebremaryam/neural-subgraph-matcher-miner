@@ -7,6 +7,7 @@ import pickle
 import sys
 from collections import deque
 from pathlib import Path
+import resource
 
 from deepsnap.batch import Batch
 import numpy as np
@@ -31,7 +32,6 @@ from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
 
-# CRITICAL: Import visualizer at top level (not inside functions)
 try:
     from visualizer.visualizer import visualize_pattern_graph_ext, visualize_all_pattern_instances
     VISUALIZER_AVAILABLE = True
@@ -73,6 +73,12 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+def log_memory_usage(tag=""):
+    """Log current memory usage."""
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    usage_mb = usage / 1024
+    print(f"[MEMORY] {tag} Max RSS: {usage_mb:.2f} MB", flush=True)
 
 
 def ensure_directories():
@@ -219,62 +225,58 @@ def analyze_graph_for_streaming(graph, args):
     }
 
 
-def bfs_chunk(graph, start_node, max_size, valid_nodes=None):
-    """Optimized BFS chunking using deque. 
-    If valid_nodes is provided, only traverses nodes in that set.
-    """
-    visited = set([start_node])
-    queue = deque([start_node]) # Use deque for O(1) pops
+def bfs_chunk(graph, start_node, max_size, valid_nodes=None, overlap_ratio=0.0):
+    core_visited = set([start_node])
+    queue = deque([start_node])
     
-    # Track which valid nodes are still available (if restricted)
     available_nodes = valid_nodes if valid_nodes is not None else None
     
-    while len(visited) < max_size:
-        # If queue empty but we need more nodes, find a new start node from available set
+    while len(core_visited) < max_size:
         if not queue:
-            # If we are restricted to a valid set, we MUST pick another node from it
-            # to fill the chunk, otherwise we get thousands of tiny chunks.
-            if available_nodes:
-                # Iterate to find the first unvisited valid node
-                # Note: available_nodes is a set that is being modified in the outer loop 
-                # via difference_update, so it shrinks. 
-                # But here we need to pick one that is NOT in 'visited' of the current chunk.
-                found_new = False
-                
-                # Check if we can efficiently pop from valid_nodes?
-                # No, valid_nodes belongs to the caller.
-                # Heuristic: The outer loop knows the valid nodes.
-                # We can't easily jump to a new random node without iterating.
-                # BUT, since we want to be fast, we can return what we have 
-                # if the component is truly disconnected.
-                pass
-            
-            # Since standard BFS consumes connected components, if the queue dies,
-            # we have finished a connected subgraph. 
-            # Force quit to avoid slow scanning.
+            # BFS exhausted - finished a connected component
             break
 
         node = queue.popleft()
         neighbors = graph[node] 
         
         for neighbor in neighbors:
-            if neighbor not in visited:
+            if neighbor not in core_visited:
                 if valid_nodes is not None and neighbor not in valid_nodes:
                     continue
                     
-                visited.add(neighbor)
+                core_visited.add(neighbor)
                 queue.append(neighbor)
-                if len(visited) >= max_size:
+                if len(core_visited) >= max_size:
                     break
     
-    return graph.subgraph(visited).copy()
+    if overlap_ratio > 0.0:
+        boundary_candidates = set()
+        for node in core_visited:
+            for neighbor in graph[node]:
+                if neighbor not in core_visited:
+                    if valid_nodes is None or neighbor in valid_nodes:
+                        boundary_candidates.add(neighbor)
+        
+        overlap_size = int(max_size * overlap_ratio)
+        overlap_size = min(overlap_size, len(boundary_candidates))
+        
+        if overlap_size > 0 and boundary_candidates:
+            boundary_with_degree = [(node, graph.degree(node)) for node in boundary_candidates]
+            boundary_with_degree.sort(key=lambda x: x[1], reverse=True)
+            
+            overlap_nodes = set([node for node, _ in boundary_with_degree[:overlap_size]])
+            
+            all_nodes = core_visited | overlap_nodes
+            return graph.subgraph(all_nodes).copy()
+    
+    return graph.subgraph(core_visited).copy()
 
 
-def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20):
+def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20, overlap_ratio=0.1):
     """
-    Intelligent component-based chunking.
+    Intelligent component-based chunking with configurable overlap.
     1. Keeps medium components intact.
-    2. Splits large components (>chunk_size) using BFS.
+    2. Splits large components (>chunk_size) using BFS with overlap.
     3. Filters tiny components (<min_chunk_size).
     """
     # Find connected components
@@ -321,8 +323,9 @@ def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20):
                 if remaining_capacity <= 0:
                      remaining_capacity = chunk_size # Should not happen if logic is correct, but safe fallback
                 
-                # Pass component_nodes as valid_nodes to prevent overlap
-                fragment = bfs_chunk(component_graph, start_node, remaining_capacity, valid_nodes=component_nodes)
+                # Pass component_nodes as valid_nodes and add overlap for boundary patterns
+                fragment = bfs_chunk(component_graph, start_node, remaining_capacity, 
+                                   valid_nodes=component_nodes, overlap_ratio=0.1)
                 
                 # Add to current chunk
                 current_chunk.add_nodes_from(fragment.nodes(data=True))
@@ -384,6 +387,8 @@ def _process_chunk(args_tuple):
     original_n_workers = getattr(args, "n_workers", 4)
     args.n_workers = 0  # Setting to 0 signals single-threaded mode
 
+    log_memory_usage(f"Start Chunk {chunk_index+1}")
+
     print(
         f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}",
         flush=True,
@@ -400,6 +405,7 @@ def _process_chunk(args_tuple):
 
         # Restore original n_workers
         args.n_workers = original_n_workers
+        log_memory_usage(f"End Chunk {chunk_index+1}")
         return result
     except Exception as e:
         print(
@@ -452,12 +458,13 @@ def pattern_growth_streaming(dataset, task, args):
         effective_chunk_size = args.chunk_size
         print(f"Sparse graph, using chunk size: {effective_chunk_size}", flush=True)
 
-    # Partition graph into chunks
+    # Partition graph into chunks with overlap for boundary pattern recovery
+    overlap_ratio = getattr(args, 'chunk_overlap_ratio', 0.1)
     print(
-        f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...",
+        f"Partitioning graph into chunks of ~{effective_chunk_size} nodes with {overlap_ratio*100:.0f}% overlap...",
         flush=True,
     )
-    graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)
+    graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size, overlap_ratio=overlap_ratio)
 
     # Filter out tiny chunks based on graph sparsity
     if avg_degree < 2.0:
@@ -492,9 +499,27 @@ def pattern_growth_streaming(dataset, task, args):
     all_discovered_patterns = []
     total_chunks = len(graph_chunks)
 
+    import copy
+    chunk_args_obj = copy.copy(args)
+    
+    if total_chunks > 0:
+        # Scale trials
+        original_trials = getattr(args, 'n_trials', 1000)
+        scaled_trials = max(1, int(original_trials / total_chunks))
+        chunk_args_obj.n_trials = scaled_trials
+        
+        # Scale neighborhoods
+        original_neighborhoods = getattr(args, 'n_neighborhoods', 10000)
+        scaled_neighborhoods = max(10, int(original_neighborhoods / total_chunks))
+        chunk_args_obj.n_neighborhoods = scaled_neighborhoods
+        
+        print(f"\n[AUTO-SCALING] Distributed global parameters across {total_chunks} chunks:", flush=True)
+        print(f"  - n_trials: {original_trials} -> {scaled_trials} per chunk (Total: {scaled_trials * total_chunks})", flush=True)
+        print(f"  - n_neighborhoods: {original_neighborhoods} -> {scaled_neighborhoods} per chunk", flush=True)
+
     # Wrap each chunk in a list for pattern_growth
     chunk_args = [
-        ([chunk], task, args, idx, total_chunks)
+        ([chunk], task, chunk_args_obj, idx, total_chunks)
         for idx, chunk in enumerate(graph_chunks)
     ]
 

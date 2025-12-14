@@ -52,6 +52,8 @@ def parse_decoder(parser):
                         help='Clustering coefficient threshold for modular graphs')
     dec_parser.add_argument('--max_components_threshold', type=int, default=1000,
                         help='Maximum number of components before chunking becomes inefficient')
+    dec_parser.add_argument('--chunk_overlap_ratio', type=float, default=0.1,
+                        help='Overlap ratio between chunks (0.0-0.5, default 0.1 = 10% overlap)')
     
     # Beam search parameter
     parser.add_argument('--beam_width', type=int, default=5,
