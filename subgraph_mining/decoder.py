@@ -6,6 +6,7 @@ import os
 import pickle
 import sys
 from pathlib import Path
+import resource
 
 from deepsnap.batch import Batch
 import numpy as np
@@ -30,7 +31,6 @@ from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
 
-# CRITICAL: Import visualizer at top level (not inside functions)
 try:
     from visualizer.visualizer import visualize_pattern_graph_ext, visualize_all_pattern_instances
     VISUALIZER_AVAILABLE = True
@@ -73,6 +73,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def log_memory_usage(tag=""):
+    """Log current memory usage."""
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    usage_mb = usage / 1024
+    print(f"[MEMORY] {tag} Max RSS: {usage_mb:.2f} MB", flush=True)
+
+
 def ensure_directories():
     """Create all required directories if they don't exist."""
     directories = [
@@ -81,11 +88,11 @@ def ensure_directories():
         "results"
     ]
     for directory in directories:
-    for directory in directories:
         Path(directory).mkdir(parents=True, exist_ok=True)
         logger.info(f"Ensured directory exists: {directory}")
 
 
+<<<<<<< HEAD
 def bfs_chunk(graph, start_node, max_size):
     visited = set([start_node])
     queue = [start_node]
@@ -94,13 +101,201 @@ def bfs_chunk(graph, start_node, max_size):
         for neighbor in graph.neighbors(node):
             if neighbor not in visited:
                 visited.add(neighbor)
+=======
+def analyze_graph_for_streaming(graph, args):  
+    """
+    Analyze graph characteristics to decide if streaming mode is beneficial.
+    Returns dict with decision and analysis stats.
+    """
+    import random  
+      
+    # Basic metrics
+    num_nodes = graph.number_of_nodes()  
+    num_edges = graph.number_of_edges()  
+    avg_degree = num_edges / num_nodes if num_nodes > 0 else 0  
+    
+    # Calculate Edge Density (Crucial for decision)
+    # For undirected: 2 * E / (N * (N-1))
+    # For directed: E / (N * (N-1))
+    max_possible_edges = num_nodes * (num_nodes - 1)
+    if not graph.is_directed():
+        max_possible_edges /= 2
+    
+    edge_density = num_edges / max_possible_edges if max_possible_edges > 0 else 0
+
+    # Bipartite detection (only for smaller graphs)
+    if num_nodes < 10000:
+        is_bipartite = nx.is_bipartite(graph)  
+    else:
+        is_bipartite = False # Skip for large graphs
+      
+    # Clustering coefficient (Sampled for speed)
+    if graph.is_directed():  
+        undirected_graph = graph.to_undirected()  
+        if num_nodes > 5000:  
+            sample_nodes = random.sample(list(undirected_graph.nodes()), 1000)  
+            clustering_coef = nx.average_clustering(undirected_graph, nodes=sample_nodes)  
+        else:  
+            clustering_coef = nx.average_clustering(undirected_graph)  
+    else:  
+        if num_nodes > 5000:  
+            sample_nodes = random.sample(list(graph.nodes()), 1000)  
+            clustering_coef = nx.average_clustering(graph, nodes=sample_nodes)  
+        else:  
+            clustering_coef = nx.average_clustering(graph)  
+      
+    # Components
+    if graph.is_directed():  
+        components = list(nx.weakly_connected_components(graph))  
+    else:  
+        components = list(nx.connected_components(graph))  
+      
+    n_components = len(components)  
+    if n_components > 0:  
+        largest_cc_size = len(max(components, key=len))  
+        connectivity_ratio = largest_cc_size / num_nodes  
+    else:  
+        largest_cc_size = 0
+        connectivity_ratio = 0.0  
+      
+    # Memory estimation (Realistic: ~1.2KB per node + ~0.1KB per edge overhead)
+    estimated_memory_mb = (num_nodes * 1.2 + num_edges * 0.1) / 1024
+    
+    # Estimate chunks
+    chunk_size = getattr(args, 'chunk_size', 10000)
+    # If 1 component, chunks ~ nodes/chunk_size. If fragmented, max(chunks, components)
+    estimated_chunks = max(num_nodes // chunk_size, n_components) if n_components > 0 else 0
+
+    # --- DECISION LOGIC ---
+    use_streaming = False  
+    reason = ""  
+    priority = "DEFAULT"
+
+    # 1. Reject if too fragmented (Overhead > Benefit)
+    if n_components > 100:
+        use_streaming = False
+        reason = f"highly fragmented ({n_components} components) - chunking overhead high"
+        priority = "TOO_FRAGMENTED"
+
+    # 2. Reject if too small (Standard is faster)
+    elif num_nodes < 30000:
+        use_streaming = False
+        reason = f"small graph ({num_nodes} nodes < 30K) - standard mode faster"
+        priority = "TOO_SMALL"
+
+    # 3. Reject if structure blocks partitioning (Bipartite or Ultra-Dense)
+    elif is_bipartite:  
+        use_streaming = False  
+        reason = "bipartite structure - BFS chunking ineffective"
+        priority = "STRUCTURAL_BLOCK"
+
+    elif edge_density > 0.1: # >10% density is very dense for large graphs
+        use_streaming = False
+        reason = f"dense graph (density={edge_density:.4f}) - BFS partitions would overlap heavily"
+        priority = "TOO_DENSE"
+
+    # 4. Accept if Sparse & Connected/Modular (OPTIMAL for Streaming)
+    # This covers Amazon (1 component, sparse)
+    elif avg_degree < 10 and connectivity_ratio > 0.9:
+        use_streaming = True
+        reason = f"large sparse connected graph (degree={avg_degree:.2f}) - optimal for BFS chunking"
+        priority = "OPTIMAL_SPARSE"
+
+    # 5. Accept if Modular
+    elif clustering_coef > 0.15 and n_components < 50:
+         use_streaming = True
+         reason = f"modular graph (clustering={clustering_coef:.3f}) - good for partitioning"
+         priority = "OPTIMAL_MODULAR"
+
+    # 6. Accept if Very Large (Memory benefit)
+    elif num_nodes > 100000:
+        use_streaming = True
+        reason = f"very large graph ({num_nodes} nodes) - streaming recommended for stability"
+        priority = "SIZE_BENEFIT"
+        
+    else:
+        use_streaming = False
+        reason = "graph characteristics favor standard mode"
+        priority = "DEFAULT_STANDARD"
+
+    return {
+        "use_streaming": use_streaming,
+        "reason": reason,
+        "priority": priority,
+        "num_nodes": num_nodes,
+        "num_edges": num_edges,
+        "avg_degree": avg_degree,
+        "edge_density": edge_density,
+        "clustering_coef": clustering_coef,
+        "n_components": n_components,
+        "connectivity_ratio": connectivity_ratio,
+        "estimated_memory_mb": estimated_memory_mb,
+        "estimated_chunks": estimated_chunks
+    }
+
+
+def bfs_chunk(graph, start_node, max_size, valid_nodes=None, overlap_ratio=0.0):
+    core_visited = set([start_node])
+    queue = deque([start_node])
+    
+    available_nodes = valid_nodes if valid_nodes is not None else None
+    
+    while len(core_visited) < max_size:
+        if not queue:
+            # BFS exhausted - finished a connected component
+            break
+
+        node = queue.popleft()
+        neighbors = graph[node] 
+        
+        for neighbor in neighbors:
+            if neighbor not in core_visited:
+                if valid_nodes is not None and neighbor not in valid_nodes:
+                    continue
+                    
+                core_visited.add(neighbor)
+>>>>>>> b31ee5b (feat: optimised streaming mode by including overlap)
                 queue.append(neighbor)
-                if len(visited) >= max_size:
+                if len(core_visited) >= max_size:
                     break
+<<<<<<< HEAD
     return graph.subgraph(visited).copy()
 
 
 def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20):
+=======
+    
+    if overlap_ratio > 0.0:
+        boundary_candidates = set()
+        for node in core_visited:
+            for neighbor in graph[node]:
+                if neighbor not in core_visited:
+                    if valid_nodes is None or neighbor in valid_nodes:
+                        boundary_candidates.add(neighbor)
+        
+        overlap_size = int(max_size * overlap_ratio)
+        overlap_size = min(overlap_size, len(boundary_candidates))
+        
+        if overlap_size > 0 and boundary_candidates:
+            boundary_with_degree = [(node, graph.degree(node)) for node in boundary_candidates]
+            boundary_with_degree.sort(key=lambda x: x[1], reverse=True)
+            
+            overlap_nodes = set([node for node, _ in boundary_with_degree[:overlap_size]])
+            
+            all_nodes = core_visited | overlap_nodes
+            return graph.subgraph(all_nodes).copy()
+    
+    return graph.subgraph(core_visited).copy()
+
+
+def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20, overlap_ratio=0.1):
+    """
+    Intelligent component-based chunking with configurable overlap.
+    1. Keeps medium components intact.
+    2. Splits large components (>chunk_size) using BFS with overlap.
+    3. Filters tiny components (<min_chunk_size).
+    """
+>>>>>>> b31ee5b (feat: optimised streaming mode by including overlap)
     # Find connected components
     if graph.is_directed():
         components = list(nx.weakly_connected_components(graph))
@@ -133,9 +328,46 @@ def process_large_graph_in_chunks(graph, chunk_size=10000, min_chunk_size=20):
             
             while component_nodes:
                 start_node = next(iter(component_nodes))
+<<<<<<< HEAD
                 chunk = bfs_chunk(component_graph, start_node, chunk_size)
                 chunks.append(chunk)
                 component_nodes -= set(chunk.nodes())
+=======
+                
+                # Determine how much simpler to fetch
+                remaining_capacity = chunk_size - current_chunk.number_of_nodes()
+                if remaining_capacity <= 0:
+                     remaining_capacity = chunk_size # Should not happen if logic is correct, but safe fallback
+                
+                # Pass component_nodes as valid_nodes and add overlap for boundary patterns
+                fragment = bfs_chunk(component_graph, start_node, remaining_capacity, 
+                                   valid_nodes=component_nodes, overlap_ratio=0.1)
+                
+                # Add to current chunk
+                current_chunk.add_nodes_from(fragment.nodes(data=True))
+                current_chunk.add_edges_from(fragment.edges(data=True))
+                
+                # Update accounting
+                fragment_nodes = set(fragment.nodes())
+                component_nodes.difference_update(fragment_nodes)
+                
+                # If chunk is full enough, save it
+                if current_chunk.number_of_nodes() >= chunk_size:
+                    chunks.append(current_chunk)
+                    
+                    if graph.is_directed():
+                        current_chunk = nx.DiGraph()
+                    else:
+                        current_chunk = nx.Graph()
+                        
+                    chunk_idx += 1
+                    if chunk_idx % 5 == 0:
+                         print(f"  Created {chunk_idx} full chunks from component... ({len(component_nodes)} nodes left)", flush=True)
+
+            # Add any leftover partial chunk
+            if current_chunk.number_of_nodes() > 0:
+                 chunks.append(current_chunk)
+>>>>>>> b31ee5b (feat: optimised streaming mode by including overlap)
     
     print(f"Component-based chunking: {len(components)} components → {len(chunks)} chunks", flush=True)
     
@@ -390,6 +622,8 @@ def _process_chunk(args_tuple):
     original_n_workers = getattr(args, "n_workers", 4)
     args.n_workers = 0  
 
+    log_memory_usage(f"Start Chunk {chunk_index+1}")
+
     print(
         f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}",
         flush=True,
@@ -414,7 +648,11 @@ def _process_chunk(args_tuple):
         )
 
         args.n_workers = original_n_workers
+<<<<<<< HEAD
 >>>>>>> 522cd82 (refactor: enhance graph analysis for streaming with improved memory checks)
+=======
+        log_memory_usage(f"End Chunk {chunk_index+1}")
+>>>>>>> b31ee5b (feat: optimised streaming mode by including overlap)
         return result
     except Exception as e:
         print(f"Error processing chunk {chunk_index}: {e}", flush=True)
@@ -457,11 +695,16 @@ def pattern_growth_streaming(dataset, task, args):
         print(f"Sparse graph, using chunk size: {effective_chunk_size}", flush=True)
 <<<<<<< HEAD
 
+<<<<<<< HEAD
+=======
+    # Partition graph into chunks with overlap for boundary pattern recovery
+    overlap_ratio = getattr(args, 'chunk_overlap_ratio', 0.1)
+>>>>>>> b31ee5b (feat: optimised streaming mode by including overlap)
     print(
-        f"Partitioning graph into chunks of ~{effective_chunk_size} nodes...",
+        f"Partitioning graph into chunks of ~{effective_chunk_size} nodes with {overlap_ratio*100:.0f}% overlap...",
         flush=True,
     )
-    graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size)
+    graph_chunks = process_large_graph_in_chunks(graph, chunk_size=effective_chunk_size, overlap_ratio=overlap_ratio)
 
 =======
     
@@ -512,8 +755,34 @@ def pattern_growth_streaming(dataset, task, args):
 >>>>>>> 522cd82 (refactor: enhance graph analysis for streaming with improved memory checks)
     all_discovered_patterns = []
 
+<<<<<<< HEAD
     total_chunks = len(dataset)
     chunk_args = [(chunk_dataset, task, args, idx, total_chunks) for idx, chunk_dataset in enumerate(dataset)]
+=======
+    import copy
+    chunk_args_obj = copy.copy(args)
+    
+    if total_chunks > 0:
+        # Scale trials
+        original_trials = getattr(args, 'n_trials', 1000)
+        scaled_trials = max(1, int(original_trials / total_chunks))
+        chunk_args_obj.n_trials = scaled_trials
+        
+        # Scale neighborhoods
+        original_neighborhoods = getattr(args, 'n_neighborhoods', 10000)
+        scaled_neighborhoods = max(10, int(original_neighborhoods / total_chunks))
+        chunk_args_obj.n_neighborhoods = scaled_neighborhoods
+        
+        print(f"\n[AUTO-SCALING] Distributed global parameters across {total_chunks} chunks:", flush=True)
+        print(f"  - n_trials: {original_trials} -> {scaled_trials} per chunk (Total: {scaled_trials * total_chunks})", flush=True)
+        print(f"  - n_neighborhoods: {original_neighborhoods} -> {scaled_neighborhoods} per chunk", flush=True)
+
+    # Wrap each chunk in a list for pattern_growth
+    chunk_args = [
+        ([chunk], task, chunk_args_obj, idx, total_chunks)
+        for idx, chunk in enumerate(graph_chunks)
+    ]
+>>>>>>> b31ee5b (feat: optimised streaming mode by including overlap)
 
     with mp.Pool(processes=4) as pool:
         results = pool.map(_process_chunk, chunk_args)
