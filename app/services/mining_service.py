@@ -73,10 +73,68 @@ class MiningService:
             )
             
             # Stream output line by line
-            for line in process.stdout:
-                print(line.rstrip(), flush=True)
+            total_chunks = 1
+            current_chunk = 0
             
+            progress_file = os.path.join(shared_job_dir, "progress.json")
+            
+            def update_progress(status, progress, message):
+                with open(progress_file, 'w') as f:
+                    json.dump({
+                        "status": status,
+                        "progress": min(progress, 99), # Never hit 100 until fully done
+                        "message": message
+                    }, f)
+
+            # Initialize progress
+            update_progress("starting", 0, "Initializing miner...")
+
+            for line in process.stdout:
+                line_str = line.rstrip()
+                print(line_str, flush=True)
+                
+                try:
+                    # Robust parsing that ignores timestamp prefixes
+                    # Example: "[10:00:00] Worker PID 123 finished chunk 1/4"
+                    
+                    if "started chunk" in line_str:
+                         # "... started chunk 1/4"
+                        parts = line_str.split("started chunk")[1].strip().split(" ")[0] # "1/4"
+                        current, total = map(int, parts.split("/"))
+                        total_chunks = total
+                        current_chunk = current
+                        
+                        # Start of a chunk is roughly (chunk-1)/total
+                        base_progress = int(((current_chunk - 1) / total_chunks) * 90)
+                        update_progress("mining", base_progress, f"Started processing chunk {current_chunk} of {total_chunks}...")
+
+                    elif "still processing chunk" in line_str:
+                        # Bump progress slightly to show activity
+                        # "... still processing chunk 1/4"
+                        parts = line_str.split("still processing chunk")[1].strip().split(" ")[0]
+                        current, total = map(int, parts.split("/"))
+                        
+                        base_progress = int(((current_chunk - 1) / total_chunks) * 90)
+                        active_progress = base_progress + int((1 / total_chunks) * 45) # Halfway through chunk
+                        update_progress("mining", active_progress, f"Still processing chunk {current_chunk} of {total_chunks}...")
+
+                    elif "finished chunk" in line_str:
+                        # "... finished chunk 1/4"
+                        parts = line_str.split("finished chunk")[1].strip().split(" ")[0]
+                        current, total = map(int, parts.split("/"))
+                        
+                        # End of chunk is current/total
+                        completed_progress = int((current_chunk / total_chunks) * 90)
+                        update_progress("mining", completed_progress, f"Finished chunk {current_chunk} of {total_chunks}")
+                        
+                except Exception as e:
+                    # Don't let parsing errors stop the stream
+                    print(f"Warning: Failed to parse progress line: {e}", flush=True)
+
             process.wait()
+            
+            # Final completion update
+            update_progress("completed", 100, "Mining completed successfully!")
             
             if process.returncode != 0:
                 raise Exception("Miner failed with exit code {}".format(process.returncode))
