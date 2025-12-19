@@ -3,6 +3,7 @@ import csv
 from itertools import combinations
 import time
 import os
+import sys
 
 from deepsnap.batch import Batch
 import numpy as np
