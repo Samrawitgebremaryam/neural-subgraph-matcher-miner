@@ -48,6 +48,8 @@ jobs:
               python -m subgraph_mining.decoder \
                 --dataset=Email_new.pkl \
                 --n_trials=200 \
+                --search_strategy=beam \
+                --beam_width=10 \
                 --node_anchored \
                 --out_path=/app/results/patterns.pkl \
                 --graph_type=directed
