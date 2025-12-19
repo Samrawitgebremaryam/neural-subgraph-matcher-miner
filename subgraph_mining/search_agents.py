@@ -909,7 +909,7 @@ class BeamSearchAgent(SearchAgent):
                     print(f"    [grow #{idx}] Added node {node} → new size {len(new_pattern)}, score={new_score:.2f} ({dt*1000:.1f} ms)")
                     new_candidates.append((new_score, new_pattern, graph_idx, seed_node))
                 except Exception as e:
-                    print(f"    ❌ Score computation failed for node {node}: {e}")
+                    print(f"     Score computation failed for node {node}: {e}")
                     import traceback; traceback.print_exc()
 
         print(f"[DEBUG:grow] Generated {len(new_candidates)} candidates → pruning to top {self.beam_width}")
@@ -1022,7 +1022,7 @@ class BeamSearchAgent(SearchAgent):
 
         # 🔹 Beam initialization (seed-based)
         if not self.pattern_beams[self.current_size]:
-            print(f"[STEP] ➕ Initializing beam for size {self.current_size}...")
+            print(f"[STEP]  Initializing beam for size {self.current_size}...")
             initial_beam = []
             num_seeds = min(self.beam_width * 2, max(2, self.n_trials - self.trials_completed))
             print(f"[STEP] Attempting to sample {num_seeds} seeds...")
