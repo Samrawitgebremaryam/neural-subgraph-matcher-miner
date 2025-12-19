@@ -746,6 +746,8 @@ class BeamSearchAgent(SearchAgent):
         self.trials_completed = 0
         self.current_size = self.min_pattern_size
         self.analyze_embs = [] if self.analyze else None
+        print(f"[DEBUG:init] Initialized beams for sizes {list(self.pattern_beams.keys())}")
+
     
     def is_search_done(self):
         """Check if search is complete."""
@@ -796,155 +798,331 @@ class BeamSearchAgent(SearchAgent):
         # Sample a graph
         graph_idx = graph_dist.rvs()
         graph = self.dataset[graph_idx]
+        print(f"[DEBUG:seed] Selected graph {graph_idx} with {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
+
         
         # Sample node with enough neighbors
         candidates = []
+        tried_nodes = 0
         for _ in range(min(10, graph.number_of_nodes())):
             node = random.choice(list(graph.nodes))
-            subgraph = graph.subgraph(list(nx.ego_graph(graph, node, radius=2)))
-            if subgraph.number_of_nodes() >= self.min_pattern_size:
-                candidates.append((node, subgraph.number_of_nodes()))
+            tried_nodes += 1
+            try:
+                ego = list(nx.ego_graph(graph, node, radius=2))
+                subgraph = graph.subgraph(ego)
+                size = subgraph.number_of_nodes()
+                if size >= self.min_pattern_size:
+                    candidates.append((node, size))
+            except Exception as e:
+                print(f"[WARN:seed] Ego graph failed for node {node}: {e}")
+                continue
         
+        print(f"[DEBUG:seed] Tried {tried_nodes} nodes; {len(candidates)} valid candidates (min size = {self.min_pattern_size})")
         if not candidates:
-            # Fallback to random node
-            return graph_idx, random.choice(list(graph.nodes))
+            fallback = random.choice(list(graph.nodes))
+            print(f"[DEBUG:seed] ✖ No candidates — falling back to node {fallback}")
+            return graph_idx, fallback
         
-        # Choose node with largest 2-hop neighborhood
         node = max(candidates, key=lambda x: x[1])[0]
+        print(f"[DEBUG:seed] ✓ Chose seed node {node} (2-hop size = {max(c[1] for c in candidates)})")
         return graph_idx, node
     
-    def _grow_patterns(self, beam):
-        """Grow patterns in the current beam by one node."""
-        new_candidates = []
+    # def _grow_patterns(self, beam):
+    #     """Grow patterns in the current beam by one node."""
+    #     print(f"[DEBUG:grow] Growing beam of size {len(beam)} at pattern size {self.current_size}")
+    #     new_candidates = []
         
-        for score, pattern, graph_idx, seed_node in beam:
-            graph = self.dataset[graph_idx]
+    #     for score, pattern, graph_idx, seed_node in beam:
+    #         graph = self.dataset[graph_idx]
             
-            # Find nodes that can be added to the pattern
+    #         # Find nodes that can be added to the pattern
+    #         pattern_nodes = set(pattern.nodes)
+    #         frontier = set()
+    #         for node in pattern_nodes:
+    #             frontier.update(n for n in graph.neighbors(node) if n not in pattern_nodes)
+            
+    #         # Process frontier nodes in batches
+    #         for i in range(0, len(frontier), self.batch_size):
+    #             batch_nodes = list(frontier)[i:i+self.batch_size]
+                
+    #             for node in batch_nodes:
+    #                 # Create new pattern with added node
+    #                 new_pattern_nodes = list(pattern_nodes) + [node]
+    #                 new_pattern = graph.subgraph(new_pattern_nodes).copy()
+                    
+    #                 # Skip if no new edges were added
+    #                 if new_pattern.number_of_edges() <= pattern.number_of_edges():
+    #                     continue
+                        
+    #                 # Set anchor if needed
+    #                 if self.node_anchored:
+    #                     for v in new_pattern.nodes:
+    #                         new_pattern.nodes[v]["anchor"] = 1 if v == seed_node else 0
+                    
+    #                 # Compute pattern score
+    #                 new_score = self._compute_pattern_score(new_pattern, anchor=seed_node)
+                    
+    #                 # Add to candidates
+    #                 new_candidates.append((new_score, new_pattern, graph_idx, seed_node))
+        
+    #     # Return top-k candidates
+    #     return sorted(new_candidates, key=lambda x: x[0])[:self.beam_width]
+    
+    def _grow_patterns(self, beam):
+        """Grow patterns in the current beam by one node (debug-enhanced)."""
+        print(f"[DEBUG:grow] Growing beam of size {len(beam)} at pattern size {self.current_size}")
+        new_candidates = []
+
+        for idx, (score, pattern, graph_idx, seed_node) in enumerate(beam):
+            graph = self.dataset[graph_idx]
             pattern_nodes = set(pattern.nodes)
             frontier = set()
             for node in pattern_nodes:
-                frontier.update(n for n in graph.neighbors(node) if n not in pattern_nodes)
-            
-            # Process frontier nodes in batches
-            for i in range(0, len(frontier), self.batch_size):
-                batch_nodes = list(frontier)[i:i+self.batch_size]
-                
-                for node in batch_nodes:
-                    # Create new pattern with added node
-                    new_pattern_nodes = list(pattern_nodes) + [node]
-                    new_pattern = graph.subgraph(new_pattern_nodes).copy()
-                    
-                    # Skip if no new edges were added
-                    if new_pattern.number_of_edges() <= pattern.number_of_edges():
-                        continue
-                        
-                    # Set anchor if needed
-                    if self.node_anchored:
-                        for v in new_pattern.nodes:
-                            new_pattern.nodes[v]["anchor"] = 1 if v == seed_node else 0
-                    
-                    # Compute pattern score
+                # Use successors for directed graphs!
+                if hasattr(graph, 'is_directed') and graph.is_directed():
+                    neighbors = graph.successors(node)
+                else:
+                    neighbors = graph.neighbors(node)
+                frontier.update(n for n in neighbors if n not in pattern_nodes)
+
+            print(f"  [grow #{idx}] Pattern size {len(pattern)}; seed={seed_node}; frontier size = {len(frontier)}")
+            if len(frontier) == 0:
+                print(f"    ⚠ Empty frontier — cannot grow pattern #{idx}")
+                continue
+
+            for i, node in enumerate(frontier):
+                new_pattern_nodes = list(pattern_nodes) + [node]
+                new_pattern = graph.subgraph(new_pattern_nodes).copy()
+
+                if new_pattern.number_of_edges() <= pattern.number_of_edges():
+                    # print(f"    [grow #{idx}] Skipping node {node} — no new edges")
+                    continue
+
+                if self.node_anchored:
+                    for v in new_pattern.nodes:
+                        new_pattern.nodes[v]["anchor"] = 1 if v == seed_node else 0
+
+                try:
+                    t0 = time.time()
                     new_score = self._compute_pattern_score(new_pattern, anchor=seed_node)
-                    
-                    # Add to candidates
+                    dt = time.time() - t0
+                    print(f"    [grow #{idx}] Added node {node} → new size {len(new_pattern)}, score={new_score:.2f} ({dt*1000:.1f} ms)")
                     new_candidates.append((new_score, new_pattern, graph_idx, seed_node))
-        
-        # Return top-k candidates
+                except Exception as e:
+                    print(f"    ❌ Score computation failed for node {node}: {e}")
+                    import traceback; traceback.print_exc()
+
+        print(f"[DEBUG:grow] Generated {len(new_candidates)} candidates → pruning to top {self.beam_width}")
         return sorted(new_candidates, key=lambda x: x[0])[:self.beam_width]
+
+    # def step(self):
+    #     """Execute one step of beam search."""
+    #     print(f"\n=== STEP {self.trials_completed}/{self.n_trials} ===")
+    #     print(f"[STEP] Current size: {self.current_size}, Beam size: {len(self.pattern_beams[self.current_size])}")
+
+    #     if torch.cuda.is_available():
+    #         torch.cuda.empty_cache()
+        
+    #     # Initialize beam if needed
+    #     if not self.pattern_beams[self.current_size]:
+    #         print(f"[STEP] ➕ Initializing beam for size {self.current_size}...")
+    #         # Sample seed nodes and create initial patterns
+    #         initial_beam = []
+    #         num_seeds = min(self.beam_width * 2, self.n_trials - self.trials_completed)
+    #         print(f"[STEP] Attempting to sample {num_seeds} seeds...")
+
+    #         for _ in range(num_seeds):
+    #             graph_idx, seed_node = self._sample_seed_node()
+    #             graph = self.dataset[graph_idx]
+                
+    #             # Create pattern from seed node and its 1-hop neighbors
+    #             neighbors = list(graph.neighbors(seed_node))
+    #             if not neighbors:
+    #                 continue
+                    
+    #             # Start with seed node and its first neighbor
+    #             initial_nodes = [seed_node, neighbors[0]]
+    #             pattern = graph.subgraph(initial_nodes).copy()
+                
+    #             if pattern.number_of_edges() == 0:
+    #                 continue
+                    
+    #             # Set anchor if needed
+    #             if self.node_anchored:
+    #                 for v in pattern.nodes:
+    #                     pattern.nodes[v]["anchor"] = 1 if v == seed_node else 0
+                
+    #             # Grow pattern to minimum size
+    #             current_pattern = pattern
+    #             current_nodes = set(initial_nodes)
+                
+    #             while len(current_nodes) < self.min_pattern_size and neighbors:
+    #                 # Add next neighbor
+    #                 next_node = neighbors.pop(0)
+    #                 if next_node in current_nodes:
+    #                     continue
+                        
+    #                 current_nodes.add(next_node)
+    #                 current_pattern = graph.subgraph(list(current_nodes)).copy()
+                    
+    #                 # Set anchor if needed
+    #                 if self.node_anchored:
+    #                     for v in current_pattern.nodes:
+    #                         current_pattern.nodes[v]["anchor"] = 1 if v == seed_node else 0
+                
+    #             if len(current_pattern) < self.min_pattern_size:
+    #                 continue
+                    
+    #             # Compute pattern score
+    #             score = self._compute_pattern_score(current_pattern, anchor=seed_node)
+    #             initial_beam.append((score, current_pattern, graph_idx, seed_node))
+            
+    #         # Sort and keep top beam_width patterns
+    #         self.pattern_beams[self.current_size] = sorted(
+    #             initial_beam, key=lambda x: x[0])[:self.beam_width]
+    #         self.trials_completed += len(initial_beam)
+        
+    #     # Grow patterns
+    #     current_beam = self.pattern_beams[self.current_size]
+    #     if current_beam and self.current_size < self.max_pattern_size:
+    #         next_beam = self._grow_patterns(current_beam)
+            
+    #         if next_beam:
+    #             self.pattern_beams[self.current_size + 1] = next_beam
+        
+    #     # Record patterns from current beam
+    #     for score, pattern, graph_idx, seed_node in current_beam:
+    #         # Add to candidate patterns
+    #         self.cand_patterns[len(pattern)].append((score, pattern))
+            
+    #         # Track pattern counts by WL hash
+    #         pattern_hash = utils.wl_hash(pattern, node_anchored=self.node_anchored)
+    #         self.pattern_counts[len(pattern)][pattern_hash].append(pattern)
+            
+    #         # Save embedding for analysis if needed
+    #         if self.analyze:
+    #             with torch.no_grad():
+    #                 anchors = [seed_node] if self.node_anchored else None
+    #                 emb = self.model.emb_model(utils.batch_nx_graphs(
+    #                     [pattern], anchors=anchors)).squeeze(0)
+    #                 self.analyze_embs.append(emb.detach().cpu().numpy())
+        
+    #     # Move to next pattern size or wrap around
+    #     self.current_size += 1
+    #     if self.current_size > self.max_pattern_size:
+    #         self.current_size = self.min_pattern_size
     
     def step(self):
-        """Execute one step of beam search."""
+        """Execute one step of beam search (fully instrumented)."""
+        print(f"\n=== STEP {self.trials_completed}/{self.n_trials} ===")
+        print(f"[STEP] Current size: {self.current_size}, Beam size: {len(self.pattern_beams[self.current_size])}")
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        
-        # Initialize beam if needed
+
+        # 🔹 Beam initialization (seed-based)
         if not self.pattern_beams[self.current_size]:
-            # Sample seed nodes and create initial patterns
+            print(f"[STEP] ➕ Initializing beam for size {self.current_size}...")
             initial_beam = []
-            num_seeds = min(self.beam_width * 2, self.n_trials - self.trials_completed)
-            
-            for _ in range(num_seeds):
-                graph_idx, seed_node = self._sample_seed_node()
-                graph = self.dataset[graph_idx]
-                
-                # Create pattern from seed node and its 1-hop neighbors
-                neighbors = list(graph.neighbors(seed_node))
-                if not neighbors:
-                    continue
-                    
-                # Start with seed node and its first neighbor
-                initial_nodes = [seed_node, neighbors[0]]
-                pattern = graph.subgraph(initial_nodes).copy()
-                
-                if pattern.number_of_edges() == 0:
-                    continue
-                    
-                # Set anchor if needed
-                if self.node_anchored:
-                    for v in pattern.nodes:
-                        pattern.nodes[v]["anchor"] = 1 if v == seed_node else 0
-                
-                # Grow pattern to minimum size
-                current_pattern = pattern
-                current_nodes = set(initial_nodes)
-                
-                while len(current_nodes) < self.min_pattern_size and neighbors:
-                    # Add next neighbor
-                    next_node = neighbors.pop(0)
-                    if next_node in current_nodes:
+            num_seeds = min(self.beam_width * 2, max(2, self.n_trials - self.trials_completed))
+            print(f"[STEP] Attempting to sample {num_seeds} seeds...")
+
+            for attempt in range(num_seeds):
+                try:
+                    graph_idx, seed_node = self._sample_seed_node()
+                    graph = self.dataset[graph_idx]
+                    neighbors = list(graph.successors(seed_node)) if graph.is_directed() else list(graph.neighbors(seed_node))
+                    print(f"[STEP:seed {attempt}] Seed node {seed_node} has {len(neighbors)} outgoing neighbors")
+
+                    if not neighbors:
+                        print(f"  ⚠ Seed {seed_node} has no neighbors — skipping")
                         continue
-                        
-                    current_nodes.add(next_node)
-                    current_pattern = graph.subgraph(list(current_nodes)).copy()
-                    
-                    # Set anchor if needed
+
+                    # Build minimal pattern
+                    nodes = [seed_node]
+                    used_neighbors = 0
+                    while len(nodes) < self.min_pattern_size and used_neighbors < len(neighbors):
+                        cand = neighbors[used_neighbors]
+                        used_neighbors += 1
+                        if cand not in nodes:
+                            nodes.append(cand)
+                        if len(nodes) >= self.min_pattern_size:
+                            break
+
+                    if len(nodes) < self.min_pattern_size:
+                        print(f"  ⚠ Could not reach min size {self.min_pattern_size} from seed {seed_node} → skipping")
+                        continue
+
+                    pattern = graph.subgraph(nodes).copy()
+                    if pattern.number_of_edges() == 0:
+                        print(f"  ⚠ Pattern has no edges → skipping")
+                        continue
+
                     if self.node_anchored:
-                        for v in current_pattern.nodes:
-                            current_pattern.nodes[v]["anchor"] = 1 if v == seed_node else 0
-                
-                if len(current_pattern) < self.min_pattern_size:
-                    continue
-                    
-                # Compute pattern score
-                score = self._compute_pattern_score(current_pattern, anchor=seed_node)
-                initial_beam.append((score, current_pattern, graph_idx, seed_node))
-            
-            # Sort and keep top beam_width patterns
-            self.pattern_beams[self.current_size] = sorted(
-                initial_beam, key=lambda x: x[0])[:self.beam_width]
-            self.trials_completed += len(initial_beam)
-        
-        # Grow patterns
+                        for v in pattern.nodes:
+                            pattern.nodes[v]["anchor"] = 1 if v == seed_node else 0
+
+                    t0 = time.time()
+                    score = self._compute_pattern_score(pattern, anchor=seed_node)
+                    dt = time.time() - t0
+                    print(f"  ✓ Seed {seed_node} → pattern size {len(pattern)}, edges {pattern.number_of_edges()}, score={score:.2f} ({dt*1000:.1f} ms)")
+                    initial_beam.append((score, pattern, graph_idx, seed_node))
+
+                except Exception as e:
+                    print(f"  ❌ Seed {attempt} failed: {e}")
+                    import traceback; traceback.print_exc()
+
+            print(f"[STEP] Seed phase: generated {len(initial_beam)} candidates → pruning to {self.beam_width}")
+            self.pattern_beams[self.current_size] = sorted(initial_beam, key=lambda x: x[0])[:self.beam_width]
+
+            added = len(initial_beam)
+            self.trials_completed += added
+            print(f"[STEP] ➕ Added {added} trial(s) → total trials = {self.trials_completed}/{self.n_trials}")
+            if added == 0:
+                print(f"❗ No seeds succeeded — incrementing trial counter to avoid infinite loop")
+                self.trials_completed += 1  # 🔴 CRITICAL SAFETY NET
+
+        # 🔹 Beam growth
         current_beam = self.pattern_beams[self.current_size]
+        print(f"[STEP] Current beam size: {len(current_beam)}")
         if current_beam and self.current_size < self.max_pattern_size:
             next_beam = self._grow_patterns(current_beam)
-            
             if next_beam:
                 self.pattern_beams[self.current_size + 1] = next_beam
-        
-        # Record patterns from current beam
+                print(f"[STEP] ✅ Grew beam for size {self.current_size + 1} ({len(next_beam)} candidates)")
+            else:
+                print(f"[STEP] ❌ Failed to grow beam for size {self.current_size + 1}")
+
+        # 🔹 Record current beam
+        recorded = 0
         for score, pattern, graph_idx, seed_node in current_beam:
-            # Add to candidate patterns
-            self.cand_patterns[len(pattern)].append((score, pattern))
-            
-            # Track pattern counts by WL hash
-            pattern_hash = utils.wl_hash(pattern, node_anchored=self.node_anchored)
-            self.pattern_counts[len(pattern)][pattern_hash].append(pattern)
-            
-            # Save embedding for analysis if needed
-            if self.analyze:
-                with torch.no_grad():
-                    anchors = [seed_node] if self.node_anchored else None
-                    emb = self.model.emb_model(utils.batch_nx_graphs(
-                        [pattern], anchors=anchors)).squeeze(0)
-                    self.analyze_embs.append(emb.detach().cpu().numpy())
-        
-        # Move to next pattern size or wrap around
+            size = len(pattern)
+            self.cand_patterns[size].append((score, pattern))
+            h = utils.wl_hash(pattern, node_anchored=self.node_anchored)
+            self.pattern_counts[size][h].append(pattern)
+            recorded += 1
+        print(f"[STEP] Recorded {recorded} patterns from current beam")
+
+        # 🔹 Cycle sizes
         self.current_size += 1
         if self.current_size > self.max_pattern_size:
             self.current_size = self.min_pattern_size
-    
+            print(f"[STEP] 🔁 Wrapped around to size {self.current_size}")
+
+        # 🔴 Final safeguard: if no progress in 20 steps, break
+        if hasattr(self, '_last_progress') and self.trials_completed == self._last_progress:
+            self._stall_count = getattr(self, '_stall_count', 0) + 1
+        else:
+            self._stall_count = 0
+            self._last_progress = self.trials_completed
+
+        if self._stall_count >= 20:
+            print(f"\n❗❗ BEAM SEARCH STALLED FOR {self._stall_count} STEPS — forcing termination")
+            self.trials_completed = self.n_trials  # break loop
+            sys.stdout.flush()
+            return
+
+        sys.stdout.flush()  # ensu
     def finish_search(self):
         """Finish search and return identified patterns."""
         if self.analyze:
