@@ -1607,6 +1607,16 @@ def main():
         graph_stats = analyze_graph_for_streaming(graph, args)  
         use_streaming = graph_stats['use_streaming']  
         reason = graph_stats['reason']  
+
+        if getattr(args, 'force_standard', False):
+            use_streaming = False
+            reason = "Standard mode forced by user request (--force_standard)"
+            graph_stats['priority'] = "FORCED_STANDARD"
+            
+        if getattr(args, 'use_streaming', False):
+            use_streaming = True
+            reason = "Streaming mode forced by user request (--use_streaming)"
+            graph_stats['priority'] = "FORCED_STREAMING"  
         
         # Print analysis results  
         print("=" * 60)  
