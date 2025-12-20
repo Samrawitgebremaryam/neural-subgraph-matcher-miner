@@ -483,8 +483,6 @@ class HTMLTemplateProcessor:
             # Convert graph data to JSON with proper formatting
             json_data = json.dumps(graph_data, indent=8, ensure_ascii=False)
             
-            # Find the GRAPH_DATA placeholder and replace it
-            # Look for the pattern: const GRAPH_DATA = { ... };
             import re
             
             # Pattern to match the GRAPH_DATA assignment
@@ -497,14 +495,13 @@ class HTMLTemplateProcessor:
             if re.search(pattern, template_content, re.DOTALL):
                 injected_content = re.sub(pattern, replacement, template_content, flags=re.DOTALL)
             else:
-                # Fallback: look for simpler pattern
+                
                 simple_pattern = r'const GRAPH_DATA\s*=\s*[^;]+;'
                 if re.search(simple_pattern, template_content, re.DOTALL):
                     injected_content = re.sub(simple_pattern, replacement, template_content, flags=re.DOTALL)
                 else:
                     raise RuntimeError("Could not find GRAPH_DATA placeholder in template")
             
-            # Verify injection was successful
             if 'const GRAPH_DATA' not in injected_content:
                 raise RuntimeError("Data injection failed - GRAPH_DATA not found in result")
                 
@@ -528,7 +525,7 @@ class HTMLTemplateProcessor:
         metadata = graph_data['metadata']
         
         try:
-            # Extract characteristics for filename generation
+            
             node_count = metadata.get('nodeCount', 0)
             edge_count = metadata.get('edgeCount', 0)
             is_directed = metadata.get('isDirected', False)
@@ -638,17 +635,13 @@ class HTMLTemplateProcessor:
         Complete template processing workflow: read, inject, and write.
         """
         try:
-            # Step 1: Read template file
+            
             template_content = self.read_template()
-            
-            # Step 2: Inject graph data
-            injected_content = self.inject_graph_data(template_content, graph_data)
-            
-            # Step 3: Generate filename if not provided
+            injected_content = self.inject_graph_data(template_content, graph_data) 
             if output_filename is None:
                 output_filename = self.generate_filename(graph_data)
             
-            # Step 4: Write HTML file
+
             output_path = self.write_html_file(injected_content, output_filename, output_dir)
             
             return output_path

@@ -51,12 +51,9 @@ class LLMService:
         if not self._patterns_cache:
             self._load_patterns()
         
-        # pattern_key format expected: "size_X_rank_Y"
-        # The JSON structure is a list of objects where each object (except metadata) 
-        # has a 'metadata' field containing 'pattern_key'
+    
         
         instances = []
-        # Skip the first element if it's metadata (check 'type': 'graph_context')
         start_idx = 1 if self._patterns_cache and self._patterns_cache[0].get('type') == 'graph_context' else 0
         
         for item in self._patterns_cache[start_idx:]:
@@ -64,13 +61,6 @@ class LLMService:
                 # This item represents the pattern group, containing instances
                 return item.get('instances', [])
             
-            # Alternative: if the JSON is flat list of instances (less likely given file name, but possible)
-            # This logic depends on the exact structure observed in the previous steps.
-            # Based on previous `search` tools, the file seemed to have structure.
-            # Let's re-verify based on "pattern_key" grep results.
-            # The grep showed "pattern_key": "size_3_rank_1" inside objects.
-        
-        # Searching deeply if needed, but assuming top-level or second-level grouping
         return []
 
     def _find_pattern_data(self, pattern_key: str) -> Optional[Dict[str, Any]]:

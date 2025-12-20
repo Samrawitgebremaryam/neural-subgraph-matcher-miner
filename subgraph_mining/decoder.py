@@ -32,7 +32,7 @@ from subgraph_matching.config import parse_encoder
 import datetime  
 import uuid 
 
-# CRITICAL: Import visualizer at top level (not inside functions)
+
 try:
     from visualizer.visualizer import visualize_pattern_graph_ext, visualize_all_pattern_instances
     VISUALIZER_AVAILABLE = True
@@ -586,7 +586,7 @@ def save_and_visualize_all_instances(agent, args):
         if not hasattr(agent, 'counts'):
             logger.error("Agent has no 'counts' attribute!")
             return None
-         # Debug: Check if agent has dataset  
+         
         if hasattr(agent, 'dataset'):  
             logger.info(f"Agent has dataset attribute with {len(agent.dataset)} graphs")  
         else:  
@@ -612,7 +612,7 @@ def save_and_visualize_all_instances(agent, args):
         else:  
             logger.warning("Skipping graph_context - agent.dataset is empty or missing")  
         
-        # Debug: Force add graph_context even if empty  
+         
         if not graph_context:  
             graph_context = {  
                 'num_graphs': 0,  
@@ -716,8 +716,6 @@ def save_and_visualize_all_instances(agent, args):
                 
                 if VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
                     try:
-                        # visualize_pattern_graph_ext call removed to prevent duplicate/loose file generation
-                        # The representative pattern is now handled within visualize_all_pattern_instances
 
 
                         success = visualize_all_pattern_instances(
@@ -967,8 +965,6 @@ def pattern_growth(dataset, task, args):
     successful_visualizations = 0
     
     if VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
-        # Legacy loose file generation removed. 
-        # Representatives are now handled by save_and_visualize_all_instances inside pattern folders.
         pass
     else:
         logger.warning("⚠ Skipping representative visualization (visualizer not available)")
