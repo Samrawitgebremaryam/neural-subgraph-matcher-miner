@@ -50,13 +50,13 @@ jobs:
                 --dataset=directed.pkl \
                 --graph_type=directed \
                 --model_path=ckpt/model.pt \
-                --n_neighborhoods=10000 \
-                --n_trials=1000 \
+                --n_neighborhoods=5000 \
+                --n_trials=500 \
                 --min_pattern_size=3 \
                 --max_pattern_size=8 \
                 --search_strategy=greedy \
-                --min_neighborhood_size=20 \
-                --max_neighborhood_size=29 \
+                --min_neighborhood_size=10 \
+                --max_neighborhood_size=15 \
                 --node_anchored \
                 --out_path=/app/results/directed_patterns.pkl \
                 --visualize_instances \
