@@ -84,11 +84,13 @@ class LLMService:
              return "Error: LLM service not initialized. Check server logs for API key issues."
 
         context_str = ""
+        num_instances = "unknown" # Default if pattern data not found
         if pattern_key:
             pattern_data = self._find_pattern_data(pattern_key)
             if pattern_data:
                 metadata = pattern_data.get('metadata', {})
-                num_instances = metadata.get('count', 0)
+                # Use original_count if available (total occurrences including duplicates), otherwise fallback to count (unique)
+                num_instances = metadata.get('original_count', metadata.get('count', 0))
                 freq_score = metadata.get('frequency_score', 0)
                 
                 context_str = f"""
@@ -116,6 +118,11 @@ class LLMService:
         Your task is to interpret the provided graph motif (subgraph pattern) and answer the user's question.
         
         **CRITICAL FOCUS: NETWORK TOPOLOGY**
+        **CRITICAL FOCUS: NETWORK TOPOLOGY**
+        INSTRUCTION: If the user asks for a general explanation/summary of the pattern, OR asks about its frequency/count:
+        Begin your response by stating: 'This pattern occurred {num_instances} times in the sampled data.' (Do not mention the rank).
+        If the user asks specific questions about nodes/edges (e.g. "what is node 0?"), skip this frequency statement.
+
         Do not just list the data. Analyze the STRUCTURE based on what you see.
         - **Connectivity**: How are nodes connected? chains, stars, cycles, cliques?
         - **Topology**: Describe the topology based on the visual structure.

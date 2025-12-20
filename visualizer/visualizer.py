@@ -925,6 +925,7 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
                 anchor_info = " with Anchors" if has_anchors else ""
 
                 representative_data['metadata']['title'] = f"{graph_type} Pattern ({num_nodes} nodes, {num_edges} edges){anchor_info}"
+                representative_data['metadata']['pattern_key'] = pattern_key
 
                 representative_path = processor.process_template(
                     graph_data=representative_data,
@@ -959,6 +960,7 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
                     graph_data = extractor.extract_graph_data(pattern)
 
                     graph_data['metadata']['title'] = f"{pattern_key} - Instance {idx+1}/{count}"
+                    graph_data['metadata']['pattern_key'] = pattern_key
 
                     filename = f"instance_{idx+1:04d}.html"
 
