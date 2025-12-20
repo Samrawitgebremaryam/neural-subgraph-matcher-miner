@@ -71,12 +71,17 @@ jobs:
               echo 'Starting decoder run...'
               python -m subgraph_mining.decoder \
                 --dataset=amazon0302.pkl \
-                --n_trials=200 \
-                --node_anchored \
+                --model_path=ckpt/model.pt \
+                --n_neighborhoods=10000 \
+                --n_trials=1000 \
                 --min_pattern_size=3 \
                 --max_pattern_size=8 \
-                --out_path=/app/results/patterns_all_instances.pkl \
-                --graph_type=directed
+                --search_strategy=greedy \
+                --min_neighborhood_size=20 \
+                --max_neighborhood_size=29 \
+                --node_anchored \
+                --out_path=/app/results/amazon_patterns.pkl \
+                --visualize_instances
               echo 'Checking output directories...'
               ls -la /app/plots/cluster
               ls -la /app/results
