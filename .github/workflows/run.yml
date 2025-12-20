@@ -59,8 +59,7 @@ jobs:
                 --max_neighborhood_size=15 \
                 --node_anchored \
                 --out_path=/app/results/directed_patterns.pkl \
-                --visualize_instances \
-                --force_standard
+                --visualize_instances 
               echo 'Checking output directories...'
               ls -la /app/plots/cluster
               ls -la /app/results

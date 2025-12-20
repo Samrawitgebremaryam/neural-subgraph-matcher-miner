@@ -41,9 +41,7 @@ def parse_decoder(parser):
     
     # Streaming mode parameters  
     dec_parser.add_argument('--use_streaming', action='store_true',  
-                        help='Force streaming mode for large graphs')
-    dec_parser.add_argument('--force_standard', action='store_true',
-                        help='Force standard (non-streaming) mode regardless of graph size')  
+                        help='Force streaming mode for large graphs')  
     dec_parser.add_argument('--auto_streaming_threshold', type=int, default=100000,  
                         help='Auto-enable streaming for graphs larger than this')  
     dec_parser.add_argument('--streaming_workers', type=int, default=4,  
