@@ -888,7 +888,7 @@ class BeamSearchAgent(SearchAgent):
 
             print(f"  [grow #{idx}] Pattern size {len(pattern)}; seed={seed_node}; frontier size = {len(frontier)}")
             if len(frontier) == 0:
-                print(f"    ⚠ Empty frontier — cannot grow pattern #{idx}")
+                print(f"     Empty frontier — cannot grow pattern #{idx}")
                 continue
 
             for i, node in enumerate(frontier):
@@ -1036,7 +1036,7 @@ class BeamSearchAgent(SearchAgent):
                     print(f"[STEP:seed {attempt}] Seed node {seed_node} has {len(neighbors)} outgoing neighbors")
 
                     if not neighbors:
-                        print(f"  ⚠ Seed {seed_node} has no neighbors — skipping")
+                        print(f"   Seed {seed_node} has no neighbors — skipping")
                         continue
 
                     # Build minimal pattern
@@ -1051,12 +1051,12 @@ class BeamSearchAgent(SearchAgent):
                             break
 
                     if len(nodes) < self.min_pattern_size:
-                        print(f"  ⚠ Could not reach min size {self.min_pattern_size} from seed {seed_node} → skipping")
+                        print(f"   Could not reach min size {self.min_pattern_size} from seed {seed_node} → skipping")
                         continue
 
                     pattern = graph.subgraph(nodes).copy()
                     if pattern.number_of_edges() == 0:
-                        print(f"  ⚠ Pattern has no edges → skipping")
+                        print(f"   Pattern has no edges → skipping")
                         continue
 
                     if self.node_anchored:
@@ -1066,11 +1066,11 @@ class BeamSearchAgent(SearchAgent):
                     t0 = time.time()
                     score = self._compute_pattern_score(pattern, anchor=seed_node)
                     dt = time.time() - t0
-                    print(f"  ✓ Seed {seed_node} → pattern size {len(pattern)}, edges {pattern.number_of_edges()}, score={score:.2f} ({dt*1000:.1f} ms)")
+                    print(f"   Seed {seed_node} -> pattern size {len(pattern)}, edges {pattern.number_of_edges()}, score={score:.2f} ({dt*1000:.1f} ms)")
                     initial_beam.append((score, pattern, graph_idx, seed_node))
 
                 except Exception as e:
-                    print(f"  ❌ Seed {attempt} failed: {e}")
+                    print(f"   Seed {attempt} failed: {e}")
                     import traceback; traceback.print_exc()
 
             print(f"[STEP] Seed phase: generated {len(initial_beam)} candidates → pruning to {self.beam_width}")
@@ -1078,10 +1078,10 @@ class BeamSearchAgent(SearchAgent):
 
             added = len(initial_beam)
             self.trials_completed += added
-            print(f"[STEP] ➕ Added {added} trial(s) → total trials = {self.trials_completed}/{self.n_trials}")
+            print(f"[STEP] Added {added} trial(s) -> total trials = {self.trials_completed}/{self.n_trials}")
             if added == 0:
-                print(f"❗ No seeds succeeded — incrementing trial counter to avoid infinite loop")
-                self.trials_completed += 1  # 🔴 CRITICAL SAFETY NET
+                print(f"No seeds succeeded — incrementing trial counter to avoid infinite loop")
+                self.trials_completed += 1  #CRITICAL SAFETY NET
 
         # 🔹 Beam growth
         current_beam = self.pattern_beams[self.current_size]
@@ -1090,9 +1090,9 @@ class BeamSearchAgent(SearchAgent):
             next_beam = self._grow_patterns(current_beam)
             if next_beam:
                 self.pattern_beams[self.current_size + 1] = next_beam
-                print(f"[STEP] ✅ Grew beam for size {self.current_size + 1} ({len(next_beam)} candidates)")
+                print(f"[STEP]  Grew beam for size {self.current_size + 1} ({len(next_beam)} candidates)")
             else:
-                print(f"[STEP] ❌ Failed to grow beam for size {self.current_size + 1}")
+                print(f"[STEP]  Failed to grow beam for size {self.current_size + 1}")
 
         # 🔹 Record current beam
         recorded = 0
@@ -1110,7 +1110,7 @@ class BeamSearchAgent(SearchAgent):
             self.current_size = self.min_pattern_size
             print(f"[STEP] 🔁 Wrapped around to size {self.current_size}")
 
-        # 🔴 Final safeguard: if no progress in 20 steps, break
+        #  Final safeguard: if no progress in 20 steps, break
         if hasattr(self, '_last_progress') and self.trials_completed == self._last_progress:
             self._stall_count = getattr(self, '_stall_count', 0) + 1
         else:
@@ -1118,7 +1118,7 @@ class BeamSearchAgent(SearchAgent):
             self._last_progress = self.trials_completed
 
         if self._stall_count >= 20:
-            print(f"\n❗❗ BEAM SEARCH STALLED FOR {self._stall_count} STEPS — forcing termination")
+            print(f"\n BEAM SEARCH STALLED FOR {self._stall_count} STEPS — forcing termination")
             self.trials_completed = self.n_trials  # break loop
             sys.stdout.flush()
             return
