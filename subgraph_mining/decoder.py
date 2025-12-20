@@ -8,6 +8,7 @@ import sys
 from collections import deque
 from pathlib import Path
 import resource
+import math
 
 from deepsnap.batch import Batch
 import numpy as np
@@ -418,6 +419,54 @@ def _process_chunk(args_tuple):
         args.n_workers = original_n_workers
         return []
 
+def aggregate_streaming_results(all_chunk_results, args):
+    """
+    Aggregate pattern discoveries from all chunks to compute global frequencies.
+    """
+    global_counts = defaultdict(lambda: defaultdict(list))
+    
+    print("\n" + "="*70)
+    print("GLOBAL STRUCTURAL AGGREGATION")
+    print("="*70)
+    
+    total_raw_patterns = 0
+    for chunk_idx, chunk_patterns in enumerate(all_chunk_results):
+        if not chunk_patterns:
+            continue
+            
+        total_raw_patterns += len(chunk_patterns)
+        for pattern in chunk_patterns:
+            size = len(pattern)
+            wl = utils.wl_hash(pattern, node_anchored=args.node_anchored)
+            global_counts[size][wl].append(pattern)
+    
+    print(f"Collected {total_raw_patterns} raw discoveries across all chunks.")
+    
+    top_patterns = []
+    for size in range(args.min_pattern_size, args.max_pattern_size + 1):
+        if size not in global_counts:
+            continue
+        
+        sorted_patterns = sorted(
+            global_counts[size].items(),
+            key=lambda x: len(x[1]), 
+            reverse=True
+        )
+        
+        size_selection = sorted_patterns[:args.out_batch_size]
+        for wl_hash, instances in size_selection:
+            representative = random.choice(instances)
+            top_patterns.append(representative)
+            
+            # Log the global frequency
+            print(f"  Size {size}: Found {len(instances)} instances of pattern {str(wl_hash)[:8]}... (GLOBAL WINNER)")
+    
+    print("="*70)
+    print(f"Selected {len(top_patterns)} globally frequent patterns.")
+    print("="*70 + "\n")
+    
+    return top_patterns
+
 
 
 def pattern_growth_streaming(dataset, task, args):
@@ -503,27 +552,45 @@ def pattern_growth_streaming(dataset, task, args):
     chunk_args_obj = copy.copy(args)
     
     if total_chunks > 0:
-        # Scale trials
+       
         original_trials = getattr(args, 'n_trials', 1000)
-        scaled_trials = max(1, int(original_trials / total_chunks))
-        chunk_args_obj.n_trials = scaled_trials
-        
-        # Scale neighborhoods
         original_neighborhoods = getattr(args, 'n_neighborhoods', 10000)
-        scaled_neighborhoods = max(10, int(original_neighborhoods / total_chunks))
-        chunk_args_obj.n_neighborhoods = scaled_neighborhoods
         
-        print(f"\n[AUTO-SCALING] Distributed global parameters across {total_chunks} chunks:", flush=True)
-        print(f"  - n_trials: {original_trials} -> {scaled_trials} per chunk (Total: {scaled_trials * total_chunks})", flush=True)
-        print(f"  - n_neighborhoods: {original_neighborhoods} -> {scaled_neighborhoods} per chunk", flush=True)
+        sqrt_factor = math.sqrt(total_chunks)
+        base_trials_per_chunk = original_trials / sqrt_factor
+        base_neighs_per_chunk = original_neighborhoods / sqrt_factor
+        
+        print(f"\n[STREAMING-SMART-SCALING] Calculating optimal parameters for {total_chunks} chunks...", flush=True)
+        
+        new_chunk_args = []
+        total_executed_trials = 0
+        
+        for idx, chunk in enumerate(graph_chunks):
+            
+            chunk_nodes = chunk.number_of_nodes()
+            chunk_edges = chunk.number_of_edges()
+            chunk_avg_degree = chunk_edges / chunk_nodes if chunk_nodes > 0 else 0
+            
+            
+            density_adjustment = max(0.5, min(2.0, chunk_avg_degree / avg_degree)) if avg_degree > 0 else 1.0
+            
+            c_trials = max(50, int(base_trials_per_chunk * density_adjustment))
+            c_neighs = max(500, int(base_neighs_per_chunk * density_adjustment))
+            
+            c_args = copy.copy(chunk_args_obj)
+            c_args.n_trials = c_trials
+            c_args.n_neighborhoods = c_neighs
+            
+            new_chunk_args.append(([chunk], task, c_args, idx, total_chunks))
+            total_executed_trials += c_trials
 
-    # Wrap each chunk in a list for pattern_growth
-    chunk_args = [
-        ([chunk], task, chunk_args_obj, idx, total_chunks)
-        for idx, chunk in enumerate(graph_chunks)
-    ]
+        chunk_args = new_chunk_args
+        avg_v_trials = total_executed_trials / total_chunks
+        
+        print(f"  - Total Budget: {original_trials} (Standard) -> {total_executed_trials} (Adaptive Streaming)", flush=True)
+        print(f"  - Avg Chunk Intensity: {avg_v_trials:.1f} trials", flush=True)
+        print(f"  - Efficiency Gain: {original_trials * total_chunks / total_executed_trials if total_executed_trials > 0 else 0:.1f}x relative to full-intensity per chunk", flush=True)
 
-    # Estimate processing time
     avg_chunk_size = sum(c.number_of_nodes() for c in graph_chunks) / len(graph_chunks)
     estimated_time_per_chunk = 7.5  # seconds, based on your logs
     estimated_total_minutes = (total_chunks * estimated_time_per_chunk) / (
@@ -538,13 +605,10 @@ def pattern_growth_streaming(dataset, task, args):
     with mp.Pool(processes=args.streaming_workers) as pool:
         results = pool.map(_process_chunk, chunk_args)
 
-    # Aggregate results
-    print("\nAggregating patterns from all chunks...", flush=True)
-    for chunk_out_graphs in results:
-        if chunk_out_graphs:
-            all_discovered_patterns.extend(chunk_out_graphs)
+    print("\nPerforming global pattern aggregation...", flush=True)
+    all_discovered_patterns = aggregate_streaming_results(results, args)
 
-    print(f"Total patterns discovered: {len(all_discovered_patterns)}", flush=True)
+    print(f"Globally consistent patterns selected: {len(all_discovered_patterns)}", flush=True)
     return all_discovered_patterns
 
 
@@ -572,7 +636,6 @@ def visualize_pattern_graph(pattern, args, count_by_size):
             # Build label parts with only the 4 specified attributes in order: label, id, title, salesrank
             label_parts = []
 
-            # 1. Label (from group) - must appear first
             node_label = node_data.get("label", "unknown")
             if node_label is None:
                 node_label = "unknown"
