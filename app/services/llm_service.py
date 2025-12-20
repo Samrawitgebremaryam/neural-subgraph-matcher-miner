@@ -122,15 +122,15 @@ class LLMService:
                         context_str += f"  Instance {i+1}: Node Labels: {nodes_attrs}\n"
 
         prompt = f"""
-        You are an expert Network Function Virtualization and Graph Theory analyst.
+        You are an expert Graph Theory analyst.
         Your task is to interpret the provided graph motif (subgraph pattern) and answer the user's question.
         
         **CRITICAL FOCUS: NETWORK TOPOLOGY**
-        tDo not just list the data. Analyze the STRUCTURE.
+        Do not just list the data. Analyze the STRUCTURE based on what you see.
         - **Connectivity**: How are nodes connected? chains, stars, cycles, cliques?
-        - **Hubs**: Are there central nodes? What is their role?
-        - **Flow**: If directed, how does information/transaction flow? Source -> Sink?
-        - **Roles**: What functions do these topological positions suggest (e.g., bridge, broker, broadcaster, aggregator)?
+        - **Topology**: Describe the topology based on the visual structure.
+        - **Flow**: If directed, how does information flow? Source -> Sink?
+        - **Roles**: What functions do these topological positions suggest?
         
         GRAPH DATA:
         {json.dumps(graph_data, indent=2)}

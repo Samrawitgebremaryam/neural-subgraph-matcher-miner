@@ -73,3 +73,22 @@ thanks to its synchronization between an internal graph object (such as a Networ
 
 Detailed library requirements can be found in requirements.txt
 
+
+
+## Running the Interpreter
+
+To use the LLM-powered interpreter:
+
+1. **Export API Key**:
+   ```bash
+   export GEMINI_API_KEY="YOUR_KEY_HERE"
+   ```
+
+2. **Start Backend**:
+   ```bash
+   python3 -m app.main
+   ```
+
+3. **Open Visualizer**:
+   Open the generated motif interpreter HTML file in your browser to start the interpreter.
+
