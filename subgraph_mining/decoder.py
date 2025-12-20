@@ -29,6 +29,8 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
+import datetime  
+import uuid 
 
 # CRITICAL: Import visualizer at top level (not inside functions)
 try:
@@ -489,32 +491,148 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         logger.error(f"Error visualizing pattern graph: {e}")
         return False
 
-
-def save_and_visualize_all_instances(agent, args, representative_patterns=None):
+def save_instances_to_json(output_data, args, graph_context=None):  
+    json_results = []
+    # Add graph context as first item if provided  
+    if graph_context:  
+        json_results.append({  
+            'type': 'graph_context',  
+            'data': graph_context  
+        })
+        print("Added graph context to JSON results")   
+    else:  
+        print("No graph context provided for JSON results")
+    for pattern_key, pattern_info in output_data.items():  
+        for instance in pattern_info['instances']:  
+            pattern_data = {  
+                'nodes': [  
+                    {  
+                        'id': str(node),  
+                        'label': instance.nodes[node].get('label', ''),  
+                        'anchor': instance.nodes[node].get('anchor', 0),  
+                        **{k: v for k, v in instance.nodes[node].items()   
+                           if k not in ['label', 'anchor']}  
+                    }  
+                    for node in instance.nodes()  
+                ],  
+                'edges': [  
+                    {  
+                        'source': str(u),  
+                        'target': str(v),  
+                        'type': data.get('type', ''),  
+                        **{k: v for k, v in data.items() if k != 'type'}  
+                    }  
+                    for u, v, data in instance.edges(data=True)  
+                ],  
+                'metadata': {  
+                    'pattern_key': pattern_key,  
+                    'size': pattern_info['size'],  
+                    'rank': pattern_info['rank'],  
+                    'num_nodes': len(instance),  
+                    'num_edges': instance.number_of_edges(),  
+                    'is_directed': instance.is_directed(),  
+                    'original_count': pattern_info['original_count'],  
+                    'duplicates_removed': pattern_info['duplicates_removed'],  
+                    'frequency_score': pattern_info['frequency_score']  
+                }  
+            }
+         
+            json_results.append(pattern_data)  
+    base_path = os.path.splitext(args.out_path)[0]  
+    json_path = base_path + '_all_instances.json'  
+      
+    # Ensure directory exists    
+    os.makedirs(os.path.dirname(json_path), exist_ok=True)    
+        
+    with open(json_path, 'w') as f:      
+        json.dump(json_results, f, indent=2)      
+          
+    logger.info(f"JSON saved to: {json_path}")    
+        
+    return json_path  
+def update_run_index(json_path, args):  
+    """Update index file with run information"""  
+    index_file = "results/run_index.json"  
+      
+    # Load existing index or create new  
+    if os.path.exists(index_file):  
+        with open(index_file, 'r') as f:  
+            index = json.load(f)  
+    else:  
+        index = {"runs": []}  
+      
+    # Add current run  
+    run_info = {  
+        "timestamp": datetime.datetime.now().isoformat(),  
+        "filename": os.path.basename(json_path),  
+        "full_path": json_path,  
+        "dataset": args.dataset,  
+        "n_trials": args.n_trials,  
+        "graph_type": args.graph_type,  
+        "search_strategy": getattr(args, 'search_strategy', 'unknown')  
+    }  
+      
+    index["runs"].append(run_info)  
+      
+    # Save updated index  
+    with open(index_file, 'w') as f:  
+        json.dump(index, f, indent=2)
+def save_and_visualize_all_instances(agent, args):
     try:
         logger.info("="*70)
         logger.info("SAVING AND VISUALIZING ALL PATTERN INSTANCES")
         logger.info("="*70)
-
+        graph_context = {} 
         if not hasattr(agent, 'counts'):
             logger.error("Agent has no 'counts' attribute!")
             return None
-
+         # Debug: Check if agent has dataset  
+        if hasattr(agent, 'dataset'):  
+            logger.info(f"Agent has dataset attribute with {len(agent.dataset)} graphs")  
+        else:  
+            logger.error("Agent has no 'dataset' attribute!")  
+            
+        if hasattr(agent, 'dataset') and agent.dataset:    
+            total_nodes = sum(g.number_of_nodes() for g in agent.dataset)    
+            total_edges = sum(g.number_of_edges() for g in agent.dataset)    
+            graph_types = set('directed' if g.is_directed() else 'undirected' for g in agent.dataset)    
+            
+            graph_context = {    
+                'num_graphs': len(agent.dataset),    
+                'total_nodes': total_nodes,    
+                'total_edges': total_edges,    
+                'graph_types': list(graph_types),    
+                'sampling_trials': args.n_trials,    
+                'neighborhoods_sampled': getattr(args, 'n_neighborhoods', 0),    
+                'sample_method': getattr(args, 'sample_method', 'unknown'),    
+                'min_pattern_size': args.min_pattern_size,    
+                'max_pattern_size': args.max_pattern_size    
+            }  
+            logger.info(f"Graph context created: {graph_context}")  
+        else:  
+            logger.warning("Skipping graph_context - agent.dataset is empty or missing")  
+        
+        # Debug: Force add graph_context even if empty  
+        if not graph_context:  
+            graph_context = {  
+                'num_graphs': 0,  
+                'total_nodes': 0,  
+                'total_edges': 0,  
+                'graph_types': [],  
+                'sampling_trials': args.n_trials,  
+                'neighborhoods_sampled': getattr(args, 'n_neighborhoods', 0),  
+                'sample_method': getattr(args, 'sample_method', 'unknown'),  
+                'min_pattern_size': args.min_pattern_size,  
+                'max_pattern_size': args.max_pattern_size,  
+                'note': 'Dataset not available on agent'  
+            }  
+            logger.info("Using fallback graph_context")
         if not agent.counts:
             logger.warning("Agent.counts is empty - no patterns to save")
             return None
-
+        
         logger.info(f"Agent.counts has {len(agent.counts)} size categories")
-
-        # Build a mapping from WL hash to representative pattern
-        representative_map = {}
-        if representative_patterns:
-            logger.info(f"Building representative pattern mapping for {len(representative_patterns)} patterns...")
-            for rep_pattern in representative_patterns:
-                wl = utils.wl_hash(rep_pattern, node_anchored=args.node_anchored)
-                representative_map[wl] = rep_pattern
-            logger.info(f"  Mapped {len(representative_map)} representative patterns")
-
+        
         output_data = {}
         total_instances = 0
         total_unique_instances = 0
@@ -596,38 +714,29 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
                 else:
                     logger.info(f"  {pattern_key}: {count} instances")
                 
-                # Check if user wants to visualize instances
-                visualize_instances = getattr(args, 'visualize_instances', False)
-
-                if visualize_instances and VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
+                if VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
                     try:
-                        # Get the representative pattern for this WL hash
-                        representative_pattern = representative_map.get(wl_hash, None)
-
-                        if representative_pattern:
-                            logger.info(f"    Using decoder representative pattern for {pattern_key}")
-                        else:
-                            logger.warning(f"    No decoder representative found for {pattern_key}, will select from instances")
-
-                        logger.info(f"    Mode: Visualizing representative + {count} instances in subdirectory")
+                        # Pass pattern_key to the visualizer extension if supported
+                        from visualizer.visualizer import visualize_pattern_graph_ext
+                        
+                        # Visualize representative instance (first one)
+                        if unique_instances:
+                            rep_instance = unique_instances[0]
+                            visualize_pattern_graph_ext(rep_instance, args, count_by_size=None, pattern_key=pattern_key)
 
                         success = visualize_all_pattern_instances(
                             pattern_instances=unique_instances,
                             pattern_key=pattern_key,
                             count=count,
-                            output_dir=os.path.join("plots", "cluster"),
-                            representative_pattern=representative_pattern,
-                            visualize_instances=True
+                            output_dir=os.path.join("plots", "cluster")
                         )
                         if success:
                             total_visualizations += count
-                            logger.info(f"    ✓ Visualized representative + {count} instances in {pattern_key}/")
+                            logger.info(f"    ✓ Visualized {count} instances")
                         else:
                             logger.warning(f"    ✗ Visualization failed for {pattern_key}")
                     except Exception as e:
                         logger.error(f"    ✗ Visualization error: {e}")
-                elif not visualize_instances:
-                    logger.info(f"    Mode: Representatives will be visualized directly in plots/cluster/ (no subdirectories)")
                 else:
                     logger.warning(f"    ⚠ Skipping visualization (visualizer not available)")
         
@@ -641,6 +750,9 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
         with open(pkl_path, 'wb') as f:
             pickle.dump(output_data, f, protocol=pickle.HIGHEST_PROTOCOL)
         
+        # Add unique JSON saving  
+        json_path = save_instances_to_json(output_data, args, graph_context)    
+        logger.info(f"JSON saved to: {json_path}")    
         if os.path.exists(pkl_path):
             file_size = os.path.getsize(pkl_path) / 1024  # KB
             logger.info(f"✓ PKL file created successfully ({file_size:.1f} KB)")
@@ -842,8 +954,8 @@ def pattern_growth(dataset, task, args):
 
     if hasattr(agent, 'counts') and agent.counts:
         logger.info("\nSaving all pattern instances...")
-        pkl_path = save_and_visualize_all_instances(agent, args, out_graphs)
-
+        pkl_path = save_and_visualize_all_instances(agent, args)
+        
         if pkl_path:
             logger.info(f"✓ All instances saved to: {pkl_path}")
         else:
@@ -854,32 +966,23 @@ def pattern_growth(dataset, task, args):
 
     count_by_size = defaultdict(int)
     warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
-
+    
     successful_visualizations = 0
-
-    # Only create direct representative visualizations if --visualize_instances is NOT set
-    # (When --visualize_instances IS set, representatives are already in subdirectories)
-    visualize_instances = getattr(args, 'visualize_instances', False)
-
-    if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
-        logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
+    
+    if VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
+        logger.info("\nVisualizing representative patterns...")
         for pattern in out_graphs:
             if visualize_pattern_graph_ext(pattern, args, count_by_size):
                 successful_visualizations += 1
             count_by_size[len(pattern)] += 1
-
+        
         logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
-    elif visualize_instances:
-        logger.info("\nSkipping direct representative visualization (representatives already in subdirectories)")
     else:
         logger.warning("⚠ Skipping representative visualization (visualizer not available)")
 
     ensure_directories()
     
     logger.info(f"\nSaving representative patterns to: {args.out_path}")
-    
-    if not os.path.exists("results"):
-        os.makedirs("results")
     with open(args.out_path, "wb") as f:
         pickle.dump(out_graphs, f, protocol=pickle.HIGHEST_PROTOCOL)
     
@@ -929,46 +1032,6 @@ def pattern_growth(dataset, task, args):
     
     logger.info(f"✓ JSON version saved to: {json_path}")
     
-    json_results = []  
-    for pattern in out_graphs:  
-        pattern_data = {  
-            'nodes': [  
-                {  
-                    'id': str(node),  
-                    'label': pattern.nodes[node].get('label', ''),  
-                    'anchor': pattern.nodes[node].get('anchor', 0),  
-                    **{k: v for k, v in pattern.nodes[node].items()   
-                    if k not in ['label', 'anchor']}  
-                }  
-                for node in pattern.nodes()  
-            ],  
-            'edges': [  
-                {  
-                    'source': str(u),  
-                    'target': str(v),  
-                    'type': data.get('type', ''),  
-                    **{k: v for k, v in data.items() if k != 'type'}  
-                }  
-                for u, v, data in pattern.edges(data=True)  
-            ],  
-            'metadata': {  
-                'num_nodes': len(pattern),  
-                'num_edges': pattern.number_of_edges(),  
-                'is_directed': pattern.is_directed()  
-            }  
-        }  
-        json_results.append(pattern_data) 
-         
-    base_path = os.path.splitext(args.out_path)[0]  
-    if base_path.endswith('.json'):  
-        base_path = os.path.splitext(base_path)[0]  
-      
-    json_path = base_path + '.json'
-
-    
-    with open(json_path, 'w') as f:  
-        json.dump(json_results, f, indent=2)
-        
     return out_graphs
 
 

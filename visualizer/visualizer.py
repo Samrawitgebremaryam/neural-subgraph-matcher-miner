@@ -666,9 +666,9 @@ def process_html_template(graph_data: Dict[str, Any],
     processor = HTMLTemplateProcessor(template_path)
     return processor.process_template(graph_data, output_filename, output_dir)
 
-def visualize_pattern_graph_ext(pattern, args, count_by_size):
+def visualize_pattern_graph_ext(pattern, args, count_by_size, pattern_key=None):
     """
-    Main visualizer integration function matching existing API signature.
+    Main visualizer integration function matchin existing API signature.
     """
     import logging
     
@@ -701,6 +701,11 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size):
         try:
             extractor = GraphDataExtractor()
             graph_data = extractor.extract_graph_data(pattern)
+            
+            # Add pattern_key to metadata if provided
+            if pattern_key:
+                graph_data['metadata']['pattern_key'] = pattern_key
+                
             logger.info("Graph data extraction completed successfully")
         except Exception as e:
             logger.error(f"Graph data extraction failed: {str(e)}")
