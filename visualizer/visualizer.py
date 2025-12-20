@@ -945,9 +945,23 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
 
         success_count = 0
 
+        # Find representative index to avoid duplication
+        representative_idx = -1
+        if representative:
+             for idx, pattern in enumerate(pattern_instances):
+                 if pattern is representative:
+                     representative_idx = idx
+                     break
+
         # Only visualize instances if the flag is set
         if visualize_instances:
             for idx, pattern in enumerate(pattern_instances):
+                # Skip if this is the representative instance (already generated)
+                if idx == representative_idx:
+                    logger.info(f"  Skipping instance {idx+1} (it is the representative)")
+                    success_count += 1
+                    continue
+
                 try:
                     graph_data = extractor.extract_graph_data(pattern)
 
@@ -974,7 +988,8 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
 
         _create_pattern_index_html(pattern_key, count, pattern_dir,
                                    has_representative=(representative_data is not None),
-                                   has_instances=visualize_instances)
+                                   has_instances=visualize_instances,
+                                   representative_idx=representative_idx)
 
         if visualize_instances:
             logger.info(f"✓ Successfully created representative + {success_count}/{count} instance visualizations in {pattern_dir}")
@@ -988,7 +1003,7 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
         return False
 
 
-def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representative=False, has_instances=False):
+def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representative=False, has_instances=False, representative_idx=-1):
     """Create an index.html to browse all instances of a pattern with tabs for representative and instances."""
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1231,9 +1246,16 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
 """
 
         for i in range(1, count + 1):
+            href = f"instance_{i:04d}.html"
+            is_rep = False
+            
+            if (i - 1) == representative_idx:
+                href = "representative.html"
+                is_rep = True
+
             html_content += f"""
-                <div class="instance-card">
-                    <a href="instance_{i:04d}.html" target="_blank">Instance {i}</a>
+                <div class="instance-card" {'style="border-color: #2563eb; background: #eff6ff;"' if is_rep else ''}>
+                    <a href="{href}" target="_blank">Instance {i} {' (Rep)' if is_rep else ''}</a>
                     <div class="instance-number">#{i:04d}</div>
                 </div>
 """

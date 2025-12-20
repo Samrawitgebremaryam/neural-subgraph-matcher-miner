@@ -967,13 +967,9 @@ def pattern_growth(dataset, task, args):
     successful_visualizations = 0
     
     if VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
-        logger.info("\nVisualizing representative patterns...")
-        for pattern in out_graphs:
-            if visualize_pattern_graph_ext(pattern, args, count_by_size):
-                successful_visualizations += 1
-            count_by_size[len(pattern)] += 1
-        
-        logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
+        # Legacy loose file generation removed. 
+        # Representatives are now handled by save_and_visualize_all_instances inside pattern folders.
+        pass
     else:
         logger.warning("⚠ Skipping representative visualization (visualizer not available)")
 
