@@ -716,19 +716,16 @@ def save_and_visualize_all_instances(agent, args):
                 
                 if VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
                     try:
-                        # Pass pattern_key to the visualizer extension if supported
-                        from visualizer.visualizer import visualize_pattern_graph_ext
-                        
-                        # Visualize representative instance (first one)
-                        if unique_instances:
-                            rep_instance = unique_instances[0]
-                            visualize_pattern_graph_ext(rep_instance, args, count_by_size=None, pattern_key=pattern_key)
+                        # visualize_pattern_graph_ext call removed to prevent duplicate/loose file generation
+                        # The representative pattern is now handled within visualize_all_pattern_instances
+
 
                         success = visualize_all_pattern_instances(
                             pattern_instances=unique_instances,
                             pattern_key=pattern_key,
                             count=count,
-                            output_dir=os.path.join("plots", "cluster")
+                            output_dir=os.path.join("plots", "cluster"),
+                            visualize_instances=True
                         )
                         if success:
                             total_visualizations += count

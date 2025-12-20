@@ -72,9 +72,6 @@ of graph algorithms (such as subgraph operation and matching operation) to be pe
 thanks to its synchronization between an internal graph object (such as a NetworkX object) and the Pytorch Geometric Data object.
 
 Detailed library requirements can be found in requirements.txt
-
-
-
 ## Running the Interpreter
 
 To use the LLM-powered interpreter:
@@ -91,4 +88,7 @@ To use the LLM-powered interpreter:
 
 3. **Open Visualizer**:
    Open the generated motif interpreter HTML file in your browser to start the interpreter.
+
+
+
 
