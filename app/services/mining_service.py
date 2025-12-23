@@ -78,10 +78,17 @@ class MiningService:
             
             plots_cluster_dir = "/app/plots/cluster"
             if os.path.exists(plots_cluster_dir):
-                for filename in os.listdir(plots_cluster_dir):
-                    src_file = os.path.join(plots_cluster_dir, filename)
-                    if os.path.isfile(src_file):
-                        shutil.copy(src_file, os.path.join(shared_plots_dir, filename))
+                # Using shutil.copytree to handle subdirectories recursively
+                # We copy to a temporary sub-path then move items to avoid copytree destination error if dir exists
+                for item in os.listdir(plots_cluster_dir):
+                    s = os.path.join(plots_cluster_dir, item)
+                    d = os.path.join(shared_plots_dir, item)
+                    if os.path.isdir(s):
+                        if os.path.exists(d):
+                            shutil.rmtree(d)
+                        shutil.copytree(s, d)
+                    else:
+                        shutil.copy2(s, d)
             
             print("Results saved to shared volume: {}".format(shared_job_dir), flush=True)
             
