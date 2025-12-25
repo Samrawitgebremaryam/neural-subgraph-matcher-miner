@@ -449,6 +449,7 @@
             right: 20px;
             z-index: 1000;
         }
+
         #chat-widget {
             position: fixed;
             bottom: 20px;
@@ -458,6 +459,28 @@
             flex-direction: column;
             align-items: flex-start;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #api-key-container {
+            padding: 8px 16px;
+            background: #f1f5f9;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        #api-key-input {
+            flex: 1;
+            padding: 6px 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            font-size: 12px;
+            outline: none;
+        }
+
+        #api-key-input:focus {
+            border-color: #6366f1;
         }
 
         #chat-toggle-btn {
@@ -732,6 +755,10 @@
                 <span>Pattern Analyser</span>
                 <button class="chat-close" onclick="toggleChat()">×</button>
             </div>
+            <div id="api-key-container">
+                <input type="password" id="api-key-input" placeholder="Enter Gemini API Key"
+                    onchange="saveApiKey()">
+            </div>
             <div class="chat-messages" id="chat-messages">
                 <div class="message bot">
                     Hello! I'm your Pattern Analyst. I can help you understand the topological structure of this motif.
@@ -766,6 +793,19 @@
             if (window.classList.contains('visible')) {
                 document.getElementById('chat-input').focus();
             }
+            loadApiKey();
+        }
+
+        function saveApiKey() {
+            const key = document.getElementById('api-key-input').value;
+            localStorage.setItem('gemini_api_key', key);
+        }
+
+        function loadApiKey() {
+            const key = localStorage.getItem('gemini_api_key');
+            if (key) {
+                document.getElementById('api-key-input').value = key;
+            }
         }
 
         function handleKeyPress(event) {
@@ -778,6 +818,8 @@
             const input = document.getElementById('chat-input');
             const message = input.value.trim();
             const sendBtn = document.getElementById('chat-send');
+            const apiKeyInput = document.getElementById('api-key-input');
+            const apiKey = apiKeyInput.value.trim();
             const messagesContainer = document.getElementById('chat-messages');
 
             if (!message) return;
@@ -795,22 +837,23 @@
             scrollToBottom();
 
             try {
-                // Prepare API URL (assuming backend is on port 5000)
-                const apiUrl = 'http://localhost:5000/chat';
-
                 // Get pattern key if available
-                const patternKey = GRAPH_DATA.metadata && GRAPH_DATA.metadata.pattern_key ? GRAPH_DATA.metadata.pattern_key : null;
+                const patternKey = (typeof GRAPH_DATA !== 'undefined' && GRAPH_DATA.metadata && GRAPH_DATA.metadata.pattern_key) ? GRAPH_DATA.metadata.pattern_key : null;
+                const graphDataPayload = (typeof GRAPH_DATA !== 'undefined') ? GRAPH_DATA : {};
+
+                const payload = {
+                    graph_data: graphDataPayload,
+                    query: message,
+                    pattern_key: patternKey,
+                    api_key: apiKey
+                };
 
                 const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        graph_data: GRAPH_DATA,
-                        query: message,
-                        pattern_key: patternKey
-                    })
+                    body: JSON.stringify(payload)
                 });
 
                 // Remove typing indicator
@@ -883,6 +926,7 @@
                 .replace(/\n/g, '<br>')
                 .replace(/- (.*?)(<br>|$)/g, '• $1$2');
         }
+        const apiUrl = 'http://localhost:9000/chat';
         // Sample 7-node directed graph data
         const GRAPH_DATA = {
             "metadata": {

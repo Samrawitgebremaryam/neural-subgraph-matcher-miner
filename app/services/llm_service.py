@@ -56,12 +56,17 @@ class LLMService:
                 return item
         return None
 
-    def analyze_motif(self, graph_data: Dict[str, Any], user_query: str, pattern_key: Optional[str] = None) -> str:
+    def analyze_motif(self, graph_data: Dict[str, Any], user_query: str, pattern_key: Optional[str] = None, api_key: Optional[str] = None) -> str:
         """
         Analyze a motif using Gemini REST API, integrating graph structure and instance context.
         """
-        if not self.api_key:
-             return "Error: GEMINI_API_KEY not found. Please configure it in your environment."
+        """
+        Analyze a motif using Gemini REST API, integrating graph structure and instance context.
+        """
+        current_api_key = api_key if api_key else self.api_key
+
+        if not current_api_key:
+             return "Error: GEMINI_API_KEY not found. Please provide it in the interface or configure it in the environment."
 
         context_str = ""
         num_instances = "unknown"
@@ -117,7 +122,7 @@ class LLMService:
         """
         
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={current_api_key}"
             payload = {
                 "contents": [{
                     "parts": [{"text": prompt}]
