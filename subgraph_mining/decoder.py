@@ -430,7 +430,7 @@ def aggregate_streaming_results(chunk_output_tuples, args):
     global_counts = defaultdict(lambda: defaultdict(list))
     
     print("\n" + "="*70)
-    print("GLOBAL STRUCTURAL AGGREGATION & CONSOLIDATION")
+    print("GLOBAL LABEL-AWARE AGGREGATION & CONSOLIDATION")
     print("="*70)
     
     total_raw_patterns = 0
@@ -446,7 +446,8 @@ def aggregate_streaming_results(chunk_output_tuples, args):
                     total_raw_patterns += 1
                     # Use the NEW robust structure-only hash
                     # This corrects any local hash collisions/biases
-                    global_wl = utils.robust_wl_hash(instance, node_anchored=args.node_anchored)
+                    # Use the standard label-aware hash to match Standard Mode
+                    global_wl = utils.wl_hash(instance, node_anchored=args.node_anchored)
                     global_counts[size][global_wl].append(instance)
     
     print(f"Aggregated {total_raw_patterns} pattern instances across all chunks.")
@@ -632,7 +633,7 @@ def pattern_growth_streaming(dataset, task, args):
             mock_agent, 
             args, 
             all_discovered_patterns, 
-            hash_func=utils.robust_wl_hash
+            hash_func=utils.wl_hash
         )
 
     print(f"Globally consistent patterns selected: {len(all_discovered_patterns)}", flush=True)
