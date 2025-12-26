@@ -396,7 +396,7 @@ def _process_chunk(args_tuple):
     )
 
     try:
-        result = pattern_growth(chunk_dataset, task, args)
+        result, counts = pattern_growth(chunk_dataset, task, args, skip_visualization=True)
 
         elapsed = int(time.time() - start_time)
         print(
@@ -407,7 +407,9 @@ def _process_chunk(args_tuple):
         # Restore original n_workers
         args.n_workers = original_n_workers
         log_memory_usage(f"End Chunk {chunk_index+1}")
-        return result
+        
+        # Return both results AND counts for global aggregation
+        return result, counts
     except Exception as e:
         print(
             f"[{time.strftime('%H:%M:%S')}] ERROR in chunk {chunk_index+1}: {str(e)}",
@@ -417,36 +419,44 @@ def _process_chunk(args_tuple):
 
         traceback.print_exc()
         args.n_workers = original_n_workers
-        return []
+        return [], {}
 
-def aggregate_streaming_results(all_chunk_results, args):
+def aggregate_streaming_results(chunk_output_tuples, args):
     """
     Aggregate pattern discoveries from all chunks to compute global frequencies.
+    Uses 'robust_wl_hash' to re-bin instances based on pure structure.
     """
+    # Key: size -> robust_hash -> list of structurally identical instances
     global_counts = defaultdict(lambda: defaultdict(list))
     
     print("\n" + "="*70)
-    print("GLOBAL STRUCTURAL AGGREGATION")
+    print("GLOBAL STRUCTURAL AGGREGATION & CONSOLIDATION")
     print("="*70)
     
     total_raw_patterns = 0
-    for chunk_idx, chunk_patterns in enumerate(all_chunk_results):
-        if not chunk_patterns:
+    # Process tuples (out_graphs, agent_counts) from workers
+    for chunk_idx, (chunk_patterns, chunk_counts) in enumerate(chunk_output_tuples):
+        if not chunk_counts:
             continue
             
-        total_raw_patterns += len(chunk_patterns)
-        for pattern in chunk_patterns:
-            size = len(pattern)
-            wl = utils.wl_hash(pattern, node_anchored=args.node_anchored)
-            global_counts[size][wl].append(pattern)
+        # Re-hash all instances from all chunks using the robust global hash
+        for size, hash_map in chunk_counts.items():
+            for local_hash, instances in hash_map.items():
+                for instance in instances:
+                    total_raw_patterns += 1
+                    # Use the NEW robust structure-only hash
+                    # This corrects any local hash collisions/biases
+                    global_wl = utils.robust_wl_hash(instance, node_anchored=args.node_anchored)
+                    global_counts[size][global_wl].append(instance)
     
-    print(f"Collected {total_raw_patterns} raw discoveries across all chunks.")
+    print(f"Aggregated {total_raw_patterns} pattern instances across all chunks.")
     
     top_patterns = []
     for size in range(args.min_pattern_size, args.max_pattern_size + 1):
         if size not in global_counts:
             continue
         
+        # Rank by total global occurrences
         sorted_patterns = sorted(
             global_counts[size].items(),
             key=lambda x: len(x[1]), 
@@ -455,17 +465,17 @@ def aggregate_streaming_results(all_chunk_results, args):
         
         size_selection = sorted_patterns[:args.out_batch_size]
         for wl_hash, instances in size_selection:
+            # Pick a representative instance
             representative = random.choice(instances)
             top_patterns.append(representative)
             
-            # Log the global frequency
-            print(f"  Size {size}: Found {len(instances)} instances of pattern {str(wl_hash)[:8]}... (GLOBAL WINNER)")
+            print(f"  Size {size}: Global Support = {len(instances)} (Pattern {str(wl_hash)[:8]}...)")
     
     print("="*70)
-    print(f"Selected {len(top_patterns)} globally frequent patterns.")
+    print(f"Consolidated {len(top_patterns)} globally frequent patterns.")
     print("="*70 + "\n")
     
-    return top_patterns
+    return top_patterns, global_counts
 
 
 
@@ -606,7 +616,24 @@ def pattern_growth_streaming(dataset, task, args):
         results = pool.map(_process_chunk, chunk_args)
 
     print("\nPerforming global pattern aggregation...", flush=True)
-    all_discovered_patterns = aggregate_streaming_results(results, args)
+    all_discovered_patterns, merged_counts = aggregate_streaming_results(results, args)
+
+    # Step 3: Global Instance Visualization
+    # Create a MockAgent to hold the merged counts for visualization
+    class MockAgent:
+        def __init__(self, counts):
+            self.counts = counts
+
+    if getattr(args, 'visualize_instances', False):
+        print("\nSaving global pattern instances (consolidated across all chunks)...", flush=True)
+        mock_agent = MockAgent(merged_counts)
+        # Pass the robust structure-only hash to ensure alignment with merged_counts
+        save_and_visualize_all_instances(
+            mock_agent, 
+            args, 
+            all_discovered_patterns, 
+            hash_func=utils.robust_wl_hash
+        )
 
     print(f"Globally consistent patterns selected: {len(all_discovered_patterns)}", flush=True)
     return all_discovered_patterns
@@ -1024,7 +1051,7 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         return False
 
 
-def save_and_visualize_all_instances(agent, args, representative_patterns=None):
+def save_and_visualize_all_instances(agent, args, representative_patterns=None, hash_func=utils.wl_hash):
     try:
         logger.info("="*70)
         logger.info("SAVING AND VISUALIZING ALL PATTERN INSTANCES")
@@ -1045,7 +1072,8 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
         if representative_patterns:
             logger.info(f"Building representative pattern mapping for {len(representative_patterns)} patterns...")
             for rep_pattern in representative_patterns:
-                wl = utils.wl_hash(rep_pattern, node_anchored=args.node_anchored)
+                # Use the provided hash function (wl_hash for Standard, robust_wl_hash for Streaming)
+                wl = hash_func(rep_pattern, node_anchored=args.node_anchored)
                 representative_map[wl] = rep_pattern
             logger.info(f"  Mapped {len(representative_map)} representative patterns")
 
@@ -1210,8 +1238,12 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
         return None
 
 
-def pattern_growth(dataset, task, args):
-    """Main pattern mining function."""
+# Update signature
+def pattern_growth(dataset, task, args, skip_visualization=False):
+    """
+    Main pattern mining function.
+    skip_visualization: If True, skips local file saving and returns (patterns, counts) tuple.
+    """
     start_time = time.time()
     
     ensure_directories()
@@ -1423,6 +1455,13 @@ def pattern_growth(dataset, task, args):
     
     elapsed = time.time() - start_time
     logger.info(f"Total time: {elapsed:.2f}s ({int(elapsed)//60}m {int(elapsed)%60}s)")
+
+    if skip_visualization:
+        if hasattr(agent, 'counts'):
+             # Convert to dict to strip outer lambda (default_factory) which is unpicklable
+             return out_graphs, dict(agent.counts)
+        else:
+             return out_graphs, {}
 
     if hasattr(agent, 'counts') and agent.counts:
         logger.info("\nSaving all pattern instances...")

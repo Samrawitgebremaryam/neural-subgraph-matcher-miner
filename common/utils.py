@@ -73,6 +73,29 @@ def wl_hash(g, dim=64, node_anchored=False):
         vecs = newvecs
     return tuple(np.sum(vecs, axis=0))
 
+def robust_wl_hash(g, dim=None, node_anchored=False):
+    """
+    Robust structural hash using NetworkX's WL hash.
+    Designed SPECIFICALLY for Streaming Mode to ensure Structural Consistency.
+    Ignores node labels to ensure patterns are grouped purely by topology.
+    """
+    # Create a lightweight copy to strip attributes
+    g_clean = nx.Graph() if not g.is_directed() else nx.DiGraph()
+    g_clean.add_edges_from(g.edges())
+    
+    # Only preserve anchor if needed
+    node_attr = None
+    if node_anchored:
+        for n in g.nodes():
+            if g.nodes[n].get("anchor") == 1:
+                g_clean.nodes[n]["anchor"] = "1"
+            else:
+                g_clean.nodes[n]["anchor"] = "0"
+        node_attr = "anchor"
+
+    # Use NetworkX's stable WL hash implementation
+    return nx.weisfeiler_lehman_graph_hash(g_clean, node_attr=node_attr)
+
 def gen_baseline_queries_rand_esu(queries, targets, node_anchored=False):
     sizes = Counter([len(g) for g in queries])
     max_size = max(sizes.keys())
