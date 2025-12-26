@@ -100,7 +100,7 @@ def parse_decoder(parser):
         out_batch_size=3,
         node_anchored=True,
         memory_limit=1000000,
-        chunk_size=10000,  
+        chunk_size=50000,  
         auto_streaming_threshold=50000,  
         streaming_workers=4,  
         dense_graph_threshold=10.0,  
