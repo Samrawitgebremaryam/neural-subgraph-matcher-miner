@@ -93,8 +93,23 @@ def robust_wl_hash(g, dim=None, node_anchored=False):
                 g_clean.nodes[n]["anchor"] = "0"
         node_attr = "anchor"
 
-    # Use NetworkX's stable WL hash implementation
-    return nx.weisfeiler_lehman_graph_hash(g_clean, node_attr=node_attr)
+    try:
+        return nx.weisfeiler_lehman_graph_hash(g_clean, node_attr=node_attr)
+    except AttributeError:
+        import hashlib
+        
+        labels = {n: str(g_clean.nodes[n].get(node_attr, "")) for n in g_clean.nodes()}
+        
+        for _ in range(3):
+            new_labels = {}
+            for n in g_clean.nodes():
+                neigh_labels = sorted([labels[neigh] for neigh in g_clean.neighbors(n)])
+                combined = str(labels[n]) + "".join(neigh_labels)
+                new_labels[n] = hashlib.md5(combined.encode()).hexdigest()
+            labels = new_labels
+        
+        final_combined = "".join(sorted(labels.values()))
+        return hashlib.md5(final_combined.encode()).hexdigest()
 
 def gen_baseline_queries_rand_esu(queries, targets, node_anchored=False):
     sizes = Counter([len(g) for g in queries])
