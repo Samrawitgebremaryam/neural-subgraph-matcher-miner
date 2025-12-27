@@ -9,6 +9,7 @@ from collections import deque
 from pathlib import Path
 import resource
 import math
+import copy
 
 from deepsnap.batch import Batch
 import numpy as np
@@ -153,10 +154,14 @@ def analyze_graph_for_streaming(graph, args):
     # Memory estimation (Realistic: ~1.2KB per node + ~0.1KB per edge overhead)
     estimated_memory_mb = (num_nodes * 1.2 + num_edges * 0.1) / 1024
     
-    # Estimate chunks
-    chunk_size = getattr(args, 'chunk_size', 10000)
-    # If 1 component, chunks ~ nodes/chunk_size. If fragmented, max(chunks, components)
-    estimated_chunks = max(num_nodes // chunk_size, n_components) if n_components > 0 else 0
+    streaming_workers = getattr(args, 'streaming_workers', 4)
+    target_chunks = streaming_workers * 2
+    
+    recommended_chunk_size = num_nodes // target_chunks
+    
+    recommended_chunk_size = max(50000, min(recommended_chunk_size, 300000))
+
+    estimated_chunks = max(num_nodes // recommended_chunk_size, n_components) if n_components > 0 else 0
 
     # --- DECISION LOGIC ---
     use_streaming = False  
@@ -222,7 +227,8 @@ def analyze_graph_for_streaming(graph, args):
         "n_components": n_components,
         "connectivity_ratio": connectivity_ratio,
         "estimated_memory_mb": estimated_memory_mb,
-        "estimated_chunks": estimated_chunks
+        "estimated_chunks": estimated_chunks,
+        "recommended_chunk_size": recommended_chunk_size
     }
 
 
@@ -434,23 +440,34 @@ def aggregate_streaming_results(chunk_output_tuples, args):
     print("="*70)
     
     total_raw_patterns = 0
-    # Process tuples (out_graphs, agent_counts) from workers
+    seen_instances = defaultdict(set)
+    
     for chunk_idx, (chunk_patterns, chunk_counts) in enumerate(chunk_output_tuples):
         if not chunk_counts:
             continue
             
-        # Re-hash all instances from all chunks using the robust global hash
         for size, hash_map in chunk_counts.items():
             for local_hash, instances in hash_map.items():
                 for instance in instances:
+                    anchor_id = None
+                    if args.node_anchored:
+                        for n in instance.nodes():
+                            if instance.nodes[n].get("anchor") == 1:
+                                anchor_id = n
+                                break
+                    
+                    instance_signature = (anchor_id, frozenset(instance.nodes()))
+                    if instance_signature in seen_instances[size]:
+                        continue 
+                    
+                    seen_instances[size].add(instance_signature)
                     total_raw_patterns += 1
-                    # Use the NEW robust structure-only hash
-                    # This corrects any local hash collisions/biases
-                    # Use the standard label-aware hash to match Standard Mode
+                    
+                    # 2. Global Aggregation (Label-Aware to match Standard Mode)
                     global_wl = utils.wl_hash(instance, node_anchored=args.node_anchored)
                     global_counts[size][global_wl].append(instance)
     
-    print(f"Aggregated {total_raw_patterns} pattern instances across all chunks.")
+    print(f"Aggregated {total_raw_patterns} unique pattern instances (Deduplicated across overlaps).")
     
     top_patterns = []
     for size in range(args.min_pattern_size, args.max_pattern_size + 1):
@@ -559,58 +576,39 @@ def pattern_growth_streaming(dataset, task, args):
     all_discovered_patterns = []
     total_chunks = len(graph_chunks)
 
-    import copy
-    chunk_args_obj = copy.copy(args)
+    # Step 2: Adaptive Search Scaling & Parallel Search
+    total_nodes = sum(c.number_of_nodes() for c in graph_chunks)
+    base_n_trials = getattr(args, 'n_trials', 1000)
+    base_n_neighs = getattr(args, 'n_neighborhoods', 10000)
     
-    if total_chunks > 0:
-       
-        original_trials = getattr(args, 'n_trials', 1000)
-        original_neighborhoods = getattr(args, 'n_neighborhoods', 10000)
+    print(f"\n[STREAMING-ADAPTIVE] Normalizing search intensity for {total_chunks} chunks...", flush=True)
+    
+    chunk_args = []
+    total_executed_trials = 0
+    
+    for idx, chunk in enumerate(graph_chunks):
+        chunk_node_count = chunk.number_of_nodes()
         
         sqrt_factor = math.sqrt(total_chunks)
-        base_trials_per_chunk = original_trials / sqrt_factor
-        base_neighs_per_chunk = original_neighborhoods / sqrt_factor
+        proportional_trials = int((base_n_trials / sqrt_factor) * (chunk_node_count / (total_nodes / total_chunks)))
         
-        print(f"\n[STREAMING-SMART-SCALING] Calculating optimal parameters for {total_chunks} chunks...", flush=True)
+        c_trials = max(200, proportional_trials)
+        c_neighs = max(500, int(base_n_neighs / sqrt_factor))
         
-        new_chunk_args = []
-        total_executed_trials = 0
+        worker_args = copy.deepcopy(args)
+        worker_args.n_trials = c_trials
+        worker_args.n_neighborhoods = c_neighs
         
-        for idx, chunk in enumerate(graph_chunks):
-            
-            chunk_nodes = chunk.number_of_nodes()
-            chunk_edges = chunk.number_of_edges()
-            chunk_avg_degree = chunk_edges / chunk_nodes if chunk_nodes > 0 else 0
-            
-            
-            density_adjustment = max(0.5, min(2.0, chunk_avg_degree / avg_degree)) if avg_degree > 0 else 1.0
-            
-            c_trials = max(50, int(base_trials_per_chunk * density_adjustment))
-            c_neighs = max(500, int(base_neighs_per_chunk * density_adjustment))
-            
-            c_args = copy.copy(chunk_args_obj)
-            c_args.n_trials = c_trials
-            c_args.n_neighborhoods = c_neighs
-            
-            new_chunk_args.append(([chunk], task, c_args, idx, total_chunks))
-            total_executed_trials += c_trials
+        chunk_args.append(([chunk], task, worker_args, idx, total_chunks))
+        total_executed_trials += c_trials
 
-        chunk_args = new_chunk_args
-        avg_v_trials = total_executed_trials / total_chunks
-        
-        print(f"  - Total Budget: {original_trials} (Standard) -> {total_executed_trials} (Adaptive Streaming)", flush=True)
-        print(f"  - Avg Chunk Intensity: {avg_v_trials:.1f} trials", flush=True)
-        print(f"  - Efficiency Gain: {original_trials * total_chunks / total_executed_trials if total_executed_trials > 0 else 0:.1f}x relative to full-intensity per chunk", flush=True)
+    avg_v_trials = total_executed_trials / total_chunks
+    print(f"  - Scaling: Proportional + Sqrt floor applied.")
+    print(f"  - Total Budget: {base_n_trials} (Standard) -> {total_executed_trials} (Adaptive Streaming)", flush=True)
+    print(f"  - Avg Chunk Intensity: {avg_v_trials:.1f} trials", flush=True)
 
-    avg_chunk_size = sum(c.number_of_nodes() for c in graph_chunks) / len(graph_chunks)
-    estimated_time_per_chunk = 7.5  # seconds, based on your logs
-    estimated_total_minutes = (total_chunks * estimated_time_per_chunk) / (
-        60 * args.streaming_workers
-    )
-    print(
-        f"\nProcessing {total_chunks} chunks with {args.streaming_workers} workers...",
-        flush=True,
-    )
+    estimated_time_per_chunk = 7.5  # seconds
+    estimated_total_minutes = (total_chunks * estimated_time_per_chunk) / (60 * args.streaming_workers)
     print(f"Estimated time: {estimated_total_minutes:.1f} minutes", flush=True)
 
     with mp.Pool(processes=args.streaming_workers) as pool:
@@ -1723,10 +1721,13 @@ def main():
         print(f"Connectivity ratio: {graph_stats['connectivity_ratio']:.2f}")  
         print(f"Estimated memory: {int(graph_stats['estimated_memory_mb'])}MB")  
         print(f"Decision: {'STREAMING MODE' if use_streaming else 'STANDARD MODE'}")  
+        if use_streaming:
+            print(f"Calculated Chunk Size: {graph_stats['recommended_chunk_size']:,}")
         print(f"Reason: {reason}")  
         print("=" * 60)  
         
         if use_streaming:  
+            args.chunk_size = graph_stats['recommended_chunk_size']
             out_graphs = pattern_growth_streaming(dataset, task, args)  
         else:  
             out_graphs = pattern_growth(dataset, task, args)  
