@@ -401,8 +401,16 @@ def _process_chunk(args_tuple):
         flush=True,
     )
 
+    # Unpack the optional global context for scoring
+    global_precomputed_data = None
+    if len(args_tuple) > 5:
+        global_precomputed_data = args_tuple[5]
+
     try:
-        result, counts = pattern_growth(chunk_dataset, task, args, skip_visualization=True)
+        # Pass the global context to pattern_growth to ensure identical scoring
+        result, counts = pattern_growth(chunk_dataset, task, args, 
+                                        skip_visualization=True, 
+                                        precomputed_data=global_precomputed_data)
 
         elapsed = int(time.time() - start_time)
         print(
@@ -504,6 +512,23 @@ def pattern_growth_streaming(dataset, task, args):
     """
     graph = dataset[0]
 
+    if args.method_type == "end2end":
+        model = models.End2EndOrder(1, args.hidden_dim, args)
+    elif args.method_type == "mlp":
+        model = models.BaselineMLP(1, args.hidden_dim, args)
+    else:
+        model = models.OrderEmbedder(1, args.hidden_dim, args)
+    
+    model.to(utils.get_device())
+    model.eval()
+    model.load_state_dict(torch.load(args.model_path, map_location=utils.get_device()))
+    
+    global_precomputed_data = generate_target_embeddings(dataset, model, args)
+    global_precomputed_data = ([e.cpu() for e in global_precomputed_data[0]], global_precomputed_data[1])
+    
+    del model
+    torch.cuda.empty_cache()
+
     # Calculate graph properties
     num_nodes = graph.number_of_nodes()
     num_edges = graph.number_of_edges()
@@ -516,7 +541,6 @@ def pattern_growth_streaming(dataset, task, args):
 
     # Adaptive chunk sizing based on density
     if avg_degree > args.dense_graph_threshold:
-        # Dense graphs: use smaller chunks to avoid memory issues
         effective_chunk_size = min(args.chunk_size, 5000)
         print(
             f"Dense graph detected (avg degree > {args.dense_graph_threshold})",
@@ -599,7 +623,8 @@ def pattern_growth_streaming(dataset, task, args):
         worker_args.n_trials = c_trials
         worker_args.n_neighborhoods = c_neighs
         
-        chunk_args.append(([chunk], task, worker_args, idx, total_chunks))
+        # Inject the global scoring key into each worker's arguments
+        chunk_args.append(([chunk], task, worker_args, idx, total_chunks, global_precomputed_data))
         total_executed_trials += c_trials
 
     avg_v_trials = total_executed_trials / total_chunks
@@ -1237,8 +1262,59 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None, 
         return None
 
 
+def generate_target_embeddings(graphs, model, args):
+    """
+    Standardizes the neighborhood sampling and embedding generation process.
+    Used to ensure Streaming and Standard modes use the exact same 'Scoring Key'.
+    """
+    logger.info(f"Generating target embeddings for scoring (Global Context)...")
+    neighs, anchors = [], []
+    
+    if args.use_whole_graphs:
+        neighs = graphs
+    else:
+        if args.sample_method == "radial":
+            for i, graph in enumerate(graphs):
+                for j, node in enumerate(graph.nodes):
+                    neigh = list(nx.single_source_shortest_path_length(
+                        graph, node, cutoff=args.radius).keys())
+                    if args.subgraph_sample_size != 0:
+                        neigh = random.sample(neigh, min(len(neigh), args.subgraph_sample_size))
+                    
+                    if len(neigh) > 1:
+                        subgraph = graph.subgraph(neigh)
+                        if args.subgraph_sample_size != 0:
+                            subgraph = subgraph.subgraph(max(nx.connected_components(subgraph), key=len))
+                        
+                        mapping = {old: new for new, old in enumerate(subgraph.nodes())}
+                        subgraph = nx.relabel_nodes(subgraph, mapping)
+                        subgraph.add_edge(0, 0)
+                        neighs.append(subgraph)
+                        if args.node_anchored: anchors.append(0)
+                        
+        elif args.sample_method == "tree":
+            for j in range(args.n_neighborhoods):
+                graph, neigh = utils.sample_neigh(graphs, random.randint(
+                    args.min_neighborhood_size, args.max_neighborhood_size), args.graph_type)
+                neigh = graph.subgraph(neigh)
+                neigh = nx.convert_node_labels_to_integers(neigh)
+                neigh.add_edge(0, 0)
+                neighs.append(neigh)
+                if args.node_anchored: anchors.append(0)
+
+    embs = []
+    for i in range(len(neighs) // args.batch_size):
+        top = (i + 1) * args.batch_size
+        with torch.no_grad():
+            batch = utils.batch_nx_graphs(neighs[i * args.batch_size : top],
+                                          anchors=anchors if args.node_anchored else None)
+            emb = model.emb_model(batch).to(torch.device("cpu"))
+        embs.append(emb)
+    
+    return embs, neighs
+
 # Update signature
-def pattern_growth(dataset, task, args, skip_visualization=False):
+def pattern_growth(dataset, task, args, skip_visualization=False, precomputed_data=None):
     """
     Main pattern mining function.
     skip_visualization: If True, skips local file saving and returns (patterns, counts) tuple.
@@ -1286,90 +1362,15 @@ def pattern_growth(dataset, task, args, skip_visualization=False):
                     graph.nodes[node]["id"] = str(node)
         graphs.append(graph)
 
-    if args.use_whole_graphs:
-        neighs = graphs
+    # Use Global Context if provided, otherwise generate local context
+    if precomputed_data:
+        logger.info("Using provided Global Context (precomputed embeddings).")
+        embs, neighs = precomputed_data
     else:
-        anchors = []
-        if args.sample_method == "radial":
-            for i, graph in enumerate(graphs):
-                logger.info(f"Processing graph {i}")
-                for j, node in enumerate(graph.nodes):
-                    if len(dataset) <= 10 and j % 100 == 0:
-                        logger.debug(f"Graph {i}, node {j}")
-                    
-                    if args.use_whole_graphs:
-                        neigh = graph.nodes
-                    else:
-                        neigh = list(
-                            nx.single_source_shortest_path_length(
-                                graph, node, cutoff=args.radius
-                            ).keys()
-                        )
-                        if args.subgraph_sample_size != 0:
-                            neigh = random.sample(neigh, min(len(neigh),
-                                args.subgraph_sample_size))
-                    
-                    if len(neigh) > 1:
-                        subgraph = graph.subgraph(neigh)
-                        if args.subgraph_sample_size != 0:
-                            subgraph = subgraph.subgraph(
-                                max(nx.connected_components(subgraph), key=len)
-                            )
+        embs, neighs = generate_target_embeddings(graphs, model, args)
 
-                        # Preserve anchor and type attributes if added elsewhere
-                        orig_attrs = {
-                            n: subgraph.nodes[n].copy() for n in subgraph.nodes()
-                        }
-                        edge_attrs = {
-                            (u, v): subgraph.edges[u, v].copy()
-                            for u, v in subgraph.edges()
-                        }
 
-                        mapping = {old: new for new, old in enumerate(subgraph.nodes())}
-                        subgraph = nx.relabel_nodes(subgraph, mapping)
 
-                        for old, new in mapping.items():
-                            subgraph.nodes[new].update(orig_attrs[old])
-
-                        for (old_u, old_v), attrs in edge_attrs.items():
-                            subgraph.edges[mapping[old_u], mapping[old_v]].update(attrs)
-
-                        subgraph.add_edge(0, 0)
-                        neighs.append(subgraph)
-                        if args.node_anchored:
-                            anchors.append(0)
-        
-        elif args.sample_method == "tree":
-            start_time_sample = time.time()
-            for j in tqdm(range(args.n_neighborhoods)):
-                graph, neigh = utils.sample_neigh(
-                    graphs,
-                    random.randint(
-                        args.min_neighborhood_size, args.max_neighborhood_size
-                    ),
-                    args.graph_type,
-                )
-                neigh = graph.subgraph(neigh)
-                neigh = nx.convert_node_labels_to_integers(neigh)
-                neigh.add_edge(0, 0)
-                neighs.append(neigh)
-                if args.node_anchored:
-                    anchors.append(0)
-
-    embs = []
-    if len(neighs) % args.batch_size != 0:
-        logger.warning("Number of graphs not multiple of batch size")
-    
-    for i in range(len(neighs) // args.batch_size):
-        top = (i + 1) * args.batch_size
-        with torch.no_grad():
-            batch = utils.batch_nx_graphs(
-                neighs[i * args.batch_size : top],
-                anchors=anchors if args.node_anchored else None,
-            )
-            emb = model.emb_model(batch)
-            emb = emb.to(torch.device("cpu"))
-        embs.append(emb)
 
     if args.analyze:
         embs_np = torch.stack(embs).numpy()
