@@ -32,6 +32,8 @@ def parse_decoder(parser):
         help='number of search trials to run')
     dec_parser.add_argument('--out_batch_size', type=int,
         help='number of motifs to output per graph size')
+    dec_parser.add_argument('--memory_efficient', action="store_true",
+        help='whether to use memory efficient search')
     
     
     # Streaming mode parameters  
@@ -84,5 +86,6 @@ def parse_decoder(parser):
         out_batch_size=3,
         node_anchored=True,
         streaming_workers=4,
-        visualize_instances=False
+        visualize_instances=False,
+        memory_efficient=False
     )
