@@ -9,6 +9,35 @@ import os
 import re
 import logging
 import os
+import shutil
+
+def clear_visualizations(output_dir="plots/cluster", mode="flat"):
+    """
+    Clears old visualizations from the output directory to ensure consistency.
+    
+    Args:
+        output_dir: The directory containing the visualizations.
+        mode: "flat" to remove folders (size_X_rank_Y), "folder" to remove flat HTML files.
+    """
+    if not os.path.exists(output_dir):
+        return
+        
+    for item in os.listdir(output_dir):
+        item_path = os.path.join(output_dir, item)
+        if mode == "flat":
+            # Clear structured folders when switching to flat mode
+            if os.path.isdir(item_path) and item.startswith("size_") and "_rank_" in item:
+                try:
+                    shutil.rmtree(item_path)
+                except Exception as e:
+                    print(f"Failed to remove folder {item_path}: {e}")
+        elif mode == "folder":
+            # Clear flat descriptive files when switching to folder mode
+            if os.path.isfile(item_path) and item.endswith("_interactive.html"):
+                try:
+                    os.remove(item_path)
+                except Exception as e:
+                    print(f"Failed to remove file {item_path}: {e}")
 
 class GraphDataExtractor:
     """
@@ -720,6 +749,9 @@ def visualize_pattern_graph_ext(pattern, args, count_by_size, pattern_key=None):
             output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plots/cluster"))
             output_dir = os.path.abspath(output_dir)
             os.makedirs(output_dir, exist_ok=True)
+            
+            # Cleanup structured folders when in flat mode
+            clear_visualizations(output_dir, mode="flat")
 
             template_path = os.path.join(os.path.dirname(__file__), "template.html")
             processor = HTMLTemplateProcessor(template_path)
@@ -791,38 +823,39 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         # Build filename components
         components = []
         
-        # Graph type
+        # 1. Graph type (dir/undir)
         graph_type = "dir" if pattern.is_directed() else "undir"
         components.append(graph_type)
         
-        # Node and occurrence count
-        occurrence_count = count_by_size.get(num_nodes, 1) if count_by_size else 1
-        components.append(f"{num_nodes}-{occurrence_count}")
+        # 2. Size and Rank (size-rank)
+        # count_by_size is used as {size: rank} when called from decoder
+        rank = count_by_size.get(num_nodes, 1) if count_by_size else 1
+        components.append(f"{num_nodes}-{rank}")
         
-        # Node types
+        # 3. Node types
         node_types = sorted(set(
-            pattern.nodes[n].get('label', '') 
+            str(pattern.nodes[n].get('label', ''))
             for n in pattern.nodes() 
             if pattern.nodes[n].get('label', '')
         ))
         if node_types:
             components.append('nodes-' + '-'.join(node_types))
         
-        # Edge types
+        # 4. Edge types (simplified for naming)
         edge_types = sorted(set(
-            data.get('type', '') 
+            str(data.get('type', ''))
             for u, v, data in pattern.edges(data=True) 
             if data.get('type', '')
         ))
         if edge_types:
             components.append('edges-' + '-'.join(edge_types))
         
-        # Anchor nodes
+        # 5. Anchor nodes
         has_anchors = any(pattern.nodes[n].get('anchor', 0) == 1 for n in pattern.nodes())
         if has_anchors:
             components.append('anchored')
         
-        # Density category
+        # 6. Density category
         if edge_density > 0.5:
             components.append('very-dense')
         elif edge_density > 0.3:
@@ -830,13 +863,11 @@ def _generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int])
         else:
             components.append('sparse')
         
-        # Interactive indicator
+        # 7. Interactive indicator
         components.append('interactive')
         
-        # Join components
+        # Join components and sanitize
         filename = '_'.join(components)
-        
-        # Sanitize filename
         filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
         filename = re.sub(r'_+', '_', filename)
         
@@ -894,8 +925,20 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
         pattern_dir = os.path.join(output_dir, pattern_key)
         os.makedirs(pattern_dir, exist_ok=True)
 
-        logger.info(f"Visualizing {pattern_key}")
-
+        logger.info(f"Visualizing {pattern_key} (visualize_instances={visualize_instances})")
+        
+        # Cleanup pattern directory to remove stale instance files
+        if os.path.exists(pattern_dir):
+            import shutil
+            for item in os.listdir(pattern_dir):
+                item_path = os.path.join(pattern_dir, item)
+                if os.path.isfile(item_path) and item.startswith("instance_") and item.endswith(".html"):
+                    try:
+                        os.remove(item_path)
+                        # logger.debug(f"  Removed stale instance file: {item}")
+                    except Exception as e:
+                        logger.warning(f"  Failed to remove stale file {item_path}: {e}")
+        
         template_path = os.path.join(os.path.dirname(__file__), "template.html")
         if not os.path.exists(template_path):
             logger.error(f"Template not found: {template_path}")

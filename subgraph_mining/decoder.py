@@ -715,24 +715,47 @@ def save_and_visualize_all_instances(agent, args):
                 else:
                     logger.info(f"  {pattern_key}: {count} instances")
                 
-                if VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
+                if VISUALIZER_AVAILABLE:
                     try:
+                        from visualizer.visualizer import visualize_all_pattern_instances, visualize_pattern_graph_ext, clear_visualizations
+                        
+                        # Cleanup once at the start of the batch if needed (using rank=1 as trigger)
+                        if rank == 1 and size == args.min_pattern_size:
+                            output_dir = os.path.join("plots", "cluster")
+                            if args.visualize_instances:
+                                clear_visualizations(output_dir, mode="folder")
+                            else:
+                                clear_visualizations(output_dir, mode="flat")
 
-
-                        success = visualize_all_pattern_instances(
-                            pattern_instances=unique_instances,
-                            pattern_key=pattern_key,
-                            count=count,
-                            output_dir=os.path.join("plots", "cluster"),
-                            visualize_instances=args.visualize_instances
-                        )
+                        if args.visualize_instances:
+                            # Structured folder mode
+                            success = visualize_all_pattern_instances(
+                                pattern_instances=unique_instances,
+                                pattern_key=pattern_key,
+                                count=count,
+                                output_dir=os.path.join("plots", "cluster"),
+                                visualize_instances=True
+                            )
+                        else:
+                            # Flat descriptive file mode
+                            # Use first instance as representative (they are same WL hash)
+                            representative = unique_instances[0]
+                            success = visualize_pattern_graph_ext(
+                                pattern=representative,
+                                args=args,
+                                count_by_size={size: rank},
+                                pattern_key=pattern_key
+                            )
+                        
                         if success:
-                            total_visualizations += count
-                            logger.info(f"    ✓ Visualized {count} instances")
+                            total_visualizations += (count if args.visualize_instances else 1)
+                            logger.info(f"    ✓ Visualized {pattern_key}")
                         else:
                             logger.warning(f"    ✗ Visualization failed for {pattern_key}")
                     except Exception as e:
                         logger.error(f"    ✗ Visualization error: {e}")
+                        import traceback
+                        traceback.print_exc()
                 else:
                     logger.warning(f"    ⚠ Skipping visualization (visualizer not available)")
         
