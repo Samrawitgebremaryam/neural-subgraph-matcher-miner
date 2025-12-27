@@ -5,7 +5,8 @@ import time
 import os
 import pickle
 import sys
-from collections import deque
+import re
+from collections import deque, defaultdict
 from pathlib import Path
 import resource
 import math
@@ -400,8 +401,6 @@ def _process_chunk(args_tuple):
         f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} started chunk {chunk_index+1}/{total_chunks}",
         flush=True,
     )
-
-    # Unpack the optional global context for scoring
     global_precomputed_data = None
     if len(args_tuple) > 5:
         global_precomputed_data = args_tuple[5]
@@ -600,41 +599,24 @@ def pattern_growth_streaming(dataset, task, args):
     all_discovered_patterns = []
     total_chunks = len(graph_chunks)
 
-    # Step 2: Adaptive Search Scaling & Parallel Search
-    total_nodes = sum(c.number_of_nodes() for c in graph_chunks)
-    base_n_trials = getattr(args, 'n_trials', 1000)
-    base_n_neighs = getattr(args, 'n_neighborhoods', 10000)
-    
-    print(f"\n[STREAMING-ADAPTIVE] Normalizing search intensity for {total_chunks} chunks...", flush=True)
-    
+    # Step 2: Strict Search Budget (Parity Fix)
     chunk_args = []
     total_executed_trials = 0
+    total_chunks = len(graph_chunks)
+    
+    # Divide total budget equally to match Standard Mode search volume
+    trials_per_chunk = args.n_trials // total_chunks
     
     for idx, chunk in enumerate(graph_chunks):
-        chunk_node_count = chunk.number_of_nodes()
-        
-        sqrt_factor = math.sqrt(total_chunks)
-        proportional_trials = int((base_n_trials / sqrt_factor) * (chunk_node_count / (total_nodes / total_chunks)))
-        
-        c_trials = max(200, proportional_trials)
-        c_neighs = max(500, int(base_n_neighs / sqrt_factor))
-        
         worker_args = copy.deepcopy(args)
-        worker_args.n_trials = c_trials
-        worker_args.n_neighborhoods = c_neighs
+        worker_args.n_trials = trials_per_chunk
         
         # Inject the global scoring key into each worker's arguments
         chunk_args.append(([chunk], task, worker_args, idx, total_chunks, global_precomputed_data))
-        total_executed_trials += c_trials
+        total_executed_trials += trials_per_chunk
 
-    avg_v_trials = total_executed_trials / total_chunks
-    print(f"  - Scaling: Proportional + Sqrt floor applied.")
-    print(f"  - Total Budget: {base_n_trials} (Standard) -> {total_executed_trials} (Adaptive Streaming)", flush=True)
-    print(f"  - Avg Chunk Intensity: {avg_v_trials:.1f} trials", flush=True)
-
-    estimated_time_per_chunk = 7.5  # seconds
-    estimated_total_minutes = (total_chunks * estimated_time_per_chunk) / (60 * args.streaming_workers)
-    print(f"Estimated time: {estimated_total_minutes:.1f} minutes", flush=True)
+    print(f"\n[STREAMING-PARITY] Using strict trial budget: {trials_per_chunk} per chunk (Total: {total_executed_trials})", flush=True)
+    print(f"Estimated time: ~7 minutes (Matching Standard Mode)", flush=True)
 
     with mp.Pool(processes=args.streaming_workers) as pool:
         results = pool.map(_process_chunk, chunk_args)
