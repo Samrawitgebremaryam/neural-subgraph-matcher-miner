@@ -4,8 +4,6 @@ def parse_decoder(parser):
     dec_parser = parser.add_argument_group()
     
     # Sampling parameters
-    dec_parser.add_argument('--chunk_size', type=int, default=10000,
-                        help='Chunk size for processing large graphs')
     dec_parser.add_argument('--sample_method', type=str,
         help='"tree" or "radial" sampling method')
     dec_parser.add_argument('--radius', type=int,
@@ -35,25 +33,10 @@ def parse_decoder(parser):
     dec_parser.add_argument('--out_batch_size', type=int,
         help='number of motifs to output per graph size')
     
-    # Memory efficiency parameters
-    dec_parser.add_argument('--memory_efficient', action='store_true',
-        help='Use memory efficient search for large graphs')
     
     # Streaming mode parameters  
-    dec_parser.add_argument('--use_streaming', action='store_true',  
-                        help='Force streaming mode for large graphs')  
-    dec_parser.add_argument('--auto_streaming_threshold', type=int, default=100000,  
-                        help='Auto-enable streaming for graphs larger than this')  
     dec_parser.add_argument('--streaming_workers', type=int, default=4,  
-                        help='Number of parallel workers for chunk processing')  
-    dec_parser.add_argument('--dense_graph_threshold', type=float, default=10.0,  
-                        help='Average degree threshold for dense graphs')  
-    dec_parser.add_argument('--clustering_threshold', type=float, default=0.3,  
-                        help='Clustering coefficient threshold for modular graphs')
-    dec_parser.add_argument('--max_components_threshold', type=int, default=1000,
-                        help='Maximum number of components before chunking becomes inefficient')
-    dec_parser.add_argument('--chunk_overlap_ratio', type=float, default=0.1,
-                        help='Overlap ratio between chunks (0.0-0.5, default 0.1 = 10% overlap)')
+                        help='Number of parallel workers for parallel seed search')  
     
     # Beam search parameter
     parser.add_argument('--beam_width', type=int, default=5,
@@ -72,9 +55,6 @@ def parse_decoder(parser):
     dec_parser.add_argument('--graph_type', type=str,
         help='"directed" or "undirected" graph type')
 
-    # Visualization options
-    dec_parser.add_argument('--visualize_instances', action='store_true',
-        help='Generate visualizations for all pattern instances (default: only representatives)')
 
     # Set default values
     parser.set_defaults(
@@ -99,12 +79,5 @@ def parse_decoder(parser):
         search_strategy="greedy",
         out_batch_size=3,
         node_anchored=True,
-        memory_limit=1000000,
-        chunk_size=50000,
-        chunk_overlap=0.2,
-        auto_streaming_threshold=50000,  
-        streaming_workers=4,  
-        dense_graph_threshold=10.0,  
-        max_components_threshold=1000,
-        use_streaming=False
+        streaming_workers=4
     )

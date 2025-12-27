@@ -286,8 +286,9 @@ def run_greedy_trial(trial_idx):
     """
     global worker_model, worker_graphs, worker_embs, worker_args
     
-    random.seed(int.from_bytes(os.urandom(4), 'little') + trial_idx)
-    np.random.seed(int.from_bytes(os.urandom(4), 'little') + trial_idx)
+    random.seed(42 + trial_idx)
+    np.random.seed(42 + trial_idx)
+    torch.manual_seed(42 + trial_idx)
 
     ps = np.array([len(g) for g in worker_graphs], dtype=np.float32)
     ps /= np.sum(ps)
@@ -391,25 +392,16 @@ class GreedySearchAgent(SearchAgent):
         args_for_pool = range(n_trials)
 
         print(f"Starting {n_trials} search trials on {self.n_workers} cores...")
-        
-        # Handle single-threaded execution (for nested multiprocessing scenarios)  
-        if self.n_workers <= 1:
-            # Handle single-threaded execution (for nested multiprocessing scenarios)
-            # Initialize worker data once
-            init_greedy_worker(*init_args)
-            # Run trials sequentially
-            results = [run_greedy_trial(i) for i in tqdm(args_for_pool, total=n_trials)]
-        else:
-            # Use multiprocessing pool for parallel execution
-            with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
-                results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
+        with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
+            results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
+
         print("Aggregating results from all worker processes...")
         for trial_patterns, trial_counts in results:
             for size, scored_patterns in trial_patterns.items():
                 self.cand_patterns[size].extend(scored_patterns)
             for size, hashed_patterns in trial_counts.items():
-                for wl_hash, pattern_instances in hashed_patterns.items():
-                    self.counts[size][wl_hash].extend(pattern_instances)
+                for h, graphs in hashed_patterns.items():
+                    self.counts[size][h].extend(graphs)
 
         return self.finish_search()
 

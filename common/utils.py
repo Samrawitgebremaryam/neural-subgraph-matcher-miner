@@ -73,43 +73,6 @@ def wl_hash(g, dim=64, node_anchored=False):
         vecs = newvecs
     return tuple(np.sum(vecs, axis=0))
 
-def robust_wl_hash(g, dim=None, node_anchored=False):
-    """
-    Robust structural hash using NetworkX's WL hash.
-    Designed SPECIFICALLY for Streaming Mode to ensure Structural Consistency.
-    Ignores node labels to ensure patterns are grouped purely by topology.
-    """
-    # Create a lightweight copy to strip attributes
-    g_clean = nx.Graph() if not g.is_directed() else nx.DiGraph()
-    g_clean.add_edges_from(g.edges())
-    
-    # Only preserve anchor if needed
-    node_attr = None
-    if node_anchored:
-        for n in g.nodes():
-            if g.nodes[n].get("anchor") == 1:
-                g_clean.nodes[n]["anchor"] = "1"
-            else:
-                g_clean.nodes[n]["anchor"] = "0"
-        node_attr = "anchor"
-
-    try:
-        return nx.weisfeiler_lehman_graph_hash(g_clean, node_attr=node_attr)
-    except AttributeError:
-        import hashlib
-        
-        labels = {n: str(g_clean.nodes[n].get(node_attr, "")) for n in g_clean.nodes()}
-        
-        for _ in range(3):
-            new_labels = {}
-            for n in g_clean.nodes():
-                neigh_labels = sorted([labels[neigh] for neigh in g_clean.neighbors(n)])
-                combined = str(labels[n]) + "".join(neigh_labels)
-                new_labels[n] = hashlib.md5(combined.encode()).hexdigest()
-            labels = new_labels
-        
-        final_combined = "".join(sorted(labels.values()))
-        return hashlib.md5(final_combined.encode()).hexdigest()
 
 def gen_baseline_queries_rand_esu(queries, targets, node_anchored=False):
     sizes = Counter([len(g) for g in queries])
@@ -218,14 +181,6 @@ def gen_baseline_queries_mfinder(queries, targets, n_samples=10000,
             out.append(random.choice(neighs))
     return out
 
-device_cache = None
-def get_device():
-    global device_cache
-    if device_cache is None:
-        device_cache = torch.device("cuda") if torch.cuda.is_available() \
-            else torch.device("cpu")
-        #device_cache = torch.device("cpu")
-    return device_cache
 
 def parse_optimizer(parser):
     opt_parser = parser.add_argument_group()
