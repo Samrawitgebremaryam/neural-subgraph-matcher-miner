@@ -387,7 +387,7 @@ def make_plant_dataset(size):
 
 
 def _process_chunk(args_tuple):
-    chunk_dataset, task, args, chunk_index, total_chunks = args_tuple
+    chunk_dataset, task, args, chunk_index, total_chunks = args_tuple[:5]
     start_time = time.time()
 
     # Disable nested multiprocessing - set to 0 to prevent pool creation
