@@ -92,34 +92,43 @@ class MiningService:
             os.makedirs(shared_results_dir, exist_ok=True)
             os.makedirs(shared_plots_dir, exist_ok=True)
             
-            # Copy basic pattern results to shared volume
-            if os.path.exists(out_path):
-                shutil.copy(out_path, os.path.join(shared_results_dir, "patterns.pkl"))
-            if os.path.exists(json_path):
-                shutil.copy(json_path, os.path.join(shared_results_dir, "patterns.json"))
-            
-            # Copy instance results to shared volume AND persistent local path
-            persistent_results_dir = "/app/results"
+            # Persistent folders in submodule root (Standard location for LLM and local access)
+            persistent_results_dir = Config.RESULTS_FOLDER
+            persistent_plots_dir = os.path.join(Config.BASE_DIR, "plots", "cluster")
             os.makedirs(persistent_results_dir, exist_ok=True)
+            os.makedirs(persistent_plots_dir, exist_ok=True)
+
+            # 1. Handle Basic Pattern Results
+            if os.path.exists(out_path):
+                # Copy to shared results for download
+                shutil.copy(out_path, os.path.join(shared_results_dir, "patterns.pkl"))
+                # Copy to persistent results for latest job context (fixed name)
+                shutil.copy(out_path, os.path.join(persistent_results_dir, "patterns.pkl"))
             
+            if os.path.exists(json_path):
+                # Copy to shared results for download
+                shutil.copy(json_path, os.path.join(shared_results_dir, "patterns.json"))
+                # Copy to persistent results for latest job context (fixed name)
+                shutil.copy(json_path, os.path.join(persistent_results_dir, "patterns.json"))
+            
+            # 2. Handle Instance Results (CRITICAL for LLM)
             if os.path.exists(instance_json_path):
                 # Copy to shared results for download
                 shutil.copy(instance_json_path, os.path.join(shared_results_dir, "patterns_all_instances.json"))
-                # Copy to persistent results for LLM
+                # Copy to persistent results root for LLM context (fixed name)
                 shutil.copy(instance_json_path, os.path.join(persistent_results_dir, "patterns_all_instances.json"))
                 
             if os.path.exists(instance_pkl_path):
                 # Copy to shared results for download
                 shutil.copy(instance_pkl_path, os.path.join(shared_results_dir, "patterns_all_instances.pkl"))
-                # Copy to persistent results for LLM
+                # Copy to persistent results root (fixed name)
                 shutil.copy(instance_pkl_path, os.path.join(persistent_results_dir, "patterns_all_instances.pkl"))
 
-            plots_cluster_dir = "/app/plots/cluster"
-            if os.path.exists(plots_cluster_dir):
-                # Using shutil.copytree to handle subdirectories recursively
-                # We copy to a temporary sub-path then move items to avoid copytree destination error if dir exists
-                for item in os.listdir(plots_cluster_dir):
-                    s = os.path.join(plots_cluster_dir, item)
+            # 3. Handle Plots (Copy to shared volume for download)
+            if os.path.exists(persistent_plots_dir):
+                print("Syncing plots to shared volume for download...", flush=True)
+                for item in os.listdir(persistent_plots_dir):
+                    s = os.path.join(persistent_plots_dir, item)
                     d = os.path.join(shared_plots_dir, item)
                     if os.path.isdir(s):
                         if os.path.exists(d):
@@ -127,6 +136,10 @@ class MiningService:
                         shutil.copytree(s, d)
                     else:
                         shutil.copy2(s, d)
+
+            print("✓ Mining results saved to shared volume: {}".format(shared_job_dir), flush=True)
+            print("✓ Mining results persisted to submodule results/: {}".format(persistent_results_dir), flush=True)
+            print("✓ Mining plots persisted to submodule plots/: {}".format(persistent_plots_dir), flush=True)
             
             print("Results saved to shared volume: {}".format(shared_job_dir), flush=True)
             

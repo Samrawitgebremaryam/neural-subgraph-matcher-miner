@@ -28,15 +28,18 @@ class LLMService:
         self._load_patterns()
 
     def _load_patterns(self):
-        """Load patterns from the JSON file."""
+        """Load patterns from the JSON file in the submodule root."""
         try:
+            # Standard path: submodules/neural-subgraph-matcher-miner/results/patterns_all_instances.json
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             json_path = os.path.join(base_dir, "results", "patterns_all_instances.json")
+            
+            logger.info(f"Looking for patterns at: {json_path}")
             
             if os.path.exists(json_path):
                 with open(json_path, 'r') as f:
                     self._patterns_cache = json.load(f)
-                logger.info(f"Loaded patterns from {json_path}")
+                logger.info(f"Successfully loaded {len(self._patterns_cache)} patterns from {json_path}")
             else:
                 logger.warning(f"Patterns file not found at {json_path}")
                 self._patterns_cache = []
@@ -45,9 +48,12 @@ class LLMService:
             self._patterns_cache = []
 
     def _find_pattern_data(self, pattern_key: str) -> Optional[Dict[str, Any]]:
-        """Find the full pattern data object for a specific key."""
+        """Find the full pattern data object for a specific key, with forced reload."""
+        # Force reload from disk to ensure we have the results of the latest mining run
+        self._load_patterns()
+            
         if not self._patterns_cache:
-            self._load_patterns()
+            return None
             
         start_idx = 1 if self._patterns_cache and self._patterns_cache[0].get('type') == 'graph_context' else 0
         
