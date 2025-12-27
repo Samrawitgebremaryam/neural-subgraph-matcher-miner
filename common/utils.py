@@ -73,6 +73,10 @@ def wl_hash(g, dim=64, node_anchored=False):
         vecs = newvecs
     return tuple(np.sum(vecs, axis=0))
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 7daa4f7 (refactor: replace spatial chunking with neighborhood seed streaming)
 def gen_baseline_queries_rand_esu(queries, targets, node_anchored=False):
     sizes = Counter([len(g) for g in queries])
     max_size = max(sizes.keys())
@@ -180,14 +184,6 @@ def gen_baseline_queries_mfinder(queries, targets, n_samples=10000,
             out.append(random.choice(neighs))
     return out
 
-device_cache = None
-def get_device():
-    global device_cache
-    if device_cache is None:
-        device_cache = torch.device("cuda") if torch.cuda.is_available() \
-            else torch.device("cpu")
-        #device_cache = torch.device("cpu")
-    return device_cache
 
 def parse_optimizer(parser):
     opt_parser = parser.add_argument_group()
