@@ -1012,9 +1012,6 @@ def main():
     logger.info(f"Using dataset: {args.dataset}")
     logger.info(f"Graph type: {args.graph_type}")
 
-    # Use Hybrid Parallel Search (Neighborhood Streaming) if workers > 1
-    # This fulfills the "Batching/Neighborhood Partitioning" requirement
-    use_streaming = getattr(args, 'streaming_workers', 1) > 1
 
     if args.dataset.endswith('.pkl'):
         with open(args.dataset, 'rb') as f:
@@ -1101,6 +1098,36 @@ def main():
         dataset = make_plant_dataset(size)
         task = 'graph'
 
+    # Adaptive Mode Selector: Auto-switch between Standard and Streaming
+    total_nodes = 0
+    if isinstance(dataset, list):
+        total_nodes = sum(len(g) for g in dataset)
+    else:
+        # For TUDataset/PPI, we look at the total nodes across all graphs
+        total_nodes = sum(len(g) for g in dataset)
+
+    # Logic: Auto-enable streaming if graph is massive or trials are heavy 
+    threshold = getattr(args, 'auto_streaming_threshold', 100000)
+    
+    # Auto-decision logic
+    is_large_graph = total_nodes > threshold
+    is_complex_search = args.n_trials > 2000
+    has_multiple_workers = getattr(args, 'streaming_workers', 1) > 1
+
+    if has_multiple_workers:
+        if is_large_graph:
+            use_streaming = True
+            logger.info(f"Adaptive Mode: Detected large graph ({total_nodes} nodes). Enabling Streaming Mode. 🚀")
+        elif is_complex_search:
+            use_streaming = True
+            logger.info(f"Adaptive Mode: Detected high complexity ({args.n_trials} trials). Enabling Streaming Mode. 🚀")
+        else:
+            use_streaming = False
+            logger.info(f"Adaptive Mode: Small graph and low complexity. Using Standard Mode for efficiency. 🧵")
+    else:
+        use_streaming = False
+        logger.info("Mode: Standard (Single Worker explicitly requested). 🧵")
+
     logger.info("\nStarting pattern mining...")
     if use_streaming:
         print("\n" + "="*70)
@@ -1108,6 +1135,8 @@ def main():
         print("="*70)
         pattern_growth_streaming(dataset, task, args)
     else:
+        # PERFORMANCE: Explicitly set 1 worker to bypass parallel pool overhead
+        args.n_workers = 1 
         pattern_growth(dataset, task, args)
     logger.info("\n✓ Pattern mining complete!")
 

@@ -271,12 +271,19 @@ def init_greedy_worker(model, graphs, embs, args):
     This runs ONCE per worker and loads the large data into its global scope.
     """
     global worker_model, worker_graphs, worker_embs, worker_args
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} initializing...", flush=True)
-    worker_model = model
+    pid = os.getpid()
+    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid} initializing...", flush=True)
+    
+    device = utils.get_device()
+    worker_model = model.to(device)
     worker_graphs = graphs
-    worker_embs = embs
+    
+    # PERFORMANCE BOOST: Move all target embeddings to GPU ONCE during initialization
+    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid}: Moving {len(embs)} embedding batches to {device}...", flush=True)
+    worker_embs = [e.to(device) for e in embs]
+    
     worker_args = args
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} initialization complete.", flush=True)
+    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid} initialization complete.", flush=True)
 
 
 def run_greedy_trial(trial_idx):
@@ -328,13 +335,14 @@ def run_greedy_trial(trial_idx):
 
         for cand_node, cand_emb in zip(frontier, cand_embs):
             score = 0
+            # SUCCESS: Using pre-loaded GPU embeddings (no redundant transfers)
             for emb_batch in worker_embs:
                 with torch.no_grad():
                     if worker_args.method_type == "order":
-                        pred = worker_model.predict((emb_batch.to(utils.get_device()), cand_emb)).unsqueeze(1)
+                        pred = worker_model.predict((emb_batch, cand_emb)).unsqueeze(1)
                         score -= torch.sum(torch.argmax(worker_model.clf_model(pred), axis=1)).item()
                     elif worker_args.method_type == "mlp":
-                        pred = worker_model(emb_batch.to(utils.get_device()), cand_emb.unsqueeze(0).expand(len(emb_batch), -1))
+                        pred = worker_model(emb_batch, cand_emb.unsqueeze(0).expand(len(emb_batch), -1))
                         score += torch.sum(pred[:,0]).item()
 
             if score < best_score:
@@ -392,8 +400,17 @@ class GreedySearchAgent(SearchAgent):
         args_for_pool = range(n_trials)
 
         print(f"Starting {n_trials} search trials on {self.n_workers} cores...")
-        with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
-            results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
+        
+        # EFFICIENCY: Bypass Pool overhead for single-worker runs
+        if self.n_workers <= 1:
+            print("Running in serial mode (Bypassing Pool overhead)...")
+            init_greedy_worker(self.model, self.dataset, self.embs, self.args)
+            results = []
+            for i in tqdm(args_for_pool):
+                results.append(run_greedy_trial(i))
+        else:
+            with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
+                results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
 
         print("Aggregating results from all worker processes...")
         for trial_patterns, trial_counts in results:

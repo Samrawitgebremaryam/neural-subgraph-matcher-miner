@@ -39,6 +39,8 @@ def parse_decoder(parser):
     # Streaming mode parameters  
     dec_parser.add_argument('--streaming_workers', type=int, default=4,  
                         help='Number of parallel workers for parallel seed search')  
+    dec_parser.add_argument('--auto_streaming_threshold', type=int, default=100000,
+                        help='Graph size threshold (nodes) to automatically enable streaming mode')
     
     # Beam search parameter
     parser.add_argument('--beam_width', type=int, default=5,
@@ -86,6 +88,7 @@ def parse_decoder(parser):
         out_batch_size=3,
         node_anchored=True,
         streaming_workers=4,
+        auto_streaming_threshold=100000,
         visualize_instances=False,
         memory_efficient=False
     )
