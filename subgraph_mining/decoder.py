@@ -664,6 +664,28 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
                 else:
                     logger.info(f"  {pattern_key}: {count} instances")
                 
+                # Check if user wants to visualize instances
+                visualize_instances = getattr(args, 'visualize_instances', False)
+
+                if visualize_instances and VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
+                    try:
+                        # Get the representative pattern for this WL hash
+                        representative_pattern = representative_map.get(wl, None)
+
+                        success = visualize_all_pattern_instances(
+                            pattern_instances=unique_instances,
+                            pattern_key=pattern_key,
+                            count=count,
+                            output_dir=os.path.join("plots", "cluster"),
+                            representative_pattern=representative_pattern,
+                            visualize_instances=True
+                        )
+                        if success:
+                            total_visualizations += count
+                            logger.info(f"    ✓ Visualized representative + {count} instances in {pattern_key}/")
+                    except Exception as e:
+                        logger.error(f"    ✗ Visualization error for {pattern_key}: {e}")
+                
         
         ensure_directories()
         
@@ -959,6 +981,17 @@ def pattern_growth(dataset, task, args, skip_visualization=False, precomputed_da
     # Final output generation and visualization
     save_and_visualize_all_instances(agent, args, out_graphs)
     
+    # Save visualizations for representative patterns if not already done in subdirectories
+    visualize_instances = getattr(args, 'visualize_instances', False)
+    if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
+        logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
+        count_by_size = defaultdict(int)
+        successful_visualizations = 0
+        for pattern in out_graphs:
+            if visualize_pattern_graph_ext(pattern, args, count_by_size):
+                successful_visualizations += 1
+            count_by_size[len(pattern)] += 1
+        logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
     with open(json_path, 'w') as f:
         json.dump(json_results, f, indent=2)
     

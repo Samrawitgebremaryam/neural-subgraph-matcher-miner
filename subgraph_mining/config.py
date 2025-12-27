@@ -55,6 +55,10 @@ def parse_decoder(parser):
     dec_parser.add_argument('--graph_type', type=str,
         help='"directed" or "undirected" graph type')
 
+    # Visualization options
+    dec_parser.add_argument('--visualize_instances', action='store_true',
+        help='Generate visualizations for all pattern instances (default: only representatives)')
+
 
     # Set default values
     parser.set_defaults(
@@ -79,5 +83,6 @@ def parse_decoder(parser):
         search_strategy="greedy",
         out_batch_size=3,
         node_anchored=True,
-        streaming_workers=4
+        streaming_workers=4,
+        visualize_instances=False
     )
