@@ -105,12 +105,16 @@ class LLMService:
         Your task is to interpret the provided graph motif (subgraph pattern) and answer the user's question.
         
         **CRITICAL FOCUS: NETWORK TOPOLOGY**
-        INSTRUCTION: 
-        - Refer to the subject as "this motif", "this graph motif", or "the pattern".
-        - NEVER mention internal keys like {pattern_key if pattern_key else "the pattern ID"}, pattern IDs, or ranks. Focus on the structural relationships.
-        
-        If the user asks specific questions about nodes/edges (e.g. "what is node 0?"), focus on the topology.
+        **RESPONSE LENGTH GUIDANCE:**
+        - If the user asks a SIMPLE, DIRECT question (e.g., "how many instances?", "what is the count?"), provide a SHORT, DIRECT answer (1-2 sentences maximum).
+        - If the user asks for analysis, explanation, or interpretation, provide a detailed structural analysis.
 
+        INSTRUCTION FOR FREQUENCY MENTIONS:
+        - If the user ONLY asks about frequency/count: Answer directly with just the number.
+        - If the user asks for a general explanation/summary: Include 'This pattern occurred {num_instances} times in the sampled data.' in the middle of your response after describing the structure. Do not mention the rank.
+        - If the user asks specific questions about nodes/edges: Skip the frequency statement.
+
+        INSTRUCTION: When providing a detailed analysis (NOT for simple counts):
         Do not just list the data. Analyze the STRUCTURE based on what you see.
         - **Connectivity**: How are nodes connected? chains, stars, cycles, cliques?
         - **Topology**: Describe the topology based on the visual structure.

@@ -532,9 +532,10 @@ def save_instances_to_json(output_data, args, graph_context=None):
                     'num_nodes': len(instance),  
                     'num_edges': instance.number_of_edges(),  
                     'is_directed': instance.is_directed(),  
-                    'original_count': pattern_info['original_count'],  
+                    'original_count': pattern_info['count'],  # Use unique count as the "true" count
+                    'discovery_frequency': pattern_info['original_count'], # Keep raw hits as extra metadata
                     'duplicates_removed': pattern_info['duplicates_removed'],  
-                    'frequency_score': pattern_info['frequency_score']  
+                    'frequency_score': pattern_info['count'] / args.n_trials if args.n_trials > 0 else 0
                 }  
             }
          
@@ -692,11 +693,12 @@ def save_and_visualize_all_instances(agent, args):
                     'count': count,  
                     'instances': unique_instances,  
                     
-                    'original_count': original_count,  
+                    'original_count': count,      # Aligned with unique instances for user expectation
+                    'discovery_hits': original_count, # Raw discovery frequency
                     'duplicates_removed': duplicates,
                     'duplication_rate': duplicates / original_count if original_count > 0 else 0,
                     
-                    'frequency_score': original_count / args.n_trials if args.n_trials > 0 else 0,
+                    'frequency_score': count / args.n_trials if args.n_trials > 0 else 0,
                     'discovery_rate': original_count / count if count > 0 else 0,
                     
                     'mining_trials': args.n_trials,
