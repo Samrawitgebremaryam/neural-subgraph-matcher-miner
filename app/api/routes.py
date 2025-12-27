@@ -11,7 +11,12 @@ router = APIRouter()
 @router.post("/mine")
 def mine(
     graph_file: UploadFile = File(...), 
-    job_id: str = Form(None)
+    job_id: str = Form(None),
+    min_pattern_size: int = Form(5),
+    max_pattern_size: int = Form(10),
+    n_trials: int = Form(100),
+    graph_type: str = Form("directed"),
+    visualize_instances: bool = Form(False)
 ):
     # Validate file
     if not graph_file.filename:
@@ -28,7 +33,12 @@ def mine(
         # Run miner with job_id and parameters
         result = MiningService.run_miner(
             filepath, 
-            job_id=job_id
+            job_id=job_id,
+            min_pattern_size=min_pattern_size,
+            max_pattern_size=max_pattern_size,
+            n_trials=n_trials,
+            graph_type=graph_type,
+            visualize_instances=visualize_instances
         )
 
         # Construct response

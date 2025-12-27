@@ -5,6 +5,7 @@ import time
 import os
 import pickle
 import sys
+import traceback
 from pathlib import Path
 
 from deepsnap.batch import Batch
@@ -723,7 +724,7 @@ def save_and_visualize_all_instances(agent, args):
                             pattern_key=pattern_key,
                             count=count,
                             output_dir=os.path.join("plots", "cluster"),
-                            visualize_instances=True
+                            visualize_instances=args.visualize_instances
                         )
                         if success:
                             total_visualizations += count
@@ -1025,105 +1026,112 @@ def pattern_growth(dataset, task, args):
 
 
 def main():
-    ensure_directories()
+    try:
+        ensure_directories()
 
-    parser = argparse.ArgumentParser(description='Decoder arguments')
-    parse_encoder(parser)
-    parse_decoder(parser)
-    
-    args = parser.parse_args()
+        parser = argparse.ArgumentParser(description='Decoder arguments')
+        parse_encoder(parser)
+        parse_decoder(parser)
+        
+        args = parser.parse_args()
 
-    logger.info(f"Using dataset: {args.dataset}")
-    logger.info(f"Graph type: {args.graph_type}")
+        logger.info(f"Using dataset: {args.dataset}")
+        logger.info(f"Graph type: {args.graph_type}")
+        logger.info(f"Visualize instances: {getattr(args, 'visualize_instances', 'NOT FOUND')}")
 
-    if args.dataset.endswith('.pkl'):
-        with open(args.dataset, 'rb') as f:
-            data = pickle.load(f)
-            
-            if isinstance(data, (nx.Graph, nx.DiGraph)):
-                graph = data
+        if args.dataset.endswith('.pkl'):
+            with open(args.dataset, 'rb') as f:
+                data = pickle.load(f)
                 
-                if args.graph_type == "directed" and not graph.is_directed():
-                    logger.info("Converting undirected graph to directed...")
-                    graph = graph.to_directed()
-                elif args.graph_type == "undirected" and graph.is_directed():
-                    logger.info("Converting directed graph to undirected...")
-                    graph = graph.to_undirected()
-                
-                graph_type = "directed" if graph.is_directed() else "undirected"
-                logger.info(f"Using NetworkX {graph_type} graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
-                
-                sample_edges = list(graph.edges(data=True))[:3]
-                if sample_edges:
-                    logger.info("Sample edge attributes:")
-                    for u, v, attrs in sample_edges:
-                        direction_info = attrs.get('direction', f"{u} -> {v}" if graph.is_directed() else f"{u} -- {v}")
-                        edge_type = attrs.get('type', 'unknown')
-                        logger.info(f"  {direction_info} (type: {edge_type})")
-                
-            elif isinstance(data, dict) and 'nodes' in data and 'edges' in data:
-                if args.graph_type == "directed":
-                    graph = nx.DiGraph()
+                if isinstance(data, (nx.Graph, nx.DiGraph)):
+                    graph = data
+                    
+                    if args.graph_type == "directed" and not graph.is_directed():
+                        logger.info("Converting undirected graph to directed...")
+                        graph = graph.to_directed()
+                    elif args.graph_type == "undirected" and graph.is_directed():
+                        logger.info("Converting directed graph to undirected...")
+                        graph = graph.to_undirected()
+                    
+                    graph_type = "directed" if graph.is_directed() else "undirected"
+                    logger.info(f"Using NetworkX {graph_type} graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
+                    
+                    sample_edges = list(graph.edges(data=True))[:3]
+                    if sample_edges:
+                        logger.info("Sample edge attributes:")
+                        for u, v, attrs in sample_edges:
+                            direction_info = attrs.get('direction', f"{u} -> {v}" if graph.is_directed() else f"{u} -- {v}")
+                            edge_type = attrs.get('type', 'unknown')
+                            logger.info(f"  {direction_info} (type: {edge_type})")
+                    
+                elif isinstance(data, dict) and 'nodes' in data and 'edges' in data:
+                    if args.graph_type == "directed":
+                        graph = nx.DiGraph()
+                    else:
+                        graph = nx.Graph()
+                    graph.add_nodes_from(data['nodes'])
+                    graph.add_edges_from(data['edges'])
+                    logger.info(f"Created {args.graph_type} graph from dict format with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
                 else:
-                    graph = nx.Graph()
-                graph.add_nodes_from(data['nodes'])
-                graph.add_edges_from(data['edges'])
-                logger.info(f"Created {args.graph_type} graph from dict format with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
-            else:
-                raise ValueError(f"Unknown pickle format. Expected NetworkX graph or dict with 'nodes'/'edges' keys, got {type(data)}")
-                
-        dataset = [graph]
-        task = 'graph'
-    
-    elif args.dataset == 'enzymes':
-        dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
-        task = 'graph'
-    elif args.dataset == 'cox2':
-        dataset = TUDataset(root='/tmp/cox2', name='COX2')
-        task = 'graph'
-    elif args.dataset == 'reddit-binary':
-        dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
-        task = 'graph'
-    elif args.dataset == 'dblp':
-        dataset = TUDataset(root='/tmp/dblp', name='DBLP_v1')
-        task = 'graph-truncate'
-    elif args.dataset == 'coil':
-        dataset = TUDataset(root='/tmp/coil', name='COIL-DEL')
-        task = 'graph'
-    elif args.dataset.startswith('roadnet-'):
-        graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
-        with open("data/{}.txt".format(args.dataset), "r") as f:
-            for row in f:
-                if not row.startswith("#"):
-                    a, b = row.split("\t")
+                    raise ValueError(f"Unknown pickle format. Expected NetworkX graph or dict with 'nodes'/'edges' keys, got {type(data)}")
+                    
+            dataset = [graph]
+            task = 'graph'
+        
+        elif args.dataset == 'enzymes':
+            dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
+            task = 'graph'
+        elif args.dataset == 'cox2':
+            dataset = TUDataset(root='/tmp/cox2', name='COX2')
+            task = 'graph'
+        elif args.dataset == 'reddit-binary':
+            dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
+            task = 'graph'
+        elif args.dataset == 'dblp':
+            dataset = TUDataset(root='/tmp/dblp', name='DBLP_v1')
+            task = 'graph-truncate'
+        elif args.dataset == 'coil':
+            dataset = TUDataset(root='/tmp/coil', name='COIL-DEL')
+            task = 'graph'
+        elif args.dataset.startswith('roadnet-'):
+            graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
+            with open("data/{}.txt".format(args.dataset), "r") as f:
+                for row in f:
+                    if not row.startswith("#"):
+                        a, b = row.split("\t")
+                        graph.add_edge(int(a), int(b))
+            dataset = [graph]
+            task = 'graph'
+        elif args.dataset == "ppi":
+            dataset = PPI(root="/tmp/PPI")
+            task = 'graph'
+        elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
+            fn = {"diseasome": "bio-diseasome.mtx",
+                "usroads": "road-usroads.mtx",
+                "mn-roads": "mn-roads.mtx",
+                "infect": "infect-dublin.edges"}
+            graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
+            with open("data/{}".format(fn[args.dataset]), "r") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    a, b = line.strip().split(" ")
                     graph.add_edge(int(a), int(b))
-        dataset = [graph]
-        task = 'graph'
-    elif args.dataset == "ppi":
-        dataset = PPI(root="/tmp/PPI")
-        task = 'graph'
-    elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
-        fn = {"diseasome": "bio-diseasome.mtx",
-            "usroads": "road-usroads.mtx",
-            "mn-roads": "mn-roads.mtx",
-            "infect": "infect-dublin.edges"}
-        graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
-        with open("data/{}".format(fn[args.dataset]), "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                a, b = line.strip().split(" ")
-                graph.add_edge(int(a), int(b))
-        dataset = [graph]
-        task = 'graph'
-    elif args.dataset.startswith('plant-'):
-        size = int(args.dataset.split("-")[-1])
-        dataset = make_plant_dataset(size)
-        task = 'graph'
+            dataset = [graph]
+            task = 'graph'
+        elif args.dataset.startswith('plant-'):
+            size = int(args.dataset.split("-")[-1])
+            dataset = make_plant_dataset(size)
+            task = 'graph'
 
-    logger.info("\nStarting pattern mining...")
-    pattern_growth(dataset, task, args)
-    logger.info("\n✓ Pattern mining complete!")
+        logger.info("\nStarting pattern mining...")
+        pattern_growth(dataset, task, args)
+        logger.info("\n✓ Pattern mining complete!")
+
+    except Exception as e:
+        print(f"FATAL ERROR in main: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

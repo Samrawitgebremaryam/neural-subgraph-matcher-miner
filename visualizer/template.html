@@ -756,8 +756,7 @@
                 <button class="chat-close" onclick="toggleChat()">×</button>
             </div>
             <div id="api-key-container">
-                <input type="password" id="api-key-input" placeholder="Enter Gemini API Key"
-                    onchange="saveApiKey()">
+                <input type="password" id="api-key-input" placeholder="Enter Gemini API Key" onchange="saveApiKey()">
             </div>
             <div class="chat-messages" id="chat-messages">
                 <div class="message bot">
@@ -926,7 +925,7 @@
                 .replace(/\n/g, '<br>')
                 .replace(/- (.*?)(<br>|$)/g, '• $1$2');
         }
-        const apiUrl = 'http://localhost:9000/chat';
+        const apiUrl = 'http://localhost:9002/chat';
         // Sample 7-node directed graph data
         const GRAPH_DATA = {
             "metadata": {
