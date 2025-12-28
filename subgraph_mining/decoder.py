@@ -214,7 +214,7 @@ def _process_chunk(args_tuple):
 
 #  Optimized streaming entry point
 def pattern_growth_streaming(dataset, task, args):
-    \"\"\"Entry point for batch processing mode.\"\"\"
+    """Entry point for batch processing mode."""
     if args.method_type == "end2end":
         model = models.End2EndOrder(1, args.hidden_dim, args)
     elif args.method_type == "mlp":

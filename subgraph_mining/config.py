@@ -4,6 +4,8 @@ def parse_decoder(parser):
     dec_parser = parser.add_argument_group()
     
     # Sampling parameters
+    dec_parser.add_argument('--chunk_size', type=int, default=10000,
+                        help='Chunk size for processing large graphs')
     dec_parser.add_argument('--sample_method', type=str,
         help='"tree" or "radial" sampling method')
     dec_parser.add_argument('--radius', type=int,
@@ -32,16 +34,10 @@ def parse_decoder(parser):
         help='number of search trials to run')
     dec_parser.add_argument('--out_batch_size', type=int,
         help='number of motifs to output per graph size')
-    dec_parser.add_argument('--memory_efficient', action="store_true",
-        help='whether to use memory efficient search')
     
-    
-    # Streaming mode parameters  
-    dec_parser.add_argument('--streaming_workers', type=int, default=4,  
-                        help='Number of parallel workers for parallel seed search')  
-    dec_parser.add_argument('--auto_streaming_threshold', type=int, default=100000,
-                        help='Graph size threshold (nodes) to automatically enable streaming mode')
-    
+    # Memory efficiency parameters
+    dec_parser.add_argument('--memory_efficient', action='store_true',
+        help='Use memory efficient search for large graphs')
     # Beam search parameter
     parser.add_argument('--beam_width', type=int, default=5,
                         help='Width of beam for beam search')
@@ -63,6 +59,11 @@ def parse_decoder(parser):
     dec_parser.add_argument('--visualize_instances', action='store_true',
         help='Generate visualizations for all pattern instances (default: only representatives)')
 
+    # Batch processing parameters
+    dec_parser.add_argument('--streaming_workers', type=int, default=1,
+        help='Number of workers for streaming batch processing (set >1 to enable)')
+    dec_parser.add_argument('--auto_streaming_threshold', type=int, default=100000,
+        help='Auto-enable batch processing for graphs with more than this many nodes')
 
     # Set default values
     parser.set_defaults(
@@ -87,8 +88,7 @@ def parse_decoder(parser):
         search_strategy="greedy",
         out_batch_size=3,
         node_anchored=True,
-        streaming_workers=4,
-        auto_streaming_threshold=100000,
-        visualize_instances=False,
-        memory_efficient=False
+        memory_limit=1000000,
+        streaming_workers=1,
+        auto_streaming_threshold=100000
     )

@@ -271,25 +271,12 @@ def init_greedy_worker(model, graphs, embs, args):
     This runs ONCE per worker and loads the large data into its global scope.
     """
     global worker_model, worker_graphs, worker_embs, worker_args
-    pid = os.getpid()
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid} initializing...", flush=True)
-    
-    device = utils.get_device()
-    worker_model = model.to(device)
+    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} initializing...", flush=True)
+    worker_model = model
     worker_graphs = graphs
-    
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid}: Moving {len(embs)} embedding batches to {device}...", flush=True)
-    worker_embs = [e.to(device) for e in embs]
-    
+    worker_embs = embs
     worker_args = args
-    
-    ps = np.array([len(g) for g in worker_graphs], dtype=np.float32)
-    ps /= np.sum(ps)
-    global worker_graph_dist, worker_graph_indices
-    worker_graph_dist = stats.rv_discrete(values=(np.arange(len(worker_graphs)), ps))
-    worker_graph_indices = np.arange(len(worker_graphs))
-
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid} initialization complete.", flush=True)
+    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} initialization complete.", flush=True)
 
 
 def run_greedy_trial(trial_idx):
@@ -297,16 +284,18 @@ def run_greedy_trial(trial_idx):
     Executes a single greedy search trial.
     It now accesses the large data from global variables, avoiding data transfer.
     """
-    global worker_model, worker_graphs, worker_embs, worker_args, worker_graph_dist, worker_graph_indices
+    global worker_model, worker_graphs, worker_embs, worker_args
     
-    random.seed(42 + trial_idx)
-    np.random.seed(42 + trial_idx)
-    torch.manual_seed(42 + trial_idx)
+    random.seed(int.from_bytes(os.urandom(4), 'little') + trial_idx)
+    np.random.seed(int.from_bytes(os.urandom(4), 'little') + trial_idx)
 
-    graph_idx = worker_graph_indices[worker_graph_dist.rvs()]
+    ps = np.array([len(g) for g in worker_graphs], dtype=np.float32)
+    ps /= np.sum(ps)
+    graph_dist = stats.rv_discrete(values=(np.arange(len(worker_graphs)), ps))
+
+    graph_idx = np.arange(len(worker_graphs))[graph_dist.rvs()]
     graph = worker_graphs[graph_idx]
-    
-    start_node = random.sample(list(graph.nodes) if len(graph) < 10000 else graph.nodes, 1)[0]
+    start_node = random.choice(list(graph.nodes))
 
     neigh = [start_node]
     if worker_args.graph_type == "undirected":
@@ -338,14 +327,13 @@ def run_greedy_trial(trial_idx):
 
         for cand_node, cand_emb in zip(frontier, cand_embs):
             score = 0
-            # SUCCESS: Using pre-loaded GPU embeddings (no redundant transfers)
             for emb_batch in worker_embs:
                 with torch.no_grad():
                     if worker_args.method_type == "order":
-                        pred = worker_model.predict((emb_batch, cand_emb)).unsqueeze(1)
+                        pred = worker_model.predict((emb_batch.to(utils.get_device()), cand_emb)).unsqueeze(1)
                         score -= torch.sum(torch.argmax(worker_model.clf_model(pred), axis=1)).item()
                     elif worker_args.method_type == "mlp":
-                        pred = worker_model(emb_batch, cand_emb.unsqueeze(0).expand(len(emb_batch), -1))
+                        pred = worker_model(emb_batch.to(utils.get_device()), cand_emb.unsqueeze(0).expand(len(emb_batch), -1))
                         score += torch.sum(pred[:,0]).item()
 
             if score < best_score:
@@ -403,17 +391,8 @@ class GreedySearchAgent(SearchAgent):
         args_for_pool = range(n_trials)
 
         print(f"Starting {n_trials} search trials on {self.n_workers} cores...")
-        
-        # EFFICIENCY: Bypass Pool overhead for single-worker runs
-        if self.n_workers <= 1:
-            print("Running in serial mode (Bypassing Pool overhead)...")
-            init_greedy_worker(self.model, self.dataset, self.embs, self.args)
-            results = []
-            for i in tqdm(args_for_pool):
-                results.append(run_greedy_trial(i))
-        else:
-            with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
-                results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
+        with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
+            results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
 
         print("Aggregating results from all worker processes...")
         for trial_patterns, trial_counts in results:

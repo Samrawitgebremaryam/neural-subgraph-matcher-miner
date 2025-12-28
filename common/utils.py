@@ -73,7 +73,6 @@ def wl_hash(g, dim=64, node_anchored=False):
         vecs = newvecs
     return tuple(np.sum(vecs, axis=0))
 
-
 def gen_baseline_queries_rand_esu(queries, targets, node_anchored=False):
     sizes = Counter([len(g) for g in queries])
     max_size = max(sizes.keys())
@@ -181,6 +180,14 @@ def gen_baseline_queries_mfinder(queries, targets, n_samples=10000,
             out.append(random.choice(neighs))
     return out
 
+device_cache = None
+def get_device():
+    global device_cache
+    if device_cache is None:
+        device_cache = torch.device("cuda") if torch.cuda.is_available() \
+            else torch.device("cpu")
+        #device_cache = torch.device("cpu")
+    return device_cache
 
 def parse_optimizer(parser):
     opt_parser = parser.add_argument_group()
@@ -334,13 +341,9 @@ def batch_nx_graphs(graphs, anchors=None):
     
     return batch.to(get_device())
 
-device_cache = None
 def get_device():
-    """Get PyTorch device (GPU if available, otherwise CPU) with caching."""
-    global device_cache
-    if device_cache is None:
-        device_cache = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    return device_cache
+    """Get PyTorch device (GPU if available, otherwise CPU)"""
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def clear_gpu_memory():
     """Utility function to clear GPU memory"""
