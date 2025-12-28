@@ -166,7 +166,7 @@ def pattern_growth_streaming(dataset, task, args):
     #  Batched Embedding Generation (The Conveyor Belt)
     global_embs = generate_target_embeddings(dataset, model, args)
     
-    # PHASE 2: Parallel Search
+    #  Parallel Search
     logger.info("Search phase starting (Workload Batching active)...")
     return pattern_growth(dataset, task, args, precomputed_data=global_embs, preloaded_model=model)
 
@@ -230,7 +230,15 @@ def main():
     if args.dataset.endswith('.pkl'):
         with open(args.dataset, 'rb') as f:
             data_obj = pickle.load(f)
-        dataset = [data_obj] if isinstance(data_obj, (nx.Graph, nx.DiGraph)) else data_obj
+        
+        if isinstance(data_obj, (nx.Graph, nx.DiGraph)):
+            dataset = [data_obj]
+        elif isinstance(data_obj, dict):
+            # Special handling for dict-formatted graphs (like Amazon)
+            dataset = [nx.DiGraph(data_obj)]
+            logger.info(f"Created directed graph from dict format with {len(dataset[0].nodes)} nodes and {len(dataset[0].edges)} edges")
+        else:
+            dataset = data_obj # Assume list of graphs
         task = 'graph'
     else:
         dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
