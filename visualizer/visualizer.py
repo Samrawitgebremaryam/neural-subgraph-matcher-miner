@@ -993,11 +993,6 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
         # Only visualize instances if the flag is set
         if visualize_instances:
             for idx, pattern in enumerate(pattern_instances):
-                # Skip if this is the representative instance (already generated)
-                if idx == representative_idx:
-                    logger.info(f"  Skipping instance {idx+1} (it is the representative)")
-                    success_count += 1
-                    continue
 
                 try:
                     graph_data = extractor.extract_graph_data(pattern)
@@ -1288,7 +1283,6 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
             is_rep = False
             
             if (i - 1) == representative_idx:
-                href = "representative.html"
                 is_rep = True
 
             html_content += f"""
