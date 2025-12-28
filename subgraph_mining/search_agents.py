@@ -278,7 +278,6 @@ def init_greedy_worker(model, graphs, embs, args):
     worker_model = model.to(device)
     worker_graphs = graphs
     
-    # PERFORMANCE BOOST: Move all target embeddings to GPU ONCE during initialization
     print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid}: Moving {len(embs)} embedding batches to {device}...", flush=True)
     worker_embs = [e.to(device) for e in embs]
     
@@ -290,9 +289,6 @@ def init_greedy_worker(model, graphs, embs, args):
     worker_graph_dist = stats.rv_discrete(values=(np.arange(len(worker_graphs)), ps))
     worker_graph_indices = np.arange(len(worker_graphs))
 
-    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid}: Moving {len(embs)} embedding batches to {device}...", flush=True)
-    worker_embs = [e.to(device) for e in embs]
-    
     print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid} initialization complete.", flush=True)
 
 
