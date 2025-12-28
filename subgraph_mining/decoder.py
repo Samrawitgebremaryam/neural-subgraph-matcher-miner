@@ -5,6 +5,8 @@ import time
 import os
 import pickle
 import sys
+import gc
+import networkx as nx
 from pathlib import Path
 
 from deepsnap.batch import Batch
@@ -118,6 +120,10 @@ def generate_target_embeddings(dataset, model, args):
     logger.info(f"Setting up Batch Processing Pipeline (Batch Size: {args.batch_size})")
     
     stream_dataset = StreamingNeighborhoodDataset(dataset, args.n_neighborhoods, args)
+    
+    seed_graphs = []
+    n_seeds = min(args.n_trials, args.n_neighborhoods)
+    
     dataloader = DataLoader(stream_dataset, batch_size=args.batch_size, 
                             shuffle=False, collate_fn=collate_fn, num_workers=0)
 
@@ -126,12 +132,25 @@ def generate_target_embeddings(dataset, model, args):
     model.to(device)
     
     logger.info(f"Generating embeddings for {args.n_neighborhoods} neighborhoods...")
+    
+    # Collect seeds manually from the dataset (randomly)
+    logger.info(f"Preserving {n_seeds} neighborhoods for search seeds...")
+    for i in range(n_seeds):
+        graph, neigh = utils.sample_neigh(dataset,
+            random.randint(args.min_neighborhood_size,
+                args.max_neighborhood_size), args.graph_type)
+        
+        neigh_graph = graph.subgraph(neigh)
+        neigh_graph = nx.convert_node_labels_to_integers(neigh_graph)
+        neigh_graph.add_edge(0, 0)
+        seed_graphs.append(neigh_graph)
+
     for batch in tqdm(dataloader):
         with torch.no_grad():
             emb = model.emb_model(batch.to(device))
             embs.append(emb.to(torch.device("cpu")))
     
-    return embs
+    return embs, seed_graphs
 
 
 def ensure_directories():
@@ -215,6 +234,7 @@ def _process_chunk(args_tuple):
 #  Optimized streaming entry point
 def pattern_growth_streaming(dataset, task, args):
     """Entry point for batch processing mode."""
+    import gc
     if args.method_type == "end2end":
         model = models.End2EndOrder(1, args.hidden_dim, args)
     elif args.method_type == "mlp":
@@ -226,11 +246,18 @@ def pattern_growth_streaming(dataset, task, args):
     model.eval()
     
     # Batched embedding generation
-    global_embs = generate_target_embeddings(dataset, model, args)
+    global_embs, seed_graphs = generate_target_embeddings(dataset, model, args)
+    
+    # Release the massive main graph from memory before search
+    logger.info("CRITICAL: Releasing main graph memory (~70GB) before search phase...")
+    if isinstance(dataset, list):
+        dataset.clear()
+    del dataset
+    gc.collect()
     
     # Parallel search
-    logger.info("Search phase starting...")
-    return pattern_growth(dataset, task, args, precomputed_data=global_embs, preloaded_model=model)
+    logger.info("Search phase starting with precomputed embeddings...")
+    return pattern_growth(seed_graphs, task, args, precomputed_data=global_embs, preloaded_model=model)
 
 
 def visualize_pattern_graph(pattern, args, count_by_size):
@@ -1147,12 +1174,19 @@ def main():
     logger.info("\nStarting pattern mining...")
     if use_streaming:
         logger.info(f"Adaptive Mode: Enabling Batch Processing for {num_nodes} nodes. 🚀")
+        # Pass dataset and then clear local reference
         pattern_growth_streaming(dataset, task, args)
+        if isinstance(dataset, list):
+            dataset.clear()
+        dataset = None
     else:
         logger.info("Adaptive Mode: Standard Sequential Processing.")
         if not hasattr(args, 'n_workers'):
             args.n_workers = 1
         pattern_growth(dataset, task, args)
+    
+    import gc
+    gc.collect()
     logger.info("\n✓ Pattern mining complete!")
 
 
