@@ -119,11 +119,22 @@ def generate_target_embeddings(dataset, model, args):
     """Generate embeddings using DataLoader for batch processing."""
     logger.info(f"Setting up Batch Processing Pipeline (Batch Size: {args.batch_size})")
     
-    stream_dataset = StreamingNeighborhoodDataset(dataset, args.n_neighborhoods, args)
-    
     seed_graphs = []
-    n_seeds = min(args.n_trials, args.n_neighborhoods)
+    n_seeds = args.n_trials
+    logger.info(f"Selecting {n_seeds} search seeds from the entire graph for maximum diversity...")
     
+    for i in range(n_seeds):
+        # We sample from the full 'dataset' which is still in memory here
+        graph, neigh = utils.sample_neigh(dataset,
+            random.randint(args.min_neighborhood_size,
+                args.max_neighborhood_size), args.graph_type)
+        
+        neigh_graph = graph.subgraph(neigh).copy() 
+        neigh_graph = nx.convert_node_labels_to_integers(neigh_graph)
+        neigh_graph.add_edge(0, 0)
+        seed_graphs.append(neigh_graph)
+
+    stream_dataset = StreamingNeighborhoodDataset(dataset, args.n_neighborhoods, args)
     dataloader = DataLoader(stream_dataset, batch_size=args.batch_size, 
                             shuffle=False, collate_fn=collate_fn, num_workers=0)
 
@@ -131,20 +142,7 @@ def generate_target_embeddings(dataset, model, args):
     device = utils.get_device()
     model.to(device)
     
-    logger.info(f"Generating embeddings for {args.n_neighborhoods} neighborhoods...")
-    
-    # Collect seeds manually from the dataset (randomly)
-    logger.info(f"Preserving {n_seeds} neighborhoods for search seeds...")
-    for i in range(n_seeds):
-        graph, neigh = utils.sample_neigh(dataset,
-            random.randint(args.min_neighborhood_size,
-                args.max_neighborhood_size), args.graph_type)
-        
-        neigh_graph = graph.subgraph(neigh)
-        neigh_graph = nx.convert_node_labels_to_integers(neigh_graph)
-        neigh_graph.add_edge(0, 0)
-        seed_graphs.append(neigh_graph)
-
+    logger.info(f"Generating embeddings for {args.n_neighborhoods} target neighborhoods...")
     for batch in tqdm(dataloader):
         with torch.no_grad():
             emb = model.emb_model(batch.to(device))
