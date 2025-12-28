@@ -19,7 +19,6 @@ from tqdm import tqdm
 
 from torch_geometric.datasets import TUDataset, PPI
 from torch_geometric.datasets import Planetoid, KarateClub, QM7b
-from torch_geometric.data import DataLoader
 import torch_geometric.utils as pyg_utils
 
 import torch_geometric.nn as pyg_nn
