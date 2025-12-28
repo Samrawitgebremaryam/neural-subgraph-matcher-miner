@@ -48,34 +48,14 @@ jobs:
           chmod -R 777 ${{ github.workspace }}/plots
           chmod -R 777 ${{ github.workspace }}/results
 
-      - name: Run Standard Mode (Benchmark)
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -e PYTHONUNBUFFERED=1 \
-            decoder-image:latest \
-            bash -c "
-              echo '=== STANDARD MODE ==='
-              python -m subgraph_mining.decoder \
-                --dataset=undirected.pkl \
-                --n_neighborhoods=1000 \
-                --n_trials=100 \
-                --min_pattern_size=3 \
-                --max_pattern_size=5 \
-                --node_anchored \
-                --streaming_workers=1 \
-                --auto_streaming_threshold=1000000 \
-                --out_path=/app/results/patterns_standard.pkl
-            " | tee standard_mode.log
-
-      # - name: Run Batch Mode (Benchmark)
+      # - name: Run Standard Mode (Benchmark)
       #   run: |
       #     docker run --rm \
       #       -v ${{ github.workspace }}:/app \
       #       -e PYTHONUNBUFFERED=1 \
       #       decoder-image:latest \
       #       bash -c "
-      #         echo '=== BATCH MODE ==='
+      #         echo '=== STANDARD MODE ==='
       #         python -m subgraph_mining.decoder \
       #           --dataset=undirected.pkl \
       #           --n_neighborhoods=1000 \
@@ -83,10 +63,30 @@ jobs:
       #           --min_pattern_size=3 \
       #           --max_pattern_size=5 \
       #           --node_anchored \
-      #           --streaming_workers=4 \
-      #           --auto_streaming_threshold=100 \
-      #           --out_path=/app/results/patterns_batch.pkl
-      #       " | tee batch_mode.log
+      #           --streaming_workers=1 \
+      #           --auto_streaming_threshold=1000000 \
+      #           --out_path=/app/results/patterns_standard.pkl
+      #       " | tee standard_mode.log
+
+      - name: Run Batch Mode (Benchmark)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -e PYTHONUNBUFFERED=1 \
+            decoder-image:latest \
+            bash -c "
+              echo '=== BATCH MODE ==='
+              python -m subgraph_mining.decoder \
+                --dataset=undirected.pkl \
+                --n_neighborhoods=1000 \
+                --n_trials=100 \
+                --min_pattern_size=3 \
+                --max_pattern_size=5 \
+                --node_anchored \
+                --streaming_workers=4 \
+                --auto_streaming_threshold=100 \
+                --out_path=/app/results/patterns_batch.pkl
+            " | tee batch_mode.log
 
       - name: Compare Results (Parity Check)
         run: |
