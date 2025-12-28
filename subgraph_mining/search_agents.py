@@ -283,6 +283,16 @@ def init_greedy_worker(model, graphs, embs, args):
     worker_embs = [e.to(device) for e in embs]
     
     worker_args = args
+    
+    ps = np.array([len(g) for g in worker_graphs], dtype=np.float32)
+    ps /= np.sum(ps)
+    global worker_graph_dist, worker_graph_indices
+    worker_graph_dist = stats.rv_discrete(values=(np.arange(len(worker_graphs)), ps))
+    worker_graph_indices = np.arange(len(worker_graphs))
+
+    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid}: Moving {len(embs)} embedding batches to {device}...", flush=True)
+    worker_embs = [e.to(device) for e in embs]
+    
     print(f"[{time.strftime('%H:%M:%S')}] Worker PID {pid} initialization complete.", flush=True)
 
 
@@ -291,19 +301,16 @@ def run_greedy_trial(trial_idx):
     Executes a single greedy search trial.
     It now accesses the large data from global variables, avoiding data transfer.
     """
-    global worker_model, worker_graphs, worker_embs, worker_args
+    global worker_model, worker_graphs, worker_embs, worker_args, worker_graph_dist, worker_graph_indices
     
     random.seed(42 + trial_idx)
     np.random.seed(42 + trial_idx)
     torch.manual_seed(42 + trial_idx)
 
-    ps = np.array([len(g) for g in worker_graphs], dtype=np.float32)
-    ps /= np.sum(ps)
-    graph_dist = stats.rv_discrete(values=(np.arange(len(worker_graphs)), ps))
-
-    graph_idx = np.arange(len(worker_graphs))[graph_dist.rvs()]
+    graph_idx = worker_graph_indices[worker_graph_dist.rvs()]
     graph = worker_graphs[graph_idx]
-    start_node = random.choice(list(graph.nodes))
+    
+    start_node = random.sample(list(graph.nodes) if len(graph) < 10000 else graph.nodes, 1)[0]
 
     neigh = [start_node]
     if worker_args.graph_type == "undirected":

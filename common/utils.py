@@ -334,9 +334,13 @@ def batch_nx_graphs(graphs, anchors=None):
     
     return batch.to(get_device())
 
+device_cache = None
 def get_device():
-    """Get PyTorch device (GPU if available, otherwise CPU)"""
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """Get PyTorch device (GPU if available, otherwise CPU) with caching."""
+    global device_cache
+    if device_cache is None:
+        device_cache = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    return device_cache
 
 def clear_gpu_memory():
     """Utility function to clear GPU memory"""
