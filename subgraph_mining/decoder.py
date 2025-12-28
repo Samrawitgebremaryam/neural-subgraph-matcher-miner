@@ -233,10 +233,17 @@ def main():
         
         if isinstance(data_obj, (nx.Graph, nx.DiGraph)):
             dataset = [data_obj]
-        elif isinstance(data_obj, dict):
+        elif isinstance(data_obj, dict) and 'nodes' in data_obj and 'edges' in data_obj:
             # Special handling for dict-formatted graphs (like Amazon)
-            dataset = [nx.DiGraph(data_obj)]
-            logger.info(f"Created directed graph from dict format with {len(dataset[0].nodes)} nodes and {len(dataset[0].edges)} edges")
+            G = nx.DiGraph() if args.graph_type == 'directed' else nx.Graph()
+            G.add_nodes_from(data_obj['nodes'])
+            G.add_edges_from(data_obj['edges'])
+            dataset = [G]
+            logger.info(f"Reconstructed {args.graph_type} graph from dict format with {len(G.nodes)} nodes and {len(G.edges)} edges")
+        elif isinstance(data_obj, dict):
+            # Fallback for other dict formats
+            dataset = [nx.DiGraph(data_obj) if args.graph_type == 'directed' else nx.Graph(data_obj)]
+            logger.info(f"Created {args.graph_type} graph from dict format with {len(dataset[0].nodes)} nodes and {len(dataset[0].edges)} edges")
         else:
             dataset = data_obj # Assume list of graphs
         task = 'graph'
