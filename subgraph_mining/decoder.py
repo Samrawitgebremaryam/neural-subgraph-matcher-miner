@@ -135,7 +135,7 @@ def generate_target_embeddings(dataset, model, args):
     
     stream_dataset = StreamingNeighborhoodDataset(dataset, args.n_neighborhoods, args)
     dataloader = DataLoader(stream_dataset, batch_size=args.batch_size, 
-                            shuffle=False, collate_fn=collate_fn, num_workers=4)
+                            shuffle=False, collate_fn=collate_fn, num_workers=0)
 
     embs = []
     device = utils.get_device()
@@ -264,5 +264,10 @@ def main():
         pattern_growth(dataset, task, args)
 
 if __name__ == '__main__':
+    import torch.multiprocessing as mp
+    try:
+        mp.set_sharing_strategy('file_system')
+    except:
+        pass
     mp.set_start_method('spawn', force=True)
     main()
