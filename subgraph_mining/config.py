@@ -62,7 +62,7 @@ def parse_decoder(parser):
     # Batch processing parameters
     dec_parser.add_argument('--streaming_workers', type=int, default=4,
         help='Number of workers for streaming batch processing (set >1 to enable)')
-    dec_parser.add_argument('--auto_streaming_threshold', type=int, default=100000,
+    dec_parser.add_argument('--auto_streaming_threshold', type=int, default=500000,
         help='Auto-enable batch processing for graphs with more than this many nodes')
 
     # Set default values
@@ -90,5 +90,5 @@ def parse_decoder(parser):
         node_anchored=True,
         memory_limit=1000000,
         streaming_workers=4,
-        auto_streaming_threshold=100000
+        auto_streaming_threshold=500000
     )
