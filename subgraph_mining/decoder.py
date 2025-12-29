@@ -6,6 +6,7 @@ import os
 import pickle
 import sys
 import gc
+import collections
 import networkx as nx
 from pathlib import Path
 
@@ -141,8 +142,6 @@ def generate_target_embeddings(dataset, model, args):
         selected_seeds = np.random.choice(all_nodes, size=args.n_trials, replace=False, p=probs)
         selected_seeds = list(selected_seeds) # Convert back to list for consistency
         logger.info(f"Targeted Anchor Streaming: Selected {len(selected_seeds)} seeds using Degree-Weighted Sampling (Hub Bias).")
-
-import collections
 
     # Bidirectional Subgraph Extraction (Local Ego-Network Induction)
     undirected_view = dataset_graph.to_undirected()
