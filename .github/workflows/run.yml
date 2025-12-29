@@ -68,8 +68,13 @@ jobs:
               python -m subgraph_mining.decoder \
                 --dataset=metta.pkl \
                 --n_trials=200 \
+                --min_pattern_size=3 \
+                --max_pattern_size=5 \
+                --min_neighborhood_size=10 \
+                --max_neighborhood_size=15 \
                 --node_anchored \
                 --streaming_workers=4 \
+                --radius=4 \
                 --auto_streaming_threshold=5 \
                 --out_path=/app/results/patterns.pkl
 
