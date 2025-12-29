@@ -79,5 +79,7 @@ def parse_decoder(parser):
         search_strategy="greedy",
         out_batch_size=3,
         node_anchored=True,
-        streaming_workers=4
+        memory_limit=1000000,
+        streaming_workers=4,
+        auto_streaming_threshold=100000
     )
