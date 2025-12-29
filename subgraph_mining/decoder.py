@@ -149,9 +149,14 @@ def generate_target_embeddings(dataset, model, args):
     
     for seed in tqdm(selected_seeds):
         # Identify nodes in the 'bubble'
-        nodes_in_bubble = nx.single_source_shortest_path_length(
+        nodes_in_bubble = list(nx.single_source_shortest_path_length(
             undirected_view, seed, cutoff=radius
-        ).keys()
+        ).keys())
+        
+       
+        if args.max_neighborhood_size and len(nodes_in_bubble) > args.max_neighborhood_size:
+         
+            nodes_in_bubble = nodes_in_bubble[:args.max_neighborhood_size]
         
         neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
         

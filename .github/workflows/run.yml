@@ -81,6 +81,7 @@ jobs:
                 --max_neighborhood_size=29 \
                 --node_anchored \
                 --streaming_workers=4 \
+                --n_workers=4 \
                 --auto_streaming_threshold=100 \
                 --out_path=/app/results/amazon_batch.pkl \
                 --visualize_instances
