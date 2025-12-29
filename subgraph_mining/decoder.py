@@ -6,6 +6,7 @@ import os
 import pickle
 import sys
 import gc
+import collections
 import networkx as nx
 from pathlib import Path
 
@@ -126,7 +127,6 @@ def generate_target_embeddings(dataset, model, args):
     # In batch mode, dataset is a list containing typically one large graph
     dataset_graph = dataset[0] 
     
-    # Targeted Seeding
     # select seeds from the FULL graph first to ensure we start exactly where intended.
     all_nodes = sorted(list(dataset_graph.nodes()))
     
@@ -134,9 +134,14 @@ def generate_target_embeddings(dataset, model, args):
         selected_seeds = all_nodes
         logger.info(f"Using all {len(selected_seeds)} nodes as seeds.")
     else:
-        random.shuffle(all_nodes)
-        selected_seeds = all_nodes[:args.n_trials]
-        logger.info(f"Targeted Anchor Streaming: Selected {len(selected_seeds)} search seeds from {len(all_nodes)} total nodes.")
+        # Calculate degrees and probabilities
+        degrees = np.array([val for (node, val) in dataset_graph.degree()])
+        probs = degrees / degrees.sum()
+        
+        # Sample based on degree
+        selected_seeds = np.random.choice(all_nodes, size=args.n_trials, replace=False, p=probs)
+        selected_seeds = list(selected_seeds) # Convert back to list for consistency
+        logger.info(f"Targeted Anchor Streaming: Selected {len(selected_seeds)} seeds using Degree-Weighted Sampling (Hub Bias).")
 
     # Bidirectional Subgraph Extraction (Local Ego-Network Induction)
     undirected_view = dataset_graph.to_undirected()
@@ -145,13 +150,21 @@ def generate_target_embeddings(dataset, model, args):
     
     seed_graphs = []
     
-    logger.info(f"Extracting {radius}-hop neighborhoods for targeted batching...")
+    logger.info(f"Extracting neighborhoods (Limited BFS, Max Size: {args.max_neighborhood_size})...")
     
     for seed in tqdm(selected_seeds):
-        # Identify nodes in the 'bubble'
-        nodes_in_bubble = nx.single_source_shortest_path_length(
-            undirected_view, seed, cutoff=radius
-        ).keys()
+        nodes_in_bubble = []
+        queue = collections.deque([seed])
+        visited = {seed}
+        
+        while queue and len(nodes_in_bubble) < args.max_neighborhood_size:
+            curr = queue.popleft()
+            nodes_in_bubble.append(curr)
+
+            for neighbor in undirected_view.neighbors(curr):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
         
         neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
         
