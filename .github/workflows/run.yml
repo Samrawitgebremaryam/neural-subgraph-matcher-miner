@@ -59,8 +59,8 @@ jobs:
           fi
           echo " amazon0302.pkl verified as binary."
 
-      #  Run Standard Mode using prebuilt Docker image
-      - name: Run Standard Mode (Amazon)
+      #  Run Streaming Mode using prebuilt Docker image
+      - name: Run Streaming Mode (Amazon)
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -68,7 +68,7 @@ jobs:
             samribahta/decoder-image:latest \
             bash -c "
               set -e
-              echo '=== Starting STANDARD MODE Benchmark ==='
+              echo '=== Starting STREAMING (BATCH) MODE Benchmark ==='
               python -m subgraph_mining.decoder \
                 --dataset=amazon0302.pkl \
                 --model_path=ckpt/model.pt \
@@ -80,12 +80,12 @@ jobs:
                 --min_neighborhood_size=20 \
                 --max_neighborhood_size=29 \
                 --node_anchored \
-                --streaming_workers=1 \
-                --auto_streaming_threshold=10000000 \
-                --out_path=/app/results/amazon_standard.pkl \
+                --streaming_workers=4 \
+                --auto_streaming_threshold=100 \
+                --out_path=/app/results/amazon_batch.pkl \
                 --visualize_instances
               
-              echo '=== Standard Mode Complete ==='
+              echo '=== Streaming Mode Complete ==='
               ls -la /app/results
             "
       # - name: Run pattern counter in Docker container
