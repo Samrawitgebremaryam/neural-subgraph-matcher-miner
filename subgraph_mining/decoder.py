@@ -5,19 +5,22 @@ import time
 import os
 import pickle
 import sys
+import gc
+import networkx as nx
 from pathlib import Path
 
 from deepsnap.batch import Batch
+from deepsnap.graph import Graph as DSGraph
 import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from torch_geometric.datasets import TUDataset, PPI
 from torch_geometric.datasets import Planetoid, KarateClub, QM7b
-from torch_geometric.data import DataLoader
 import torch_geometric.utils as pyg_utils
 
 import torch_geometric.nn as pyg_nn
@@ -74,6 +77,128 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+#  Streaming Dataset for large graphs
+class StreamingNeighborhoodDataset(Dataset):
+    """On-the-fly neighborhood sampling for batch processing."""
+    def __init__(self, dataset, n_neighborhoods, args):
+        self.dataset = dataset
+        self.n_neighborhoods = n_neighborhoods
+        self.args = args
+        self.anchors = [0] * n_neighborhoods if args.node_anchored else None
+
+    def __len__(self):
+        return self.n_neighborhoods
+
+    def __getitem__(self, idx):
+        graph, neigh = utils.sample_neigh(self.dataset,
+            random.randint(self.args.min_neighborhood_size,
+                self.args.max_neighborhood_size), self.args.graph_type)
+        
+        neigh_graph = graph.subgraph(neigh)
+        neigh_graph = nx.convert_node_labels_to_integers(neigh_graph)
+        neigh_graph.add_edge(0, 0)
+        
+        anchor = 0 if self.args.node_anchored else None
+        std_graph = utils.standardize_graph(neigh_graph, anchor)
+        return DSGraph(std_graph)
+
+
+def collate_fn(ds_graphs):
+    """Batching logic for DeepSnap models."""
+    from common import feature_preprocess
+    batch = Batch.from_data_list(ds_graphs)
+    augmenter = feature_preprocess.FeatureAugment()
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='Unknown type of key*')
+        batch = augmenter.augment(batch)
+    return batch
+
+
+#  Embedding generation with DataLoader
+def generate_target_embeddings(dataset, model, args):
+    """Generate embeddings using Targeted Anchor Streaming."""
+    logger.info(f"Setting up Batch Processing Pipeline (Batch Size: {args.batch_size})")
+
+    # Reproducibility
+    random.seed(42)
+    np.random.seed(42)
+    
+    # In batch mode, dataset is a list containing typically one large graph
+    dataset_graph = dataset[0] 
+    
+    # Targeted Seeding
+    # select seeds from the FULL graph first to ensure we start exactly where intended.
+    all_nodes = sorted(list(dataset_graph.nodes()))
+    
+    if len(all_nodes) <= args.n_trials:
+        selected_seeds = all_nodes
+        logger.info(f"Using all {len(selected_seeds)} nodes as seeds.")
+    else:
+        random.shuffle(all_nodes)
+        selected_seeds = all_nodes[:args.n_trials]
+        logger.info(f"Targeted Anchor Streaming: Selected {len(selected_seeds)} search seeds from {len(all_nodes)} total nodes.")
+
+    # Bidirectional Subgraph Extraction (Local Ego-Network Induction)
+    undirected_view = dataset_graph.to_undirected()
+    
+    radius = args.max_pattern_size - 1
+    
+    seed_graphs = []
+    
+    logger.info(f"Extracting {radius}-hop neighborhoods for targeted batching...")
+    
+    for seed in tqdm(selected_seeds):
+        # Identify nodes in the 'bubble'
+        nodes_in_bubble = nx.single_source_shortest_path_length(
+            undirected_view, seed, cutoff=radius
+        ).keys()
+        
+        neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
+        
+        neigh_graph.graph['anchor_node_original'] = seed
+        
+        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
+        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
+        
+        new_anchor_id = mapping[seed]
+        
+        neigh_graph.graph['anchor_node'] = new_anchor_id
+        
+        nx.set_node_attributes(neigh_graph, 0, 'anchor')
+        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
+        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
+        seed_graphs.append(neigh_graph)
+
+    # Precise Batching
+    class TargetedDataset(Dataset):
+        def __init__(self, gl):
+            self.gl = gl
+        def __len__(self):
+            return len(self.gl)
+        def __getitem__(self, idx):
+            g = self.gl[idx]
+            anchor = g.graph.get('anchor_node')
+            std_g = utils.standardize_graph(g, anchor=anchor)
+            return DSGraph(std_g)
+            
+    targeted_dataset = TargetedDataset(seed_graphs)
+    
+    dataloader = DataLoader(targeted_dataset, batch_size=args.batch_size, 
+                            shuffle=False, collate_fn=collate_fn, num_workers=0)
+
+    embs = []
+    device = utils.get_device()
+    model.to(device)
+    
+    logger.info(f"Generating embeddings for {len(seed_graphs)} targeted neighborhoods...")
+    for batch in tqdm(dataloader):
+        with torch.no_grad():
+            emb = model.emb_model(batch.to(device))
+            embs.append(emb.to(torch.device("cpu")))
+    
+    return embs, seed_graphs
+
+
 def ensure_directories():
     """Create all required directories if they don't exist."""
     directories = [
@@ -100,71 +225,15 @@ def bfs_chunk(graph, start_node, max_size):
     return graph.subgraph(visited).copy()
 
 
-def generate_target_embeddings(graphs, model, args):
-    """
-    Standardizes the neighborhood sampling and embedding generation process.
-    Used to ensure Streaming and Standard modes use the exact same 'Scoring Key'.
-    """
-    # Fix seeds to ensure identical snapshots between Standard and Streaming
-    random.seed(42)
-    np.random.seed(42)
-    torch.manual_seed(42)
-    
-    neighs, anchors = [], []
-    
-    if args.use_whole_graphs:
-        neighs = graphs
-    else:
-        if args.sample_method == "radial":
-            for i, graph in enumerate(graphs):
-                for node in graph.nodes:
-                    neigh = list(nx.single_source_shortest_path_length(graph,
-                        node, cutoff=args.radius).keys())
-                    if args.subgraph_sample_size != 0:
-                        neigh = random.sample(neigh, min(len(neigh),
-                            args.subgraph_sample_size))
-                    
-                    if len(neigh) > 1:
-                        subgraph = graph.subgraph(neigh)
-                        if args.subgraph_sample_size != 0:
-                            subgraph = subgraph.subgraph(max(
-                                nx.connected_components(subgraph), key=len))
-                        
-                        orig_attrs = {n: subgraph.nodes[n].copy() for n in subgraph.nodes()}
-                        mapping = {old: new for new, old in enumerate(subgraph.nodes())}
-                        subgraph = nx.relabel_nodes(subgraph, mapping)
-                        
-                        for old, new in mapping.items():
-                            subgraph.nodes[new].update(orig_attrs[old])
-                        
-                        subgraph.add_edge(0, 0)
-                        neighs.append(subgraph)
-                        if args.node_anchored:
-                            anchors.append(0)
-        
-        elif args.sample_method == "tree":
-            for j in range(args.n_neighborhoods):
-                graph, neigh = utils.sample_neigh(graphs,
-                    random.randint(args.min_neighborhood_size,
-                        args.max_neighborhood_size), args.graph_type)
-                neigh = graph.subgraph(neigh)
-                neigh = nx.convert_node_labels_to_integers(neigh)
-                neigh.add_edge(0, 0)
-                neighs.append(neigh)
-                if args.node_anchored:
-                    anchors.append(0)
-
-    embs = []
-    for i in range(0, len(neighs), args.batch_size):
-        top = min(i + args.batch_size, len(neighs))
-        with torch.no_grad():
-            batch = utils.batch_nx_graphs(neighs[i:top],
-                anchors=anchors if args.node_anchored else None)
-            emb = model.emb_model(batch)
-            emb = emb.to(torch.device("cpu"))
-        embs.append(emb)
-
-    return embs, neighs
+def process_large_graph_in_chunks(graph, chunk_size=10000):
+    all_nodes = set(graph.nodes())
+    graph_chunks = []
+    while all_nodes:
+        start_node = next(iter(all_nodes))
+        chunk = bfs_chunk(graph, start_node, chunk_size)
+        graph_chunks.append(chunk)
+        all_nodes -= set(chunk.nodes())
+    return graph_chunks
 
 
 def make_plant_dataset(size):
@@ -208,13 +277,10 @@ def _process_chunk(args_tuple):
         return []
 
 
+#  Optimized streaming entry point
 def pattern_growth_streaming(dataset, task, args):
-    """
-    Expert Implementation: Streaming Neighborhood Sampling.
-    Partitions the 'Workload' (Seeds/Neighborhoods) instead of the 'Graph'.
-    Guarantees 100% accuracy parity with Standard Mode.
-    """
-    # Phase 1: Global Context Initialization
+    """Entry point for batch processing mode."""
+    import gc
     if args.method_type == "end2end":
         model = models.End2EndOrder(1, args.hidden_dim, args)
     elif args.method_type == "mlp":
@@ -222,22 +288,22 @@ def pattern_growth_streaming(dataset, task, args):
     else:
         model = models.OrderEmbedder(1, args.hidden_dim, args)
     
-    model.to(utils.get_device())
-    model.eval()
     model.load_state_dict(torch.load(args.model_path, map_location=utils.get_device()))
+    model.eval()
     
-    # Generate persistent 'Scoring Key' (Global Context)
-    global_precomputed_data = generate_target_embeddings(dataset, model, args)
+    # Batched embedding generation
+    global_embs, seed_graphs = generate_target_embeddings(dataset, model, args)
     
-    # Clean up GPU to allow workers to use CUDA
-    del model
-    torch.cuda.empty_cache()
-
-    # Phase 2: Distributed Search (Workload Partitioning)
-    # We call standard pattern_growth but pass the global context and n_workers
-    out_graphs = pattern_growth(dataset, task, args, precomputed_data=global_precomputed_data)
+    # Release the massive main graph from memory before search
+    logger.info("CRITICAL: Releasing main graph memory (~70GB) before search phase...")
+    if isinstance(dataset, list):
+        dataset.clear()
+    del dataset
+    gc.collect()
     
-    return out_graphs
+    # Parallel search
+    logger.info("Search phase starting with precomputed embeddings...")
+    return pattern_growth(seed_graphs, task, args, precomputed_data=global_embs, preloaded_model=model)
 
 
 def visualize_pattern_graph(pattern, args, count_by_size):
@@ -664,6 +730,40 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
                 else:
                     logger.info(f"  {pattern_key}: {count} instances")
                 
+                # Check if user wants to visualize instances
+                visualize_instances = getattr(args, 'visualize_instances', False)
+
+                if visualize_instances and VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
+                    try:
+                        # Get the representative pattern for this WL hash
+                        representative_pattern = representative_map.get(wl_hash, None)
+
+                        if representative_pattern:
+                            logger.info(f"    Using decoder representative pattern for {pattern_key}")
+                        else:
+                            logger.warning(f"    No decoder representative found for {pattern_key}, will select from instances")
+
+                        logger.info(f"    Mode: Visualizing representative + {count} instances in subdirectory")
+
+                        success = visualize_all_pattern_instances(
+                            pattern_instances=unique_instances,
+                            pattern_key=pattern_key,
+                            count=count,
+                            output_dir=os.path.join("plots", "cluster"),
+                            representative_pattern=representative_pattern,
+                            visualize_instances=True
+                        )
+                        if success:
+                            total_visualizations += count
+                            logger.info(f"    ✓ Visualized representative + {count} instances in {pattern_key}/")
+                        else:
+                            logger.warning(f"    ✗ Visualization failed for {pattern_key}")
+                    except Exception as e:
+                        logger.error(f"    ✗ Visualization error: {e}")
+                elif not visualize_instances:
+                    logger.info(f"    Mode: Representatives will be visualized directly in plots/cluster/ (no subdirectories)")
+                else:
+                    logger.warning(f"    ⚠ Skipping visualization (visualizer not available)")
         
         ensure_directories()
         
@@ -710,30 +810,28 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
         return None
 
 
-def pattern_growth(dataset, task, args, skip_visualization=False, precomputed_data=None):
+def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=None):
     """Main pattern mining function."""
     start_time = time.time()
     
     ensure_directories()
     
-    # Load model
-    if args.method_type == "end2end":
+    # Load model (or use preloaded)
+    if preloaded_model:
+        model = preloaded_model
+    elif args.method_type == "end2end":
         model = models.End2EndOrder(1, args.hidden_dim, args)
     elif args.method_type == "mlp":
         model = models.BaselineMLP(1, args.hidden_dim, args)
     else:
         model = models.OrderEmbedder(1, args.hidden_dim, args)
     
+    if not preloaded_model:
+        model.load_state_dict(torch.load(args.model_path,
+            map_location=utils.get_device()))
+    
     model.to(utils.get_device())
     model.eval()
-    model.load_state_dict(torch.load(args.model_path,
-        map_location=utils.get_device()))
-
-    # Use Global Context if provided, otherwise generate local context
-    if precomputed_data:
-        embs, neighs = precomputed_data
-    else:
-        embs, neighs = generate_target_embeddings(dataset, model, args)
 
     if task == "graph-labeled":
         dataset, labels = dataset
@@ -819,18 +917,22 @@ def pattern_growth(dataset, task, args, skip_visualization=False, precomputed_da
                 if args.node_anchored:
                     anchors.append(0)
 
-    embs = []
-    if len(neighs) % args.batch_size != 0:
-        logger.warning("Number of graphs not multiple of batch size")
-    
-    for i in range(len(neighs) // args.batch_size):
-        top = (i+1)*args.batch_size
-        with torch.no_grad():
-            batch = utils.batch_nx_graphs(neighs[i*args.batch_size:top],
-                anchors=anchors if args.node_anchored else None)
-            emb = model.emb_model(batch)
-            emb = emb.to(torch.device("cpu"))
-        embs.append(emb)
+    #  Use precomputed embeddings if available
+    if precomputed_data:
+        embs = precomputed_data
+    else:
+        embs = []
+        if len(neighs) % args.batch_size != 0:
+            logger.warning("Number of graphs not multiple of batch size")
+        
+        for i in range(len(neighs) // args.batch_size):
+            top = (i+1)*args.batch_size
+            with torch.no_grad():
+                batch = utils.batch_nx_graphs(neighs[i*args.batch_size:top],
+                    anchors=anchors if args.node_anchored else None)
+                emb = model.emb_model(batch)
+                emb = emb.to(torch.device("cpu"))
+            embs.append(emb)
 
     if args.analyze:
         embs_np = torch.stack(embs).numpy()
@@ -897,13 +999,20 @@ def pattern_growth(dataset, task, args, skip_visualization=False, precomputed_da
 
     successful_visualizations = 0
 
-    if VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
+    # Only create direct representative visualizations if --visualize_instances is NOT set
+    # (When --visualize_instances IS set, representatives are already in subdirectories)
+    visualize_instances = getattr(args, 'visualize_instances', False)
+
+    if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
         logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
         for pattern in out_graphs:
             if visualize_pattern_graph_ext(pattern, args, count_by_size):
                 successful_visualizations += 1
             count_by_size[len(pattern)] += 1
+
         logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
+    elif visualize_instances:
+        logger.info("\nSkipping direct representative visualization (representatives already in subdirectories)")
     else:
         logger.warning("⚠ Skipping representative visualization (visualizer not available)")
 
@@ -956,14 +1065,52 @@ def pattern_growth(dataset, task, args, skip_visualization=False, precomputed_da
     if base_path.endswith('.json'):
         base_path = os.path.splitext(base_path)[0]
     
-    # Final output generation and visualization
-    save_and_visualize_all_instances(agent, args, out_graphs)
-    
+    json_path = base_path + '.json'
     with open(json_path, 'w') as f:
         json.dump(json_results, f, indent=2)
     
-    logger.info(f"✓ Results saved to: {args.out_path} and {json_path}")
+    logger.info(f"✓ JSON version saved to: {json_path}")
     
+    json_results = []  
+    for pattern in out_graphs:  
+        pattern_data = {  
+            'nodes': [  
+                {  
+                    'id': str(node),  
+                    'label': pattern.nodes[node].get('label', ''),  
+                    'anchor': pattern.nodes[node].get('anchor', 0),  
+                    **{k: v for k, v in pattern.nodes[node].items()   
+                    if k not in ['label', 'anchor']}  
+                }  
+                for node in pattern.nodes()  
+            ],  
+            'edges': [  
+                {  
+                    'source': str(u),  
+                    'target': str(v),  
+                    'type': data.get('type', ''),  
+                    **{k: v for k, v in data.items() if k != 'type'}  
+                }  
+                for u, v, data in pattern.edges(data=True)  
+            ],  
+            'metadata': {  
+                'num_nodes': len(pattern),  
+                'num_edges': pattern.number_of_edges(),  
+                'is_directed': pattern.is_directed()  
+            }  
+        }  
+        json_results.append(pattern_data) 
+         
+    base_path = os.path.splitext(args.out_path)[0]  
+    if base_path.endswith('.json'):  
+        base_path = os.path.splitext(base_path)[0]  
+      
+    json_path = base_path + '.json'
+
+    
+    with open(json_path, 'w') as f:  
+        json.dump(json_results, f, indent=2)
+        
     return out_graphs
 
 
@@ -978,10 +1125,6 @@ def main():
 
     logger.info(f"Using dataset: {args.dataset}")
     logger.info(f"Graph type: {args.graph_type}")
-
-    # Use Hybrid Parallel Search (Neighborhood Streaming) if workers > 1
-    # This fulfills the "Batching/Neighborhood Partitioning" requirement
-    use_streaming = getattr(args, 'streaming_workers', 1) > 1
 
     if args.dataset.endswith('.pkl'):
         with open(args.dataset, 'rb') as f:
@@ -1068,16 +1211,36 @@ def main():
         dataset = make_plant_dataset(size)
         task = 'graph'
 
+    # Adaptive mode selector
+    num_nodes = sum(len(g) for g in dataset) if isinstance(dataset, list) else len(dataset)
+    threshold = getattr(args, 'auto_streaming_threshold', 100000)
+    
+    use_streaming = (num_nodes > threshold or args.n_trials > 2000) and getattr(args, 'streaming_workers', 1) > 1
+    
     logger.info("\nStarting pattern mining...")
     if use_streaming:
-        print("\n" + "="*70)
-        print("RUNNING HYBRID NEIGHBORHOOD BATCHING (EXPERT MODE)")
-        print("="*70)
+        logger.info(f"Adaptive Mode: Enabling Batch Processing for {num_nodes} nodes. 🚀")
+        # Pass dataset and then clear local reference
         pattern_growth_streaming(dataset, task, args)
+        if isinstance(dataset, list):
+            dataset.clear()
+        dataset = None
     else:
+        logger.info("Adaptive Mode: Standard Sequential Processing.")
+        if not hasattr(args, 'n_workers'):
+            args.n_workers = 1
         pattern_growth(dataset, task, args)
+    
+    import gc
+    gc.collect()
     logger.info("\n✓ Pattern mining complete!")
 
 
 if __name__ == '__main__':
+    # Docker memory fix
+    import torch.multiprocessing as mp
+    try:
+        mp.set_sharing_strategy('file_system')
+    except:
+        pass
     main()
