@@ -65,10 +65,6 @@ def parse_decoder(parser):
     dec_parser.add_argument('--auto_streaming_threshold', type=int, default=500000,
         help='Auto-enable batch processing for graphs with more than this many nodes')
 
-    # Parallel search parameters
-    dec_parser.add_argument('--n_workers', type=int, default=1,
-        help='Number of workers for parallel search (Standard Mode)')
-
     # Set default values
     parser.set_defaults(
         # Dataset defaults
