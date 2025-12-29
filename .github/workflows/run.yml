@@ -56,7 +56,7 @@ jobs:
           echo "total_cpus=$TOTAL_CPUS" >> $GITHUB_OUTPUT
           echo "percent_used=$PERCENT_USED" >> $GITHUB_OUTPUT
 
-      - name: Run decoder in Docker container (Batch Processing Mode)
+      - name: Run Standard Mode (No Streaming)
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -64,24 +64,53 @@ jobs:
             decoder-image:latest \
             bash -c "
               set -e
-              echo '=== Testing Batch Processing Mode ==='
+              echo '=== Running STANDARD MODE Test ==='
               python -m subgraph_mining.decoder \
                 --dataset=metta.pkl \
                 --n_trials=200 \
                 --min_pattern_size=3 \
                 --max_pattern_size=5 \
-                --min_neighborhood_size=5 \
-                --max_neighborhood_size=10 \
+                --node_anchored \
+                --auto_streaming_threshold=10000 \
+                --out_path=/app/results/patterns_standard.pkl
+
+              echo 'Standard Mode Complete.'
+              ls -la /app/results/patterns_standard.pkl
+              "
+
+      - name: Run Streaming Mode (Batch Processing)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -e PYTHONUNBUFFERED=1 \
+            decoder-image:latest \
+            bash -c "
+              set -e
+              echo '=== Running STREAMING MODE Test ==='
+              # We use a threshold of 5 to force streaming on our 25-node graph
+              # Neighborhood size 12 gives us enough 'room' for size 5 patterns while still partitioning
+              python -m subgraph_mining.decoder \
+                --dataset=metta.pkl \
+                --n_trials=200 \
+                --min_pattern_size=3 \
+                --max_pattern_size=5 \
+                --min_neighborhood_size=8 \
+                --max_neighborhood_size=12 \
                 --node_anchored \
                 --streaming_workers=4 \
-                --radius=4 \
                 --auto_streaming_threshold=5 \
-                --out_path=/app/results/patterns.pkl
+                --out_path=/app/results/patterns_streaming.pkl
 
-              echo 'Checking output directories...'
-              ls -la /app/plots/cluster
-              ls -la /app/results
+              echo 'Streaming Mode Complete.'
+              ls -la /app/results/patterns_streaming.pkl
               "
+
+      - name: Final Check
+        run: |
+          echo "Comparing result files:"
+          ls -la ${{ github.workspace }}/results/
+          echo "Checking plots directory:"
+          ls -la ${{ github.workspace }}/plots/cluster/
       # - name: Run pattern counter in Docker container
       #   run: |
       #     docker run --rm \
