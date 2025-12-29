@@ -119,37 +119,28 @@ def generate_target_embeddings(dataset, model, args):
     """Generate embeddings using Targeted Anchor Streaming."""
     logger.info(f"Setting up Batch Processing Pipeline (Batch Size: {args.batch_size})")
 
-    # -------------------------------------------------------------------------
-    # TARGETED ANCHOR STREAMING
-    # -------------------------------------------------------------------------
-    
-    # 1. Reproducibility
+    # Reproducibility
     random.seed(42)
     np.random.seed(42)
     
     # In batch mode, dataset is a list containing typically one large graph
     dataset_graph = dataset[0] 
     
-    # 2. Targeted Seeding
-    # We select seeds from the FULL graph first to ensure we start exactly where intended.
+    # Targeted Seeding
+    # select seeds from the FULL graph first to ensure we start exactly where intended.
     all_nodes = sorted(list(dataset_graph.nodes()))
     
-    # If graph is small enough, take all nodes, otherwise sample n_trials
     if len(all_nodes) <= args.n_trials:
         selected_seeds = all_nodes
         logger.info(f"Using all {len(selected_seeds)} nodes as seeds.")
     else:
-        # Consistency: shuffle with fixed seed then take top N
-        # (Better than random.sample for reproducibility across runs if list order varies)
         random.shuffle(all_nodes)
         selected_seeds = all_nodes[:args.n_trials]
         logger.info(f"Targeted Anchor Streaming: Selected {len(selected_seeds)} search seeds from {len(all_nodes)} total nodes.")
 
-    # 3. Bidirectional Subgraph Extraction (Local Ego-Network Induction)
-    # Use undirected view to capture upstream and downstream context for Directed Graphs
+    # Bidirectional Subgraph Extraction (Local Ego-Network Induction)
     undirected_view = dataset_graph.to_undirected()
     
-    # Radius = max_pattern_size - 1 (Optimization: minimal radius to guarantee containment)
     radius = args.max_pattern_size - 1
     
     seed_graphs = []
@@ -162,72 +153,36 @@ def generate_target_embeddings(dataset, model, args):
             undirected_view, seed, cutoff=radius
         ).keys()
         
-        # Extract subgraph from ORIGINAL (Directed) graph to preserve edge directions/types
-        # Use .copy() to decouple from main giant graph
         neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
         
-        # 4. Anchor Node Metadata Storage & Alignment
-        # Standardize: map nodes to integers 0..N
-        # CRITICAL: We need to know which integer ID corresponds to our 'seed'
-        
-        # Store original seed ID for reference
         neigh_graph.graph['anchor_node_original'] = seed
         
-        # Re-index nodes to integers, tracking the original ID
-        # We assume utils.standardize_graph might be called later, but we need 
-        # a clean 0..N graph for the GNN embeddings right now or via the Dataset.
-        # Actually, `TargetedDataset` below calls `utils.standardize_graph`.
-        # `utils.standardize_graph` preserves existing IDs if they are integers? 
-        # No, it keeps IDs but adds features.
-        # DeepSnap `Graph` usually expects integer nodes 0..N-1 for efficient tensor ops?
-        # Let's perform the re-indexing here to be safe and identify the anchor.
-        
-        # We manually re-index to find the anchor 
         mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
         neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
         
-        # Find new anchor ID
         new_anchor_id = mapping[seed]
         
-        # Explicitly mark the anchor for the GNN / Search Agent
         neigh_graph.graph['anchor_node'] = new_anchor_id
         
-        # Set node attribute 'anchor' = 1 for the seed, 0 for others
         nx.set_node_attributes(neigh_graph, 0, 'anchor')
         neigh_graph.nodes[new_anchor_id]['anchor'] = 1
-        
-        # Add a self-loop to the anchor? Original code did `neigh_graph.add_edge(0, 0)`.
-        # The standardize_graph / GNN might handle this or expect it.
-        # Let's add it to the anchor node to be consistent with original logic, 
-        # assuming '0' in original code meant the first node/anchor.
-        # Here we add it to `new_anchor_id`.
-        # neigh_graph.add_edge(new_anchor_id, new_anchor_id)
-        # Actually, let's skip explicit self-loop unless we know it's required for checking.
-        # Original code: `neigh_graph = nx.convert_node_labels_to_integers(neigh_graph); neigh_graph.add_edge(0, 0)`
-        # This implied node 0 was the anchor (or just added to node 0).
-        # We will add it to our identified anchor.
         neigh_graph.add_edge(new_anchor_id, new_anchor_id)
-        
         seed_graphs.append(neigh_graph)
 
-    # 5. Precise Batching
-    # We bypass the random 'StreamingNeighborhoodDataset' and feed our exact list.
+    # Precise Batching
     class TargetedDataset(Dataset):
         def __init__(self, gl):
             self.gl = gl
         def __len__(self):
             return len(self.gl)
         def __getitem__(self, idx):
-            # We must use the same anchor info we stored
             g = self.gl[idx]
             anchor = g.graph.get('anchor_node')
-            # utils.standardize_graph adds 'node_feature' based on anchor if provided
             std_g = utils.standardize_graph(g, anchor=anchor)
             return DSGraph(std_g)
             
     targeted_dataset = TargetedDataset(seed_graphs)
     
-    # Shuffle=False is CRITICAL to keep alignment with seed_graphs list
     dataloader = DataLoader(targeted_dataset, batch_size=args.batch_size, 
                             shuffle=False, collate_fn=collate_fn, num_workers=0)
 
@@ -241,7 +196,6 @@ def generate_target_embeddings(dataset, model, args):
             emb = model.emb_model(batch.to(device))
             embs.append(emb.to(torch.device("cpu")))
     
-    # Return matched pair: embeddings and the graphs search should start on
     return embs, seed_graphs
 
 
