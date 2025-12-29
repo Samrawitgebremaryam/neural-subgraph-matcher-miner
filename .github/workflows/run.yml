@@ -66,7 +66,7 @@ jobs:
               set -e
               echo '=== Running STANDARD MODE Test ==='
               python -m subgraph_mining.decoder \
-                --dataset=metta.pkl \
+                --dataset=directed.pkl \
                 --n_trials=200 \
                 --min_pattern_size=3 \
                 --max_pattern_size=5 \
@@ -90,7 +90,7 @@ jobs:
               # We use a threshold of 5 to force streaming on our 25-node graph
               # Neighborhood size 12 gives us enough 'room' for size 5 patterns while still partitioning
               python -m subgraph_mining.decoder \
-                --dataset=metta.pkl \
+                --dataset=directed.pkl \
                 --n_trials=200 \
                 --min_pattern_size=3 \
                 --max_pattern_size=5 \
