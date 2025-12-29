@@ -62,6 +62,8 @@ jobs:
       #           --n_trials=100 \
       #           --min_pattern_size=3 \
       #           --max_pattern_size=5 \
+      #           --min_neighborhood_size=10 \
+      #           --max_neighborhood_size=15 \
       #           --node_anchored \
       #           --streaming_workers=1 \
       #           --auto_streaming_threshold=1000000 \
@@ -83,6 +85,8 @@ jobs:
                 --min_pattern_size=3 \
                 --max_pattern_size=5 \
                 --node_anchored \
+                --min_neighborhood_size=10 \
+                --max_neighborhood_size=15 \
                 --streaming_workers=4 \
                 --auto_streaming_threshold=100 \
                 --out_path=/app/results/patterns_batch.pkl
