@@ -1,6 +1,13 @@
 # Neural Subgraph Matcher Miner
 
-The Neural Subgraph Matcher Miner provides powerful tools for analyzing graph structures through two complementary approaches: determining whether specific subgraph patterns exist within larger graphs (matching), and discovering frequently occurring patterns across graph datasets (mining). These capabilities are essential for applications in bioinformatics, social network analysis, knowledge graphs, and molecular chemistry.
+**Neural Subgraph Matcher Miner** is a comprehensive framework for neural subgraph mining, explanation, and visualization. It enables researchers and analysts to efficiently discover, interpret, and explore structural motifs in complex networks across multiple domains from bioinformatics and social network analysis to financial forensics and knowledge graphs.
+
+Central to this framework is a neural subgraph miner inspired by **SPMiner**, integrated with modern **Graph Neural Network (GNN)** techniques for scalable motif discovery. The system is designed for:
+- **Efficient Motif Discovery**: Discovering recurring patterns in complex networks at scale.
+- **AI-Driven Interpretation**: Bridging the gap between discovery and understanding with explanatory insights.
+- **Interactive Visualizations**: Dynamic, web-based tools for seamless exploration of identified patterns.
+
+The library provides powerful tools for analyzing graph structures through two complementary approaches: determining whether specific subgraph patterns exist within larger graphs (matching), and discovering frequently occurring patterns across graph datasets (mining). These capabilities are essential for applications in bioinformatics, social network analysis, knowledge graphs, and molecular chemistry.
 
 ### What This Library Does
 
@@ -9,6 +16,9 @@ This library implements two primary tasks that work together to provide comprehe
 ### 1. Neural Subgraph Matching (NeuroMatch)
 
 **Purpose**: Determine whether a query subgraph pattern exists within a larger target graph.
+
+<details>
+<summary><b>Technical Details & Use Cases</b></summary>
 
 **Problem Setup**: Given a query graph **Q** anchored at node **q**, and a target graph **T** anchored at node **v**, the goal is to predict if there exists an isomorphism mapping a subgraph of **T** to **Q**, such that the isomorphism maps **v** to **q**.
 
@@ -24,10 +34,14 @@ The model produces a prediction score that indicates the likelihood of a subgrap
 - Finding specific molecular structures in chemical databases
 - Identifying network motifs in social or biological networks
 - Querying knowledge graphs for specific relationship patterns
+</details>
 
 ### 2. Frequent Subgraph Mining (SPMiner)
 
 **Purpose**: Automatically discover recurring subgraph patterns that appear frequently across a graph dataset.
+
+<details>
+<summary><b>Technical Details & Use Cases</b></summary>
 
 **How It Works**: 
 SPMiner is a GNN-based framework that learns to identify common structural patterns without requiring predefined templates. The pipeline consists of two phases:
@@ -40,22 +54,15 @@ SPMiner is a GNN-based framework that learns to identify common structural patte
 - Finding frequent communication patterns in social networks
 - Identifying recurring transaction patterns in financial networks
 - Extracting common molecular substructures from chemical compound databases
-
-### Enhancements Over Original Framework
-
-This repository adds several key enhancements to the original NSL library:
-
-- **Interactive Visualization Engine**: Automatically generates beautiful, interactive HTML visualizations of discovered patterns, allowing researchers to explore graph structures, node attributes, and edge relationships directly in a web browser
-- **RESTful API**: FastAPI-based service that provides programmatic access to matching and mining capabilities, enabling integration with existing data pipelines and applications
-- **Improved Usability**: Streamlined setup process, comprehensive documentation, and example workflows to get started quickly
+</details>
 
 ---
 
 ##  Key Features
 
-- ** Neural Subgraph Matching**: State-of-the-art NeuroMatch algorithm for subgraph isomorphism prediction
+- **Neural Subgraph Matching**: State-of-the-art NeuroMatch algorithm for subgraph isomorphism prediction
 - **Frequent Subgraph Mining**: Efficient SPMiner implementation for pattern discovery
-- ** Interactive Visualizations**: Custom HTML-based visualization engine for exploring discovered patterns
+- **Interactive Visualizations**: Custom HTML-based visualization engine for exploring discovered patterns
 - **RESTful API**: FastAPI-based service for programmatic access to mining and matching capabilities
 
 ---
@@ -273,6 +280,9 @@ docker run -p 5000:5000 neural-miner
 - **DeepSNAP 0.1.2**: Graph data structure synchronization
 - **NetworkX 2.4**: Graph manipulation and analysis
 
+<details>
+<summary><b>View detailed library functionality</b></summary>
+
 ### Key Functionality
 
 **PyTorch Geometric** provides efficient implementations of message-passing GNNs, enabling the library to scale to large graphs.
@@ -288,6 +298,7 @@ docker run -p 5000:5000 neural-miner
 - **tqdm**: Progress bars
 
 *Full dependency list available in `requirements.txt`*
+</details>
 
 ---
 
@@ -297,7 +308,7 @@ This project builds upon foundational research from Stanford's SNAP group:
 
 - [Neural Subgraph Learning GNN (NSL)](https://github.com/snap-stanford/neural-subgraph-learning-GNN) - Original framework
 - [NeuroMatch: Neural Subgraph Matching](http://snap.stanford.edu/subgraph-matching/) - Matching algorithm
-- [SPMiner: Frequent Subgraph Mining](http://snap.stanford.edu/spminer/) - Mining algorithm  
+- [SPMiner: Frequent Subgraph Mining](https://snap.stanford.edu/frequent-subgraph-mining/) - Mining algorithm  
 - [DeepSNAP](https://github.com/snap-stanford/deepsnap) - Graph data structures
 
 ---

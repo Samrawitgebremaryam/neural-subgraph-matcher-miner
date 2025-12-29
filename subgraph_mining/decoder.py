@@ -308,7 +308,7 @@ def pattern_growth_streaming(dataset, task, args):
     global_embs, seed_graphs = generate_target_embeddings(dataset, model, args)
     
     # Release the massive main graph from memory before search
-    logger.info("CRITICAL: Releasing main graph memory (~70GB) before search phase...")
+    logger.info("CRITICAL: Cleaning up main graph from RAM to optimize Search Phase...")
     if isinstance(dataset, list):
         dataset.clear()
     del dataset
@@ -1136,6 +1136,23 @@ def main():
     
     args = parser.parse_args()
 
+    # Safety Check: Neighborhood Size
+    if hasattr(args, 'max_pattern_size') and hasattr(args, 'max_neighborhood_size'):
+        if args.max_pattern_size > args.max_neighborhood_size:
+            logger.warning(
+                f"Configuration Issue: max_pattern_size ({args.max_pattern_size}) is larger than "
+                f"max_neighborhood_size ({args.max_neighborhood_size}). "
+                "The model may fail to find larger patterns. Increasing neighborhood size to match."
+            )
+            args.max_neighborhood_size = args.max_pattern_size
+
+    # Graceful CPU Handling for Streaming Workers
+    if hasattr(args, 'streaming_workers'):
+        available_cpus = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+        if available_cpus:
+            args.streaming_workers = min(args.streaming_workers, available_cpus)
+            logger.info(f"Optimized streaming_workers: {args.streaming_workers} (Available CPUs: {available_cpus})")
+
     logger.info(f"Using dataset: {args.dataset}")
     logger.info(f"Graph type: {args.graph_type}")
 
@@ -1233,6 +1250,8 @@ def main():
     logger.info("\nStarting pattern mining...")
     if use_streaming:
         logger.info(f"Adaptive Mode: Enabling Batch Processing for {num_nodes} nodes. 🚀")
+        # Ensure search phase uses the same optimized worker count
+        args.n_workers = args.streaming_workers
         # Pass dataset and then clear local reference
         pattern_growth_streaming(dataset, task, args)
         if isinstance(dataset, list):
