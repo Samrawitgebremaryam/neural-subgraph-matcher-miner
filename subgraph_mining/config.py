@@ -90,5 +90,5 @@ def parse_decoder(parser):
         node_anchored=True,
         memory_limit=1000000,
         streaming_workers=4,
-        auto_streaming_threshold=500000
+        auto_streaming_threshold=100000
     )
