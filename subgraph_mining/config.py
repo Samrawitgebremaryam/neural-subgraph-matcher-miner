@@ -66,7 +66,7 @@ def parse_decoder(parser):
         batch_size=1000,
         
         # Decoder defaults
-        out_path="results/out-patterns.p",
+        out_path="results/patterns.p",
         n_neighborhoods=100,
         n_trials=100,
         decode_thresh=0.5,
