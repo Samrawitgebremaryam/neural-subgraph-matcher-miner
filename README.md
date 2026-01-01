@@ -77,7 +77,7 @@ Detailed library requirements can be found in requirements.txt
 To use the LLM-powered interpreter:
 
 1. **Configure API Key**:
-   The interpreter requires a Google Gemini API key. You can provide it in the following ways:
+   The interpreter requires a Google Gemini API key. You can provide it in one of the following ways:
    - **Environment Variable**: `export GEMINI_API_KEY="YOUR_KEY_HERE"`
    - **.env File**: Create a `.env` file in the project root with `GEMINI_API_KEY=your_key`
    - **UI Input**: Enter the key directly in the web interface through the provided field.
