@@ -72,4 +72,24 @@ of graph algorithms (such as subgraph operation and matching operation) to be pe
 thanks to its synchronization between an internal graph object (such as a NetworkX object) and the Pytorch Geometric Data object.
 
 Detailed library requirements can be found in requirements.txt
+## Running the Interpreter
+
+To use the LLM-powered interpreter:
+
+1. **Configure API Key**:
+   The interpreter requires a Google Gemini API key. You can provide it in one of the following ways:
+   - **Environment Variable**: `export GEMINI_API_KEY="YOUR_KEY_HERE"`
+   - **.env File**: Create a `.env` file in the project root with `GEMINI_API_KEY=your_key`
+   - **UI Input**: Enter the key directly in the web interface through the provided field.
+
+2. **Start Backend**:
+   ```bash
+   python3 -m app.main
+   ```
+
+3. **Open Visualizer**:
+   Open the generated motif interpreter HTML file in your browser to start the interpreter.
+
+
+
 
