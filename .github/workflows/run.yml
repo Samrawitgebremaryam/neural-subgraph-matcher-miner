@@ -2,9 +2,9 @@ name: Run Decoder
 
 on:
   push:
-    branches: [main,feature/batch-processing]
+    branches: [main,feature/batch-validate-df-graph]
   pull_request:
-    branches: [main,feature/batch-processing]
+    branches: [main,feature/batch-validate-df-graph]
   workflow_dispatch:
 
 jobs:

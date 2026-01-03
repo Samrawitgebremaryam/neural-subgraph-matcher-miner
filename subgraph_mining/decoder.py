@@ -78,17 +78,64 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Torch Multiprocessing Strategy for Docker Compatibility
+# This prevents 'RuntimeError: unable to write to file' in environments with limited /dev/shm
+try:
+    import torch.multiprocessing as mp
+    if mp.get_sharing_strategy() != 'file_system':
+        mp.set_sharing_strategy('file_system')
+        logger.info("Universal: Using 'file_system' sharing strategy for cross-process efficiency.")
+except Exception as e:
+    logger.warning(f"Could not set sharing strategy: {e}")
+
 
 # Dataset class for parallel processing must be at module level for pickling
+# Dataset class for parallel processing with on-the-fly sampling
 class TargetedDataset(Dataset):
-    def __init__(self, gl):
-        self.gl = gl
+    def __init__(self, dataset_graph, selected_seeds, args):
+        self.dataset_graph = dataset_graph
+        self.selected_seeds = selected_seeds
+        self.args = args
+        self.is_directed = (args.graph_type == "directed")
+        self.radius = args.radius
+
     def __len__(self):
-        return len(self.gl)
+        return len(self.selected_seeds)
+
     def __getitem__(self, idx):
-        g = self.gl[idx]
-        anchor = g.graph.get('anchor_node')
-        std_g = utils.standardize_graph(g, anchor=anchor)
+        seed = self.selected_seeds[idx]
+        
+        # ON-THE-FLY EXTRACTION: This happens inside the parallel worker
+        nodes_in_bubble = []
+        queue = collections.deque([(seed, 0)]) 
+        visited = {seed}
+        
+        while queue and len(nodes_in_bubble) < self.args.max_neighborhood_size:
+            curr, dist = queue.popleft()
+            nodes_in_bubble.append(curr)
+
+            if dist < self.radius:
+                neighbors = self.dataset_graph.successors(curr) if self.is_directed else self.dataset_graph.neighbors(curr)
+                for neighbor in neighbors:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, dist + 1))
+        
+        # Induce subgraph and standardize
+        neigh_graph = self.dataset_graph.subgraph(nodes_in_bubble).copy()
+        neigh_graph.graph['anchor_node_original'] = seed
+        
+        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
+        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
+        
+        new_anchor_id = mapping[seed]
+        neigh_graph.graph['anchor_node'] = new_anchor_id
+        
+        nx.set_node_attributes(neigh_graph, 0, 'anchor')
+        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
+        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
+        
+        std_g = utils.standardize_graph(neigh_graph, anchor=new_anchor_id)
         return DSGraph(std_g)
 
 #  Streaming Dataset for large graphs
@@ -115,6 +162,48 @@ class StreamingNeighborhoodDataset(Dataset):
         anchor = 0 if self.args.node_anchored else None
         std_graph = utils.standardize_graph(neigh_graph, anchor)
         return DSGraph(std_graph)
+
+
+# Lazy List for Search Phase: Extracts neighborhoods only when iterated
+class LazyNeighborhoodGraphList:
+    def __init__(self, dataset_graph, selected_seeds, args):
+        self.dataset_graph = dataset_graph
+        self.selected_seeds = selected_seeds
+        self.args = args
+        self.is_directed = (args.graph_type == "directed")
+        self.radius = args.radius
+
+    def __len__(self):
+        return len(self.selected_seeds)
+
+    def __getitem__(self, idx):
+        seed = self.selected_seeds[idx]
+        nodes_in_bubble = []
+        queue = collections.deque([(seed, 0)]) 
+        visited = {seed}
+        
+        while queue and len(nodes_in_bubble) < self.args.max_neighborhood_size:
+            curr, dist = queue.popleft()
+            nodes_in_bubble.append(curr)
+
+            if dist < self.radius:
+                neighbors = self.dataset_graph.successors(curr) if self.is_directed else self.dataset_graph.neighbors(curr)
+                for neighbor in neighbors:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, dist + 1))
+        
+        neigh_graph = self.dataset_graph.subgraph(nodes_in_bubble).copy()
+        neigh_graph.graph['anchor_node_original'] = seed
+        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
+        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
+        
+        new_anchor_id = mapping[seed]
+        neigh_graph.graph['anchor_node'] = new_anchor_id
+        nx.set_node_attributes(neigh_graph, 0, 'anchor')
+        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
+        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
+        return neigh_graph
 
 
 def collate_fn(ds_graphs):
@@ -157,49 +246,11 @@ def generate_target_embeddings(dataset, model, args):
             selected_seeds = np.random.choice(all_nodes, size=n_seeds, replace=False)
             logger.info(f"Tree Method: Sampled {n_seeds} random seeds for graph coverage.")
 
-    is_directed = (args.graph_type == "directed")
-    radius = args.radius
+    # On-the-Fly Architecture: Dataset now performs sampling in workers
+    targeted_dataset = TargetedDataset(dataset_graph, selected_seeds, args)
     
-    seed_graphs = []
-    
-    logger.info(f"Extracting neighborhoods (Max Size: {args.max_neighborhood_size}, Radius: {radius})...")
-    
-    for seed in tqdm(selected_seeds):
-        nodes_in_bubble = []
-        queue = collections.deque([(seed, 0)]) 
-        visited = {seed}
-        
-        while queue and len(nodes_in_bubble) < args.max_neighborhood_size:
-            curr, dist = queue.popleft()
-            nodes_in_bubble.append(curr)
-
-            if dist < radius:
-                neighbors = dataset_graph.successors(curr) if is_directed else dataset_graph.neighbors(curr)
-                for neighbor in neighbors:
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        queue.append((neighbor, dist + 1))
-        
-        neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
-        
-        neigh_graph.graph['anchor_node_original'] = seed
-        
-        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
-        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
-        
-        new_anchor_id = mapping[seed]
-        
-        neigh_graph.graph['anchor_node'] = new_anchor_id
-        
-        nx.set_node_attributes(neigh_graph, 0, 'anchor')
-        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
-        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
-        seed_graphs.append(neigh_graph)
-
-    # Precise Batching
-    targeted_dataset = TargetedDataset(seed_graphs)
-    
-    num_workers = 0 
+    # Enabled parallel workers as sampling overhead is now distributed
+    num_workers = args.streaming_workers
     pin_memory = torch.cuda.is_available()
     
     dataloader = DataLoader(targeted_dataset, batch_size=args.batch_size, 
@@ -210,13 +261,16 @@ def generate_target_embeddings(dataset, model, args):
     device = utils.get_device()
     model.to(device)
     
-    logger.info(f"Generating embeddings for {len(seed_graphs)} targeted neighborhoods...")
+    logger.info(f"Generating embeddings for {len(selected_seeds)} targeted neighborhoods via {num_workers} workers...")
     for batch in tqdm(dataloader):
         with torch.no_grad():
             emb = model.emb_model(batch.to(device))
             embs.append(emb.to(torch.device("cpu")))
     
-    return embs, seed_graphs
+    # We return the embeddings and a Lazy Graph List for the search phase
+    # This avoids storing 10,000 graphs in memory at once.
+    lazy_graphs = LazyNeighborhoodGraphList(dataset_graph, selected_seeds, args)
+    return embs, lazy_graphs
 
 
 def ensure_directories():
@@ -326,7 +380,11 @@ def pattern_growth_streaming(dataset, task, args):
     
     # Parallel search
     logger.info("Search phase starting with precomputed embeddings...")
+    # Force use_whole_graphs=True because the input 'seed_graphs' are already the extracted neighborhoods
+    original_use_whole = args.use_whole_graphs
+    args.use_whole_graphs = True
     found_patterns = pattern_growth(seed_graphs, task, args, precomputed_data=global_embs, preloaded_model=model)
+    args.use_whole_graphs = original_use_whole
     
     # Global Frequency Validation (Accuracy validator for batch processing)
     logger.info("Performing Global Frequency Validation on discovered patterns...")
