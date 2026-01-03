@@ -130,53 +130,41 @@ def generate_target_embeddings(dataset, model, args):
     # select seeds from the FULL graph first to ensure we start exactly where intended.
     all_nodes = sorted(list(dataset_graph.nodes()))
     
-    if len(all_nodes) <= args.n_trials:
+    if args.sample_method == "radial":
         selected_seeds = all_nodes
-        logger.info(f"Using all {len(selected_seeds)} nodes as seeds.")
+        logger.info(f"Radial Method: Targeting all {len(selected_seeds)} nodes as seeds for global coverage.")
     else:
-        # Hybrid Sampling: 50% Hub-Biased, 50% Uniform Random
-        n_hub = args.n_trials // 2
-        n_random = args.n_trials - n_hub
-        
-        #  Hub-Biased (Degree Weighted)
-        degrees = np.array([val for (node, val) in dataset_graph.degree()])
-        probs = degrees / degrees.sum()
-        hub_seeds = np.random.choice(all_nodes, size=n_hub, replace=False, p=probs)
-        
-        # Uniform Random
-        remaining_nodes = list(set(all_nodes) - set(hub_seeds))
-        if len(remaining_nodes) >= n_random:
-            random_seeds = np.random.choice(remaining_nodes, size=n_random, replace=False)
+        # 100% Uniform Random Seeding
+        n_seeds = args.n_neighborhoods
+        if len(all_nodes) <= n_seeds:
+            selected_seeds = all_nodes
+            logger.info(f"Tree Method: Using all {len(selected_seeds)} nodes as seeds.")
         else:
-            random_seeds = remaining_nodes
-            
-        selected_seeds = list(hub_seeds) + list(random_seeds)
-        random.shuffle(selected_seeds) # Shuffle to mix them up
-        
-        logger.info(f"Targeted Anchor Streaming: Hybrid Seeding - {len(hub_seeds)} Hub-Biased + {len(random_seeds)} Random.")
+            selected_seeds = np.random.choice(all_nodes, size=n_seeds, replace=False)
+            logger.info(f"Tree Method: Sampled {n_seeds} random seeds for graph coverage.")
 
-    # Bidirectional Subgraph Extraction (Local Ego-Network Induction)
-    undirected_view = dataset_graph.to_undirected()
-    
-    radius = args.max_pattern_size - 1
+    is_directed = (args.graph_type == "directed")
+    radius = args.radius
     
     seed_graphs = []
     
-    logger.info(f"Extracting neighborhoods (Limited BFS, Max Size: {args.max_neighborhood_size})...")
+    logger.info(f"Extracting neighborhoods (Max Size: {args.max_neighborhood_size}, Radius: {radius})...")
     
     for seed in tqdm(selected_seeds):
         nodes_in_bubble = []
-        queue = collections.deque([seed])
+        queue = collections.deque([(seed, 0)]) 
         visited = {seed}
         
         while queue and len(nodes_in_bubble) < args.max_neighborhood_size:
-            curr = queue.popleft()
+            curr, dist = queue.popleft()
             nodes_in_bubble.append(curr)
 
-            for neighbor in undirected_view.neighbors(curr):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
+            if dist < radius:
+                neighbors = dataset_graph.successors(curr) if is_directed else dataset_graph.neighbors(curr)
+                for neighbor in neighbors:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, dist + 1))
         
         neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
         
@@ -208,8 +196,12 @@ def generate_target_embeddings(dataset, model, args):
             
     targeted_dataset = TargetedDataset(seed_graphs)
     
+    num_workers = args.streaming_workers if len(dataset_graph) < 500000 else 0
+    pin_memory = torch.cuda.is_available()
+    
     dataloader = DataLoader(targeted_dataset, batch_size=args.batch_size, 
-                            shuffle=False, collate_fn=collate_fn, num_workers=0)
+                            shuffle=False, collate_fn=collate_fn, 
+                            num_workers=num_workers, pin_memory=pin_memory)
 
     embs = []
     device = utils.get_device()
@@ -325,22 +317,21 @@ def pattern_growth_streaming(dataset, task, args):
         dataset.clear()
     del dataset
     gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        logger.info("GPU cache cleared.")
     
     # Parallel search
     logger.info("Search phase starting with precomputed embeddings...")
     found_patterns = pattern_growth(seed_graphs, task, args, precomputed_data=global_embs, preloaded_model=model)
     
-    # --- Global Frequency Validation (Accuracy Fix) ---
+    # Global Frequency Validation (Accuracy validator for batch processing)
     logger.info("Performing Global Frequency Validation on discovered patterns...")
     
-    # Stack all neighborhood embeddings into a single global tensor matrix (N x D)
-    # global_embs is a list of tensors, likely [1, D] each.
     if global_embs and len(global_embs) > 0:
         global_matrix = torch.cat(global_embs, dim=0).to(utils.get_device()) # (10000, D)
         
         for pattern in found_patterns:
-            # 1. Generate embedding for the final pattern
-            # Convert NetworkX to DeepSnap to Batch
             pat_anchor = 0 if args.node_anchored else None
             std_pat = utils.standardize_graph(pattern, anchor=pat_anchor)
             ds_pat = DSGraph(std_pat)
@@ -348,27 +339,13 @@ def pattern_growth_streaming(dataset, task, args):
             
             with torch.no_grad():
                 pat_emb = model.emb_model(batch_pat) # (1, D)
-            
-            # 2. Vectorized Validation against entire universe
-            # Condition: z_pattern <= z_neighborhood (element-wise)
-            # Violation: max(0, z_pattern - z_neighborhood)
-            
-            # Broadcast pattern embedding against global matrix
-            # (1, D) vs (N, D) -> (N, D)
+                        
             diff = pat_emb - global_matrix
             violation = torch.clamp(diff, min=0)
-            
-            # Sum of squared violations per neighborhood
-            # (N, D) -> (N)
             violation_sq = torch.sum(violation ** 2, dim=1)
-            
-            # Count how many neighborhoods satisfy the constraint (violation close to 0)
-            # Using a small epsilon for float precision
             epsilon = 1e-5
             support_count = (violation_sq < epsilon).sum().item()
             
-            # Update the pattern's frequency count with the TRUE global count
-            # This replaces the estimated count from the local search
             logger.info(f"Pattern Size {len(pattern)}: Corrected Support {pattern.graph.get('support', 0)} -> {support_count} (Universe Size: {len(global_embs)})")
             pattern.graph['support'] = support_count
             pattern.graph['frequency'] = support_count / len(global_embs)
