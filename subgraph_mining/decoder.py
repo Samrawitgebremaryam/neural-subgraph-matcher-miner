@@ -7,6 +7,7 @@ import os
 import pickle
 import sys
 from pathlib import Path
+import traceback
 
 from deepsnap.batch import Batch
 from deepsnap.graph import Graph as DSGraph
@@ -77,6 +78,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# Dataset class for parallel processing must be at module level for pickling
+class TargetedDataset(Dataset):
+    def __init__(self, gl):
+        self.gl = gl
+    def __len__(self):
+        return len(self.gl)
+    def __getitem__(self, idx):
+        g = self.gl[idx]
+        anchor = g.graph.get('anchor_node')
+        std_g = utils.standardize_graph(g, anchor=anchor)
+        return DSGraph(std_g)
 
 #  Streaming Dataset for large graphs
 class StreamingNeighborhoodDataset(Dataset):
@@ -183,20 +196,9 @@ def generate_target_embeddings(dataset, model, args):
         seed_graphs.append(neigh_graph)
 
     # Precise Batching
-    class TargetedDataset(Dataset):
-        def __init__(self, gl):
-            self.gl = gl
-        def __len__(self):
-            return len(self.gl)
-        def __getitem__(self, idx):
-            g = self.gl[idx]
-            anchor = g.graph.get('anchor_node')
-            std_g = utils.standardize_graph(g, anchor=anchor)
-            return DSGraph(std_g)
-            
     targeted_dataset = TargetedDataset(seed_graphs)
     
-    num_workers = args.streaming_workers if len(dataset_graph) < 500000 else 0
+    num_workers = 0 
     pin_memory = torch.cuda.is_available()
     
     dataloader = DataLoader(targeted_dataset, batch_size=args.batch_size, 
