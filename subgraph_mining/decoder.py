@@ -135,6 +135,10 @@ def generate_target_embeddings(dataset, model, args):
     # Reproducibility
     random.seed(42)
     np.random.seed(42)
+
+    if mp.get_sharing_strategy() != 'file_system':
+        mp.set_sharing_strategy('file_system')
+        logger.info("Using 'file_system' sharing strategy for Docker compatibility.")
     
     # In batch mode, dataset is a list containing typically one large graph
     dataset_graph = dataset[0] 
