@@ -249,23 +249,41 @@ def generate_target_embeddings(dataset, model, args):
     # On-the-Fly Architecture: Dataset now performs sampling in workers
     targeted_dataset = TargetedDataset(dataset_graph, selected_seeds, args)
     
-    # Enabled parallel workers as sampling overhead is now distributed
     num_workers = args.streaming_workers
+    safe_batch_size = min(args.batch_size, 64) if num_workers > 0 else args.batch_size
     pin_memory = torch.cuda.is_available()
     
-    dataloader = DataLoader(targeted_dataset, batch_size=args.batch_size, 
-                            shuffle=False, collate_fn=collate_fn, 
-                            num_workers=num_workers, pin_memory=pin_memory)
+    def create_loader(w, b):
+        return DataLoader(targeted_dataset, batch_size=b, 
+                          shuffle=False, collate_fn=collate_fn, 
+                          num_workers=w, pin_memory=pin_memory)
+
+    dataloader = create_loader(num_workers, safe_batch_size)
 
     embs = []
     device = utils.get_device()
     model.to(device)
     
-    logger.info(f"Generating embeddings for {len(selected_seeds)} targeted neighborhoods via {num_workers} workers...")
-    for batch in tqdm(dataloader):
-        with torch.no_grad():
-            emb = model.emb_model(batch.to(device))
-            embs.append(emb.to(torch.device("cpu")))
+    logger.info(f"Generating embeddings for {len(selected_seeds)} targeted neighborhoods (Batch: {safe_batch_size}, Workers: {num_workers})...")
+    
+    try:
+        for batch in tqdm(dataloader):
+            with torch.no_grad():
+                emb = model.emb_model(batch.to(device))
+                embs.append(emb.to(torch.device("cpu")))
+    except RuntimeError as e:
+        if "unable to write to file" in str(e) or "shared memory" in str(e).lower():
+            logger.warning("Docker SHM Limit Hit! Falling back to 100% stable single-process mode...")
+            # Fallback to single process
+            num_workers = 0
+            dataloader = create_loader(0, args.batch_size)
+            embs = []
+            for batch in tqdm(dataloader, desc="Stable Fallback"):
+                with torch.no_grad():
+                    emb = model.emb_model(batch.to(device))
+                    embs.append(emb.to(torch.device("cpu")))
+        else:
+            raise e
     
     # We return the embeddings and a Lazy Graph List for the search phase
     # This avoids storing 10,000 graphs in memory at once.
