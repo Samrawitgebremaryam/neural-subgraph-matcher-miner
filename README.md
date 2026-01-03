@@ -250,8 +250,26 @@ Visualizations are automatically generated during pattern analysis and saved to 
 ```bash
 python -m analyze.analyze_pattern_counts --counts_path=results/
 ```
+### 4. LLM Motif Analysis
+## Running the Interpreter
 
-### 4. Using the API
+To use the LLM-powered interpreter:
+
+1. **Configure API Key**:
+   The interpreter requires a Google Gemini API key. You can provide it in one of the following ways:
+   - **Environment Variable**: `export GEMINI_API_KEY="YOUR_KEY_HERE"`
+   - **.env File**: Create a `.env` file in the project root with `GEMINI_API_KEY=your_key`
+   - **UI Input**: Enter the key directly in the web interface through the provided field.
+
+2. **Start Backend**:
+   ```bash
+   python3 -m app.main
+   ```
+
+3. **Open Visualizer**:
+   Open the generated motif interpreter HTML file in your browser to start the interpreter.
+
+### 5. Using the API
 
 #### Start the API Server
 

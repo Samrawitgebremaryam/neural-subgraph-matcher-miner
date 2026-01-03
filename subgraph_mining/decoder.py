@@ -1,13 +1,11 @@
 import argparse
 import csv
+import collections
 from itertools import combinations
 import time
 import os
 import pickle
 import sys
-import gc
-import collections
-import networkx as nx
 from pathlib import Path
 
 from deepsnap.batch import Batch
@@ -33,8 +31,10 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
+import datetime  
+import uuid 
 
-# CRITICAL: Import visualizer at top level (not inside functions)
+
 try:
     from visualizer.visualizer import visualize_pattern_graph_ext, visualize_all_pattern_instances
     VISUALIZER_AVAILABLE = True
@@ -636,32 +636,149 @@ def visualize_pattern_graph(pattern, args, count_by_size):
         logger.error(f"Error visualizing pattern graph: {e}")
         return False
 
-
-def save_and_visualize_all_instances(agent, args, representative_patterns=None):
+def save_instances_to_json(output_data, args, graph_context=None):  
+    json_results = []
+    # Add graph context as first item if provided  
+    if graph_context:  
+        json_results.append({  
+            'type': 'graph_context',  
+            'data': graph_context  
+        })
+        print("Added graph context to JSON results")   
+    else:  
+        print("No graph context provided for JSON results")
+    for pattern_key, pattern_info in output_data.items():  
+        for instance in pattern_info['instances']:  
+            pattern_data = {  
+                'nodes': [  
+                    {  
+                        'id': str(node),  
+                        'label': instance.nodes[node].get('label', ''),  
+                        'anchor': instance.nodes[node].get('anchor', 0),  
+                        **{k: v for k, v in instance.nodes[node].items()   
+                           if k not in ['label', 'anchor']}  
+                    }  
+                    for node in instance.nodes()  
+                ],  
+                'edges': [  
+                    {  
+                        'source': str(u),  
+                        'target': str(v),  
+                        'type': data.get('type', ''),  
+                        **{k: v for k, v in data.items() if k != 'type'}  
+                    }  
+                    for u, v, data in instance.edges(data=True)  
+                ],  
+                'metadata': {  
+                    'pattern_key': pattern_key,  
+                    'size': pattern_info['size'],  
+                    'rank': pattern_info['rank'],  
+                    'num_nodes': len(instance),  
+                    'num_edges': instance.number_of_edges(),  
+                    'is_directed': instance.is_directed(),  
+                    'original_count': pattern_info['count'],  # Use unique count as the "true" count
+                    'discovery_frequency': pattern_info['original_count'], # Keep raw hits as extra metadata
+                    'duplicates_removed': pattern_info['duplicates_removed'],  
+                    'frequency_score': pattern_info['count'] / args.n_trials if args.n_trials > 0 else 0
+                }  
+            }
+         
+            json_results.append(pattern_data)  
+    base_path = os.path.splitext(args.out_path)[0]  
+    json_path = base_path + '_all_instances.json'  
+      
+    # Ensure directory exists    
+    os.makedirs(os.path.dirname(json_path), exist_ok=True)    
+        
+    with open(json_path, 'w') as f:      
+        json.dump(json_results, f, indent=2)      
+          
+    logger.info(f"JSON saved to: {json_path}")    
+        
+    return json_path  
+def update_run_index(json_path, args):  
+    """Update index file with run information"""  
+    index_file = "results/run_index.json"  
+      
+    # Load existing index or create new  
+    if os.path.exists(index_file):  
+        with open(index_file, 'r') as f:  
+            index = json.load(f)  
+    else:  
+        index = {"runs": []}  
+      
+    # Add current run  
+    run_info = {  
+        "timestamp": datetime.datetime.now().isoformat(),  
+        "filename": os.path.basename(json_path),  
+        "full_path": json_path,  
+        "dataset": args.dataset,  
+        "n_trials": args.n_trials,  
+        "graph_type": args.graph_type,  
+        "search_strategy": getattr(args, 'search_strategy', 'unknown')  
+    }  
+      
+    index["runs"].append(run_info)  
+      
+    # Save updated index  
+    with open(index_file, 'w') as f:  
+        json.dump(index, f, indent=2)
+def save_and_visualize_all_instances(agent, args):
     try:
         logger.info("="*70)
         logger.info("SAVING AND VISUALIZING ALL PATTERN INSTANCES")
         logger.info("="*70)
-
+        graph_context = {} 
         if not hasattr(agent, 'counts'):
             logger.error("Agent has no 'counts' attribute!")
             return None
-
+         
+        if hasattr(agent, 'dataset'):  
+            logger.info(f"Agent has dataset attribute with {len(agent.dataset)} graphs")  
+        else:  
+            logger.error("Agent has no 'dataset' attribute!")  
+            
+        if hasattr(agent, 'dataset') and agent.dataset:    
+            total_nodes = sum(g.number_of_nodes() for g in agent.dataset)    
+            total_edges = sum(g.number_of_edges() for g in agent.dataset)    
+            graph_types = set('directed' if g.is_directed() else 'undirected' for g in agent.dataset)    
+            
+            graph_context = {    
+                'num_graphs': len(agent.dataset),    
+                'total_nodes': total_nodes,    
+                'total_edges': total_edges,    
+                'graph_types': list(graph_types),    
+                'sampling_trials': args.n_trials,    
+                'neighborhoods_sampled': getattr(args, 'n_neighborhoods', 0),    
+                'sample_method': getattr(args, 'sample_method', 'unknown'),    
+                'min_pattern_size': args.min_pattern_size,    
+                'max_pattern_size': args.max_pattern_size    
+            }  
+            logger.info(f"Graph context created: {graph_context}")  
+        else:  
+            logger.warning("Skipping graph_context - agent.dataset is empty or missing")  
+        
+         
+        if not graph_context:  
+            graph_context = {  
+                'num_graphs': 0,  
+                'total_nodes': 0,  
+                'total_edges': 0,  
+                'graph_types': [],  
+                'sampling_trials': args.n_trials,  
+                'neighborhoods_sampled': getattr(args, 'n_neighborhoods', 0),  
+                'sample_method': getattr(args, 'sample_method', 'unknown'),  
+                'min_pattern_size': args.min_pattern_size,  
+                'max_pattern_size': args.max_pattern_size,  
+                'note': 'Dataset not available on agent'  
+            }  
+            logger.info("Using fallback graph_context")
         if not agent.counts:
             logger.warning("Agent.counts is empty - no patterns to save")
             return None
-
+        
         logger.info(f"Agent.counts has {len(agent.counts)} size categories")
-
-        # Build a mapping from WL hash to representative pattern
-        representative_map = {}
-        if representative_patterns:
-            logger.info(f"Building representative pattern mapping for {len(representative_patterns)} patterns...")
-            for rep_pattern in representative_patterns:
-                wl = utils.wl_hash(rep_pattern, node_anchored=args.node_anchored)
-                representative_map[wl] = rep_pattern
-            logger.info(f"  Mapped {len(representative_map)} representative patterns")
-
+        
         output_data = {}
         total_instances = 0
         total_unique_instances = 0
@@ -720,11 +837,12 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
                     'count': count,  
                     'instances': unique_instances,  
                     
-                    'original_count': original_count,  
+                    'original_count': count,      # Aligned with unique instances for user expectation
+                    'discovery_hits': original_count, # Raw discovery frequency
                     'duplicates_removed': duplicates,
                     'duplication_rate': duplicates / original_count if original_count > 0 else 0,
                     
-                    'frequency_score': original_count / args.n_trials if args.n_trials > 0 else 0,
+                    'frequency_score': count / args.n_trials if args.n_trials > 0 else 0,
                     'discovery_rate': original_count / count if count > 0 else 0,
                     
                     'mining_trials': args.n_trials,
@@ -743,38 +861,47 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
                 else:
                     logger.info(f"  {pattern_key}: {count} instances")
                 
-                # Check if user wants to visualize instances
-                visualize_instances = getattr(args, 'visualize_instances', False)
-
-                if visualize_instances and VISUALIZER_AVAILABLE and visualize_all_pattern_instances:
+                if VISUALIZER_AVAILABLE:
                     try:
-                        # Get the representative pattern for this WL hash
-                        representative_pattern = representative_map.get(wl_hash, None)
+                        from visualizer.visualizer import visualize_all_pattern_instances, visualize_pattern_graph_ext, clear_visualizations
+                        
+                        # Cleanup once at the start of the batch if needed (using rank=1 as trigger)
+                        if rank == 1 and size == args.min_pattern_size:
+                            output_dir = os.path.join("plots", "cluster")
+                            if args.visualize_instances:
+                                clear_visualizations(output_dir, mode="folder")
+                            else:
+                                clear_visualizations(output_dir, mode="flat")
 
-                        if representative_pattern:
-                            logger.info(f"    Using decoder representative pattern for {pattern_key}")
+                        if args.visualize_instances:
+                            # Structured folder mode
+                            success = visualize_all_pattern_instances(
+                                pattern_instances=unique_instances,
+                                pattern_key=pattern_key,
+                                count=count,
+                                output_dir=os.path.join("plots", "cluster"),
+                                visualize_instances=True
+                            )
                         else:
-                            logger.warning(f"    No decoder representative found for {pattern_key}, will select from instances")
-
-                        logger.info(f"    Mode: Visualizing representative + {count} instances in subdirectory")
-
-                        success = visualize_all_pattern_instances(
-                            pattern_instances=unique_instances,
-                            pattern_key=pattern_key,
-                            count=count,
-                            output_dir=os.path.join("plots", "cluster"),
-                            representative_pattern=representative_pattern,
-                            visualize_instances=True
-                        )
+                            # Flat descriptive file mode
+                            # Use first instance as representative (they are same WL hash)
+                            representative = unique_instances[0]
+                            success = visualize_pattern_graph_ext(
+                                pattern=representative,
+                                args=args,
+                                count_by_size={size: rank},
+                                pattern_key=pattern_key
+                            )
+                        
                         if success:
-                            total_visualizations += count
-                            logger.info(f"    ✓ Visualized representative + {count} instances in {pattern_key}/")
+                            total_visualizations += (count if args.visualize_instances else 1)
+                            logger.info(f"    ✓ Visualized {pattern_key}")
                         else:
                             logger.warning(f"    ✗ Visualization failed for {pattern_key}")
                     except Exception as e:
                         logger.error(f"    ✗ Visualization error: {e}")
-                elif not visualize_instances:
-                    logger.info(f"    Mode: Representatives will be visualized directly in plots/cluster/ (no subdirectories)")
+                        import traceback
+                        traceback.print_exc()
                 else:
                     logger.warning(f"    ⚠ Skipping visualization (visualizer not available)")
         
@@ -788,6 +915,9 @@ def save_and_visualize_all_instances(agent, args, representative_patterns=None):
         with open(pkl_path, 'wb') as f:
             pickle.dump(output_data, f, protocol=pickle.HIGHEST_PROTOCOL)
         
+        # Add unique JSON saving  
+        json_path = save_instances_to_json(output_data, args, graph_context)    
+        logger.info(f"JSON saved to: {json_path}")    
         if os.path.exists(pkl_path):
             file_size = os.path.getsize(pkl_path) / 1024  # KB
             logger.info(f"✓ PKL file created successfully ({file_size:.1f} KB)")
@@ -997,8 +1127,8 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
 
     if hasattr(agent, 'counts') and agent.counts:
         logger.info("\nSaving all pattern instances...")
-        pkl_path = save_and_visualize_all_instances(agent, args, out_graphs)
-
+        pkl_path = save_and_visualize_all_instances(agent, args)
+        
         if pkl_path:
             logger.info(f"✓ All instances saved to: {pkl_path}")
         else:
@@ -1009,32 +1139,17 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
 
     count_by_size = defaultdict(int)
     warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
-
+    
     successful_visualizations = 0
-
-    # Only create direct representative visualizations if --visualize_instances is NOT set
-    # (When --visualize_instances IS set, representatives are already in subdirectories)
-    visualize_instances = getattr(args, 'visualize_instances', False)
-
-    if not visualize_instances and VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
-        logger.info("\nVisualizing representative patterns directly in plots/cluster/...")
-        for pattern in out_graphs:
-            if visualize_pattern_graph_ext(pattern, args, count_by_size):
-                successful_visualizations += 1
-            count_by_size[len(pattern)] += 1
-
-        logger.info(f"✓ Visualized {successful_visualizations}/{len(out_graphs)} representative patterns")
-    elif visualize_instances:
-        logger.info("\nSkipping direct representative visualization (representatives already in subdirectories)")
+    
+    if VISUALIZER_AVAILABLE and visualize_pattern_graph_ext:
+        pass
     else:
         logger.warning("⚠ Skipping representative visualization (visualizer not available)")
 
     ensure_directories()
     
     logger.info(f"\nSaving representative patterns to: {args.out_path}")
-    
-    if not os.path.exists("results"):
-        os.makedirs("results")
     with open(args.out_path, "wb") as f:
         pickle.dump(out_graphs, f, protocol=pickle.HIGHEST_PROTOCOL)
     
@@ -1084,188 +1199,142 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
     
     logger.info(f"✓ JSON version saved to: {json_path}")
     
-    json_results = []  
-    for pattern in out_graphs:  
-        pattern_data = {  
-            'nodes': [  
-                {  
-                    'id': str(node),  
-                    'label': pattern.nodes[node].get('label', ''),  
-                    'anchor': pattern.nodes[node].get('anchor', 0),  
-                    **{k: v for k, v in pattern.nodes[node].items()   
-                    if k not in ['label', 'anchor']}  
-                }  
-                for node in pattern.nodes()  
-            ],  
-            'edges': [  
-                {  
-                    'source': str(u),  
-                    'target': str(v),  
-                    'type': data.get('type', ''),  
-                    **{k: v for k, v in data.items() if k != 'type'}  
-                }  
-                for u, v, data in pattern.edges(data=True)  
-            ],  
-            'metadata': {  
-                'num_nodes': len(pattern),  
-                'num_edges': pattern.number_of_edges(),  
-                'is_directed': pattern.is_directed()  
-            }  
-        }  
-        json_results.append(pattern_data) 
-         
-    base_path = os.path.splitext(args.out_path)[0]  
-    if base_path.endswith('.json'):  
-        base_path = os.path.splitext(base_path)[0]  
-      
-    json_path = base_path + '.json'
-
-    
-    with open(json_path, 'w') as f:  
-        json.dump(json_results, f, indent=2)
-        
     return out_graphs
 
 
 def main():
-    ensure_directories()
+    try:
+        ensure_directories()
 
-    parser = argparse.ArgumentParser(description='Decoder arguments')
-    parse_encoder(parser)
-    parse_decoder(parser)
-    
-    args = parser.parse_args()
+        parser = argparse.ArgumentParser(description='Decoder arguments')
+        parse_encoder(parser)
+        parse_decoder(parser)
+        
+        args = parser.parse_args()
 
-    # Safety Check: Neighborhood Size
-    if hasattr(args, 'max_pattern_size') and hasattr(args, 'max_neighborhood_size'):
-        if args.max_pattern_size > args.max_neighborhood_size:
-            logger.warning(
-                f"Configuration Issue: max_pattern_size ({args.max_pattern_size}) is larger than "
-                f"max_neighborhood_size ({args.max_neighborhood_size}). "
-                "The model may fail to find larger patterns. Increasing neighborhood size to match."
-            )
-            args.max_neighborhood_size = args.max_pattern_size
+        logger.info(f"Using dataset: {args.dataset}")
+        logger.info(f"Graph type: {args.graph_type}")
 
-    # Graceful CPU Handling for Streaming Workers
-    if hasattr(args, 'streaming_workers'):
-        available_cpus = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
-        if available_cpus:
-            args.streaming_workers = min(args.streaming_workers, available_cpus)
-            logger.info(f"Optimized streaming_workers: {args.streaming_workers} (Available CPUs: {available_cpus})")
-
-    logger.info(f"Using dataset: {args.dataset}")
-    logger.info(f"Graph type: {args.graph_type}")
-
-    if args.dataset.endswith('.pkl'):
-        with open(args.dataset, 'rb') as f:
-            data = pickle.load(f)
-            
-            if isinstance(data, (nx.Graph, nx.DiGraph)):
-                graph = data
+        if args.dataset.endswith('.pkl'):
+            with open(args.dataset, 'rb') as f:
+                data = pickle.load(f)
                 
-                if args.graph_type == "directed" and not graph.is_directed():
-                    logger.info("Converting undirected graph to directed...")
-                    graph = graph.to_directed()
-                elif args.graph_type == "undirected" and graph.is_directed():
-                    logger.info("Converting directed graph to undirected...")
-                    graph = graph.to_undirected()
-                
-                graph_type = "directed" if graph.is_directed() else "undirected"
-                logger.info(f"Using NetworkX {graph_type} graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
-                
-                sample_edges = list(graph.edges(data=True))[:3]
-                if sample_edges:
-                    logger.info("Sample edge attributes:")
-                    for u, v, attrs in sample_edges:
-                        direction_info = attrs.get('direction', f"{u} -> {v}" if graph.is_directed() else f"{u} -- {v}")
-                        edge_type = attrs.get('type', 'unknown')
-                        logger.info(f"  {direction_info} (type: {edge_type})")
-                
-            elif isinstance(data, dict) and 'nodes' in data and 'edges' in data:
-                if args.graph_type == "directed":
-                    graph = nx.DiGraph()
+                if isinstance(data, (nx.Graph, nx.DiGraph)):
+                    graph = data
+                    
+                    if args.graph_type == "directed" and not graph.is_directed():
+                        logger.info("Converting undirected graph to directed...")
+                        graph = graph.to_directed()
+                    elif args.graph_type == "undirected" and graph.is_directed():
+                        logger.info("Converting directed graph to undirected...")
+                        graph = graph.to_undirected()
+                    
+                    graph_type = "directed" if graph.is_directed() else "undirected"
+                    logger.info(f"Using NetworkX {graph_type} graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
+                    
+                    sample_edges = list(graph.edges(data=True))[:3]
+                    if sample_edges:
+                        logger.info("Sample edge attributes:")
+                        for u, v, attrs in sample_edges:
+                            direction_info = attrs.get('direction', f"{u} -> {v}" if graph.is_directed() else f"{u} -- {v}")
+                            edge_type = attrs.get('type', 'unknown')
+                            logger.info(f"  {direction_info} (type: {edge_type})")
+                    
+                elif isinstance(data, dict) and 'nodes' in data and 'edges' in data:
+                    if args.graph_type == "directed":
+                        graph = nx.DiGraph()
+                    else:
+                        graph = nx.Graph()
+                    graph.add_nodes_from(data['nodes'])
+                    graph.add_edges_from(data['edges'])
+                    logger.info(f"Created {args.graph_type} graph from dict format with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
                 else:
-                    graph = nx.Graph()
-                graph.add_nodes_from(data['nodes'])
-                graph.add_edges_from(data['edges'])
-                logger.info(f"Created {args.graph_type} graph from dict format with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges")
-            else:
-                raise ValueError(f"Unknown pickle format. Expected NetworkX graph or dict with 'nodes'/'edges' keys, got {type(data)}")
-                
-        dataset = [graph]
-        task = 'graph'
-    
-    elif args.dataset == 'enzymes':
-        dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
-        task = 'graph'
-    elif args.dataset == 'cox2':
-        dataset = TUDataset(root='/tmp/cox2', name='COX2')
-        task = 'graph'
-    elif args.dataset == 'reddit-binary':
-        dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
-        task = 'graph'
-    elif args.dataset == 'dblp':
-        dataset = TUDataset(root='/tmp/dblp', name='DBLP_v1')
-        task = 'graph-truncate'
-    elif args.dataset == 'coil':
-        dataset = TUDataset(root='/tmp/coil', name='COIL-DEL')
-        task = 'graph'
-    elif args.dataset.startswith('roadnet-'):
-        graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
-        with open("data/{}.txt".format(args.dataset), "r") as f:
-            for row in f:
-                if not row.startswith("#"):
-                    a, b = row.split("\t")
+                    raise ValueError(f"Unknown pickle format. Expected NetworkX graph or dict with 'nodes'/'edges' keys, got {type(data)}")
+                    
+            dataset = [graph]
+            task = 'graph'
+        
+        elif args.dataset == 'enzymes':
+            dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
+            task = 'graph'
+        elif args.dataset == 'cox2':
+            dataset = TUDataset(root='/tmp/cox2', name='COX2')
+            task = 'graph'
+        elif args.dataset == 'reddit-binary':
+            dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
+            task = 'graph'
+        elif args.dataset == 'dblp':
+            dataset = TUDataset(root='/tmp/dblp', name='DBLP_v1')
+            task = 'graph-truncate'
+        elif args.dataset == 'coil':
+            dataset = TUDataset(root='/tmp/coil', name='COIL-DEL')
+            task = 'graph'
+        elif args.dataset.startswith('roadnet-'):
+            graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
+            with open("data/{}.txt".format(args.dataset), "r") as f:
+                for row in f:
+                    if not row.startswith("#"):
+                        a, b = row.split("\t")
+                        graph.add_edge(int(a), int(b))
+            dataset = [graph]
+            task = 'graph'
+        elif args.dataset == "ppi":
+            dataset = PPI(root="/tmp/PPI")
+            task = 'graph'
+        elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
+            fn = {"diseasome": "bio-diseasome.mtx",
+                "usroads": "road-usroads.mtx",
+                "mn-roads": "mn-roads.mtx",
+                "infect": "infect-dublin.edges"}
+            graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
+            with open("data/{}".format(fn[args.dataset]), "r") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    a, b = line.strip().split(" ")
                     graph.add_edge(int(a), int(b))
-        dataset = [graph]
-        task = 'graph'
-    elif args.dataset == "ppi":
-        dataset = PPI(root="/tmp/PPI")
-        task = 'graph'
-    elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
-        fn = {"diseasome": "bio-diseasome.mtx",
-            "usroads": "road-usroads.mtx",
-            "mn-roads": "mn-roads.mtx",
-            "infect": "infect-dublin.edges"}
-        graph = nx.Graph() if args.graph_type == "undirected" else nx.DiGraph()
-        with open("data/{}".format(fn[args.dataset]), "r") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                a, b = line.strip().split(" ")
-                graph.add_edge(int(a), int(b))
-        dataset = [graph]
-        task = 'graph'
-    elif args.dataset.startswith('plant-'):
-        size = int(args.dataset.split("-")[-1])
-        dataset = make_plant_dataset(size)
-        task = 'graph'
+            dataset = [graph]
+            task = 'graph'
+        elif args.dataset.startswith('plant-'):
+            size = int(args.dataset.split("-")[-1])
+            dataset = make_plant_dataset(size)
+            task = 'graph'
 
-    # Adaptive mode selector
-    num_nodes = sum(len(g) for g in dataset) if isinstance(dataset, list) else len(dataset)
-    threshold = getattr(args, 'auto_streaming_threshold', 100000)
-    
-    use_streaming = (num_nodes > threshold or args.n_trials > 2000) and getattr(args, 'streaming_workers', 1) > 1
-    
-    logger.info("\nStarting pattern mining...")
-    if use_streaming:
-        logger.info(f"Adaptive Mode: Enabling Batch Processing for {num_nodes} nodes. 🚀")
-        # Ensure search phase uses the same optimized worker count
-        args.n_workers = args.streaming_workers
-        # Pass dataset and then clear local reference
-        pattern_growth_streaming(dataset, task, args)
-        if isinstance(dataset, list):
-            dataset.clear()
-        dataset = None
-    else:
-        logger.info("Adaptive Mode: Standard Sequential Processing.")
-        if not hasattr(args, 'n_workers'):
-            args.n_workers = 1
-        pattern_growth(dataset, task, args)
-    
-    import gc
-    gc.collect()
-    logger.info("\n✓ Pattern mining complete!")
+        # Adaptive mode selector
+        if isinstance(dataset, list) and len(dataset) > 0 and isinstance(dataset[0], (nx.Graph, nx.DiGraph)):
+             num_nodes = sum(len(g) for g in dataset)
+        else:
+             num_nodes = 0 
+        
+        threshold = getattr(args, 'auto_streaming_threshold', 100000)
+        
+        # Check if streaming should be used (large graph OR many trials) AND multi-core enabled
+        use_streaming = (num_nodes > threshold or args.n_trials > 2000) and getattr(args, 'streaming_workers', 1) > 1
+        
+        logger.info("\nStarting pattern mining...")
+        if use_streaming:
+            logger.info(f"Adaptive Mode: Enabling Batch Processing for {num_nodes} nodes. 🚀")
+            # Ensure search phase uses the same optimized worker count
+            args.n_workers = args.streaming_workers
+            # Pass dataset and then clear local reference
+            pattern_growth_streaming(dataset, task, args)
+            if isinstance(dataset, list):
+                dataset.clear()
+            dataset = None
+        else:
+            logger.info("Adaptive Mode: Standard Sequential Processing.")
+            if not hasattr(args, 'n_workers'):
+                args.n_workers = 1
+            pattern_growth(dataset, task, args)
+        
+        import gc
+        gc.collect()
+        logger.info("\n✓ Pattern mining complete!")
+
+    except Exception as e:
+        print(f"FATAL ERROR in main: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
