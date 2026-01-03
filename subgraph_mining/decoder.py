@@ -78,6 +78,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+try:
+    if mp.get_sharing_strategy() != 'file_system':
+        mp.set_sharing_strategy('file_system')
+        logger.info("Universal: Using 'file_system' sharing strategy for cross-process efficiency.")
+except Exception as e:
+    logger.warning(f"Could not set sharing strategy: {e}")
+
 # Dataset class for parallel processing must be at module level for pickling
 class TargetedDataset(Dataset):
     def __init__(self, gl):
@@ -136,9 +143,6 @@ def generate_target_embeddings(dataset, model, args):
     random.seed(42)
     np.random.seed(42)
 
-    if mp.get_sharing_strategy() != 'file_system':
-        mp.set_sharing_strategy('file_system')
-        logger.info("Using 'file_system' sharing strategy for Docker compatibility.")
     
     # In batch mode, dataset is a list containing typically one large graph
     dataset_graph = dataset[0] 
