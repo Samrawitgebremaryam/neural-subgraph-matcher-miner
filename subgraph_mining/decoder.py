@@ -78,12 +78,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-try:
-    if mp.get_sharing_strategy() != 'file_system':
-        mp.set_sharing_strategy('file_system')
-        logger.info("Universal: Using 'file_system' sharing strategy for cross-process efficiency.")
-except Exception as e:
-    logger.warning(f"Could not set sharing strategy: {e}")
 
 # Dataset class for parallel processing must be at module level for pickling
 class TargetedDataset(Dataset):
@@ -205,7 +199,7 @@ def generate_target_embeddings(dataset, model, args):
     # Precise Batching
     targeted_dataset = TargetedDataset(seed_graphs)
     
-    num_workers = args.streaming_workers if len(dataset_graph) < 500000 else 0
+    num_workers = 0 
     pin_memory = torch.cuda.is_available()
     
     dataloader = DataLoader(targeted_dataset, batch_size=args.batch_size, 
