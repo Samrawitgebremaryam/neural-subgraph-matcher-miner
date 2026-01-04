@@ -35,6 +35,9 @@ from subgraph_matching.config import parse_encoder
 import datetime  
 import uuid 
 
+# Add root to sys.path for robust imports in various environments (Docker, etc)
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
 
 try:
     from visualizer.visualizer import (
@@ -43,8 +46,8 @@ try:
         clear_visualizations
     )
     VISUALIZER_AVAILABLE = True
-except ImportError:
-    print("WARNING: Could not import visualizer - visualization will be skipped")
+except Exception as e:
+    print(f"WARNING: Could not import visualizer: {e} - visualization will be skipped")
     VISUALIZER_AVAILABLE = False
     visualize_pattern_graph_ext = None
     visualize_all_pattern_instances = None
@@ -970,7 +973,6 @@ def save_and_visualize_all_instances(agent, args):
                 
                 if VISUALIZER_AVAILABLE:
                     try:
-                        # Using top-level imports instead of local to avoid ImportError
                         
                         # Cleanup once at the start of the batch if needed (using rank=1 as trigger)
                         if rank == 1 and size == args.min_pattern_size:
@@ -1429,6 +1431,8 @@ def main():
             logger.info(f"Adaptive Mode: Enabling Batch Processing for {num_nodes} nodes. 🚀")
             # Ensure search phase uses the same optimized worker count
             args.n_workers = args.streaming_workers
+            if args.n_workers <= 0:
+                logger.info("Sequential Search Mode enabled (n_workers=0)")
             # Pass dataset and then clear local reference
             pattern_growth_streaming(dataset, task, args)
             if isinstance(dataset, list):
