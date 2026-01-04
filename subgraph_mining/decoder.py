@@ -37,13 +37,18 @@ import uuid
 
 
 try:
-    from visualizer.visualizer import visualize_pattern_graph_ext, visualize_all_pattern_instances
+    from visualizer.visualizer import (
+        visualize_pattern_graph_ext, 
+        visualize_all_pattern_instances,
+        clear_visualizations
+    )
     VISUALIZER_AVAILABLE = True
 except ImportError:
     print("WARNING: Could not import visualizer - visualization will be skipped")
     VISUALIZER_AVAILABLE = False
     visualize_pattern_graph_ext = None
     visualize_all_pattern_instances = None
+    clear_visualizations = None
 
 from subgraph_mining.search_agents import (
     GreedySearchAgent, MCTSSearchAgent, 
@@ -65,7 +70,6 @@ from itertools import permutations
 from queue import PriorityQueue
 import matplotlib.colors as mcolors
 import networkx as nx
-import torch.multiprocessing as mp
 from sklearn.decomposition import PCA
 import json 
 import logging
@@ -78,18 +82,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Torch Multiprocessing Strategy for Docker Compatibility
-# This prevents 'RuntimeError: unable to write to file' in environments with limited /dev/shm
-try:
-    import torch.multiprocessing as mp
-    if mp.get_sharing_strategy() != 'file_system':
-        mp.set_sharing_strategy('file_system')
-        logger.info("Universal: Using 'file_system' sharing strategy for cross-process efficiency.")
-except Exception as e:
-    logger.warning(f"Could not set sharing strategy: {e}")
 
 
-# Dataset class for parallel processing must be at module level for pickling
 # Dataset class for parallel processing with on-the-fly sampling
 class TargetedDataset(Dataset):
     def __init__(self, dataset_graph, selected_seeds, args):
@@ -105,7 +99,6 @@ class TargetedDataset(Dataset):
     def __getitem__(self, idx):
         seed = self.selected_seeds[idx]
         
-        # ON-THE-FLY EXTRACTION: This happens inside the parallel worker
         nodes_in_bubble = []
         queue = collections.deque([(seed, 0)]) 
         visited = {seed}
@@ -155,7 +148,7 @@ class StreamingNeighborhoodDataset(Dataset):
             random.randint(self.args.min_neighborhood_size,
                 self.args.max_neighborhood_size), self.args.graph_type)
         
-        neigh_graph = graph.subgraph(neigh)
+        neigh_graph = graph.subgraph(neigh).copy()
         neigh_graph = nx.convert_node_labels_to_integers(neigh_graph)
         neigh_graph.add_edge(0, 0)
         
@@ -164,7 +157,7 @@ class StreamingNeighborhoodDataset(Dataset):
         return DSGraph(std_graph)
 
 
-# Lazy List for Search Phase: Extracts neighborhoods only when iterated
+# Extracts neighborhoods only when iterated
 class LazyNeighborhoodGraphList:
     def __init__(self, dataset_graph, selected_seeds, args):
         self.dataset_graph = dataset_graph
@@ -226,8 +219,6 @@ def generate_target_embeddings(dataset, model, args):
     random.seed(42)
     np.random.seed(42)
 
-    
-    # In batch mode, dataset is a list containing typically one large graph
     dataset_graph = dataset[0] 
     
     # select seeds from the FULL graph first to ensure we start exactly where intended.
@@ -246,7 +237,6 @@ def generate_target_embeddings(dataset, model, args):
             selected_seeds = np.random.choice(all_nodes, size=n_seeds, replace=False)
             logger.info(f"Tree Method: Sampled {n_seeds} random seeds for graph coverage.")
 
-    # On-the-Fly Architecture: Dataset now performs sampling in workers
     targeted_dataset = TargetedDataset(dataset_graph, selected_seeds, args)
     
     num_workers = args.streaming_workers
@@ -274,6 +264,12 @@ def generate_target_embeddings(dataset, model, args):
     except RuntimeError as e:
         if "unable to write to file" in str(e) or "shared memory" in str(e).lower():
             logger.warning("Docker SHM Limit Hit! Falling back to 100% stable single-process mode...")
+            
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
             # Fallback to single process
             num_workers = 0
             dataloader = create_loader(0, args.batch_size)
@@ -284,9 +280,6 @@ def generate_target_embeddings(dataset, model, args):
                     embs.append(emb.to(torch.device("cpu")))
         else:
             raise e
-    
-    # We return the embeddings and a Lazy Graph List for the search phase
-    # This avoids storing 10,000 graphs in memory at once.
     lazy_graphs = LazyNeighborhoodGraphList(dataset_graph, selected_seeds, args)
     return embs, lazy_graphs
 
@@ -977,7 +970,7 @@ def save_and_visualize_all_instances(agent, args):
                 
                 if VISUALIZER_AVAILABLE:
                     try:
-                        from visualizer.visualizer import visualize_all_pattern_instances, visualize_pattern_graph_ext, clear_visualizations
+                        # Using top-level imports instead of local to avoid ImportError
                         
                         # Cleanup once at the start of the batch if needed (using rank=1 as trigger)
                         if rank == 1 and size == args.min_pattern_size:
@@ -1038,6 +1031,12 @@ def save_and_visualize_all_instances(agent, args):
         else:
             logger.error("✗ PKL file was not created!")
             return None
+        
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.info("GPU memory cleared after visualization.")
         
         logger.info("="*70)
         logger.info("✓ COMPLETE")
