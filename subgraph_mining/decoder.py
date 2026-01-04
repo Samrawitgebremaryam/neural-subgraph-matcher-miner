@@ -6,8 +6,8 @@ import time
 import os
 import pickle
 import sys
-from pathlib import Path
 import traceback
+from pathlib import Path
 
 from deepsnap.batch import Batch
 from deepsnap.graph import Graph as DSGraph
@@ -35,20 +35,19 @@ from subgraph_matching.config import parse_encoder
 import datetime  
 import uuid 
 
+# Add root to sys.path for robust imports in various environments (Docker, etc)
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
 
 try:
-    from visualizer.visualizer import (
-        visualize_pattern_graph_ext, 
-        visualize_all_pattern_instances,
-        clear_visualizations
-    )
+    from visualizer.visualizer import visualize_pattern_graph_ext, visualize_all_pattern_instances
     VISUALIZER_AVAILABLE = True
 except ImportError:
     print("WARNING: Could not import visualizer - visualization will be skipped")
     VISUALIZER_AVAILABLE = False
     visualize_pattern_graph_ext = None
     visualize_all_pattern_instances = None
-    clear_visualizations = None
+
 
 from subgraph_mining.search_agents import (
     GreedySearchAgent, MCTSSearchAgent, 
@@ -85,6 +84,46 @@ logger = logging.getLogger(__name__)
 
 
 # Dataset class for parallel processing with on-the-fly sampling
+def extract_neighborhood(dataset_graph, seed, args, is_directed):
+    """
+    Unified neighborhood extraction logic to ensure consistency across all datasets.
+    """
+    nodes_in_bubble = []
+    queue = collections.deque([(seed, 0)]) 
+    visited = {seed}
+    
+    while queue and len(nodes_in_bubble) < args.max_neighborhood_size:
+        curr, dist = queue.popleft()
+        nodes_in_bubble.append(curr)
+
+        if dist < args.radius:
+            neighbors = dataset_graph.successors(curr) if is_directed else dataset_graph.neighbors(curr)
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, dist + 1))
+    
+    # Induce subgraph
+    neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
+    
+    neigh_graph.graph['anchor_node_original'] = seed
+    
+    # Standardize mapping
+    mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
+    neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
+    
+    new_anchor_id = mapping[seed]
+    neigh_graph.graph['anchor_node'] = new_anchor_id
+    
+    # Label anchor attribute explicitly
+    nx.set_node_attributes(neigh_graph, 0, 'anchor')
+    neigh_graph.nodes[new_anchor_id]['anchor'] = 1
+    
+    if neigh_graph.number_of_edges() == 0:
+        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
+        
+    return neigh_graph, new_anchor_id
+
 class TargetedDataset(Dataset):
     def __init__(self, dataset_graph, selected_seeds, args):
         self.dataset_graph = dataset_graph
@@ -98,36 +137,7 @@ class TargetedDataset(Dataset):
 
     def __getitem__(self, idx):
         seed = self.selected_seeds[idx]
-        
-        nodes_in_bubble = []
-        queue = collections.deque([(seed, 0)]) 
-        visited = {seed}
-        
-        while queue and len(nodes_in_bubble) < self.args.max_neighborhood_size:
-            curr, dist = queue.popleft()
-            nodes_in_bubble.append(curr)
-
-            if dist < self.radius:
-                neighbors = self.dataset_graph.successors(curr) if self.is_directed else self.dataset_graph.neighbors(curr)
-                for neighbor in neighbors:
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        queue.append((neighbor, dist + 1))
-        
-        # Induce subgraph and standardize
-        neigh_graph = self.dataset_graph.subgraph(nodes_in_bubble).copy()
-        neigh_graph.graph['anchor_node_original'] = seed
-        
-        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
-        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
-        
-        new_anchor_id = mapping[seed]
-        neigh_graph.graph['anchor_node'] = new_anchor_id
-        
-        nx.set_node_attributes(neigh_graph, 0, 'anchor')
-        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
-        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
-        
+        neigh_graph, new_anchor_id = extract_neighborhood(self.dataset_graph, seed, self.args, self.is_directed)
         std_g = utils.standardize_graph(neigh_graph, anchor=new_anchor_id)
         return DSGraph(std_g)
 
@@ -150,7 +160,6 @@ class StreamingNeighborhoodDataset(Dataset):
         
         neigh_graph = graph.subgraph(neigh).copy()
         neigh_graph = nx.convert_node_labels_to_integers(neigh_graph)
-        neigh_graph.add_edge(0, 0)
         
         anchor = 0 if self.args.node_anchored else None
         std_graph = utils.standardize_graph(neigh_graph, anchor)
@@ -171,31 +180,7 @@ class LazyNeighborhoodGraphList:
 
     def __getitem__(self, idx):
         seed = self.selected_seeds[idx]
-        nodes_in_bubble = []
-        queue = collections.deque([(seed, 0)]) 
-        visited = {seed}
-        
-        while queue and len(nodes_in_bubble) < self.args.max_neighborhood_size:
-            curr, dist = queue.popleft()
-            nodes_in_bubble.append(curr)
-
-            if dist < self.radius:
-                neighbors = self.dataset_graph.successors(curr) if self.is_directed else self.dataset_graph.neighbors(curr)
-                for neighbor in neighbors:
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        queue.append((neighbor, dist + 1))
-        
-        neigh_graph = self.dataset_graph.subgraph(nodes_in_bubble).copy()
-        neigh_graph.graph['anchor_node_original'] = seed
-        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
-        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
-        
-        new_anchor_id = mapping[seed]
-        neigh_graph.graph['anchor_node'] = new_anchor_id
-        nx.set_node_attributes(neigh_graph, 0, 'anchor')
-        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
-        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
+        neigh_graph, _ = extract_neighborhood(self.dataset_graph, seed, self.args, self.is_directed)
         return neigh_graph
 
 
@@ -224,9 +209,17 @@ def generate_target_embeddings(dataset, model, args):
     # select seeds from the FULL graph first to ensure we start exactly where intended.
     all_nodes = sorted(list(dataset_graph.nodes()))
     
+    # Filter out "dead seeds" (isolated nodes) that cannot contain patterns
+    # This prevents DeepSnap from crashing on 0-edge subgraphs
+    is_directed = (args.graph_type == "directed")
+    if is_directed:
+        all_nodes = [n for n in all_nodes if dataset_graph.out_degree(n) > 0]
+    else:
+        all_nodes = [n for n in all_nodes if dataset_graph.degree(n) > 0]
+        
     if args.sample_method == "radial":
         selected_seeds = all_nodes
-        logger.info(f"Radial Method: Targeting all {len(selected_seeds)} nodes as seeds for global coverage.")
+        logger.info(f"Radial Method: Targeting {len(selected_seeds)} non-isolated nodes for coverage.")
     else:
         # 100% Uniform Random Seeding
         n_seeds = args.n_neighborhoods
@@ -970,6 +963,9 @@ def save_and_visualize_all_instances(agent, args):
                 
                 if VISUALIZER_AVAILABLE:
                     try:
+                        from visualizer.visualizer import visualize_all_pattern_instances, visualize_pattern_graph_ext, clear_visualizations
+                        
+                        # Use top-level imports already defined to avoid context issues
                         
                         # Cleanup once at the start of the batch if needed (using rank=1 as trigger)
                         if rank == 1 and size == args.min_pattern_size:
@@ -1426,8 +1422,29 @@ def main():
         logger.info("\nStarting pattern mining...")
         if use_streaming:
             logger.info(f"Adaptive Mode: Enabling Batch Processing for {num_nodes} nodes. 🚀")
+            
+            # Automatically tune workers for performance vs stability
+            total_nodes = num_nodes
+            original_workers = args.streaming_workers
+            
+            if total_nodes > 3500000:
+                args.streaming_workers = 0
+                reason = "Maximum Stability (Sequential)"
+            elif total_nodes > 500000:
+                args.streaming_workers = min(original_workers, 2)
+                reason = "Balanced Performance (2 workers)"
+            else: 
+                args.streaming_workers = original_workers
+                reason = "Maximum Speed ({} workers)".format(args.streaming_workers)
+
+            if args.streaming_workers != original_workers:
+                logger.info(f"⚠ SMART SCALING: Graph size {total_nodes:,} nodes.")
+                logger.info(f"  Adjusting streaming_workers: {original_workers} -> {args.streaming_workers} for {reason}.")
+            
             # Ensure search phase uses the same optimized worker count
             args.n_workers = args.streaming_workers
+            if args.n_workers <= 0:
+                logger.info("Sequential Search Mode enabled (n_workers=0)")
             # Pass dataset and then clear local reference
             pattern_growth_streaming(dataset, task, args)
             if isinstance(dataset, list):
