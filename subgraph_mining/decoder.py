@@ -6,8 +6,8 @@ import time
 import os
 import pickle
 import sys
-from pathlib import Path
 import traceback
+from pathlib import Path
 
 from deepsnap.batch import Batch
 from deepsnap.graph import Graph as DSGraph
@@ -40,18 +40,14 @@ if os.getcwd() not in sys.path:
     sys.path.append(os.getcwd())
 
 try:
-    from visualizer.visualizer import (
-        visualize_pattern_graph_ext, 
-        visualize_all_pattern_instances,
-        clear_visualizations
-    )
+    from visualizer.visualizer import visualize_pattern_graph_ext, visualize_all_pattern_instances
     VISUALIZER_AVAILABLE = True
-except Exception as e:
-    print(f"WARNING: Could not import visualizer: {e} - visualization will be skipped")
+except ImportError:
+    print("WARNING: Could not import visualizer - visualization will be skipped")
     VISUALIZER_AVAILABLE = False
     visualize_pattern_graph_ext = None
     visualize_all_pattern_instances = None
-    clear_visualizations = None
+
 
 from subgraph_mining.search_agents import (
     GreedySearchAgent, MCTSSearchAgent, 
@@ -973,6 +969,9 @@ def save_and_visualize_all_instances(agent, args):
                 
                 if VISUALIZER_AVAILABLE:
                     try:
+                        from visualizer.visualizer import visualize_all_pattern_instances, visualize_pattern_graph_ext, clear_visualizations
+                        
+                        # Use top-level imports already defined to avoid context issues
                         
                         # Cleanup once at the start of the batch if needed (using rank=1 as trigger)
                         if rank == 1 and size == args.min_pattern_size:
@@ -1429,6 +1428,25 @@ def main():
         logger.info("\nStarting pattern mining...")
         if use_streaming:
             logger.info(f"Adaptive Mode: Enabling Batch Processing for {num_nodes} nodes. 🚀")
+            
+            # Automatically tune workers for performance vs stability
+            total_nodes = num_nodes
+            original_workers = args.streaming_workers
+            
+            if total_nodes > 3500000:
+                args.streaming_workers = 0
+                reason = "Maximum Stability (Sequential)"
+            elif total_nodes > 500000:
+                args.streaming_workers = min(original_workers, 2)
+                reason = "Balanced Performance (2 workers)"
+            else: 
+                args.streaming_workers = original_workers
+                reason = "Maximum Speed ({} workers)".format(args.streaming_workers)
+
+            if args.streaming_workers != original_workers:
+                logger.info(f"⚠ SMART SCALING: Graph size {total_nodes:,} nodes.")
+                logger.info(f"  Adjusting streaming_workers: {original_workers} -> {args.streaming_workers} for {reason}.")
+            
             # Ensure search phase uses the same optimized worker count
             args.n_workers = args.streaming_workers
             if args.n_workers <= 0:
