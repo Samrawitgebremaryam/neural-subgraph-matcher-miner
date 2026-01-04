@@ -37,13 +37,18 @@ import uuid
 
 
 try:
-    from visualizer.visualizer import visualize_pattern_graph_ext, visualize_all_pattern_instances
+    from visualizer.visualizer import (
+        visualize_pattern_graph_ext, 
+        visualize_all_pattern_instances,
+        clear_visualizations
+    )
     VISUALIZER_AVAILABLE = True
 except ImportError:
     print("WARNING: Could not import visualizer - visualization will be skipped")
     VISUALIZER_AVAILABLE = False
     visualize_pattern_graph_ext = None
     visualize_all_pattern_instances = None
+    clear_visualizations = None
 
 from subgraph_mining.search_agents import (
     GreedySearchAgent, MCTSSearchAgent, 
@@ -65,7 +70,6 @@ from itertools import permutations
 from queue import PriorityQueue
 import matplotlib.colors as mcolors
 import networkx as nx
-import torch.multiprocessing as mp
 from sklearn.decomposition import PCA
 import json 
 import logging
@@ -79,16 +83,52 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Dataset class for parallel processing must be at module level for pickling
+
+# Dataset class for parallel processing with on-the-fly sampling
 class TargetedDataset(Dataset):
-    def __init__(self, gl):
-        self.gl = gl
+    def __init__(self, dataset_graph, selected_seeds, args):
+        self.dataset_graph = dataset_graph
+        self.selected_seeds = selected_seeds
+        self.args = args
+        self.is_directed = (args.graph_type == "directed")
+        self.radius = args.radius
+
     def __len__(self):
-        return len(self.gl)
+        return len(self.selected_seeds)
+
     def __getitem__(self, idx):
-        g = self.gl[idx]
-        anchor = g.graph.get('anchor_node')
-        std_g = utils.standardize_graph(g, anchor=anchor)
+        seed = self.selected_seeds[idx]
+        
+        nodes_in_bubble = []
+        queue = collections.deque([(seed, 0)]) 
+        visited = {seed}
+        
+        while queue and len(nodes_in_bubble) < self.args.max_neighborhood_size:
+            curr, dist = queue.popleft()
+            nodes_in_bubble.append(curr)
+
+            if dist < self.radius:
+                neighbors = self.dataset_graph.successors(curr) if self.is_directed else self.dataset_graph.neighbors(curr)
+                for neighbor in neighbors:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, dist + 1))
+        
+        # Induce subgraph and standardize
+        neigh_graph = self.dataset_graph.subgraph(nodes_in_bubble).copy()
+        neigh_graph.graph['anchor_node_original'] = seed
+        
+        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
+        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
+        
+        new_anchor_id = mapping[seed]
+        neigh_graph.graph['anchor_node'] = new_anchor_id
+        
+        nx.set_node_attributes(neigh_graph, 0, 'anchor')
+        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
+        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
+        
+        std_g = utils.standardize_graph(neigh_graph, anchor=new_anchor_id)
         return DSGraph(std_g)
 
 #  Streaming Dataset for large graphs
@@ -108,13 +148,55 @@ class StreamingNeighborhoodDataset(Dataset):
             random.randint(self.args.min_neighborhood_size,
                 self.args.max_neighborhood_size), self.args.graph_type)
         
-        neigh_graph = graph.subgraph(neigh)
+        neigh_graph = graph.subgraph(neigh).copy()
         neigh_graph = nx.convert_node_labels_to_integers(neigh_graph)
         neigh_graph.add_edge(0, 0)
         
         anchor = 0 if self.args.node_anchored else None
         std_graph = utils.standardize_graph(neigh_graph, anchor)
         return DSGraph(std_graph)
+
+
+# Extracts neighborhoods only when iterated
+class LazyNeighborhoodGraphList:
+    def __init__(self, dataset_graph, selected_seeds, args):
+        self.dataset_graph = dataset_graph
+        self.selected_seeds = selected_seeds
+        self.args = args
+        self.is_directed = (args.graph_type == "directed")
+        self.radius = args.radius
+
+    def __len__(self):
+        return len(self.selected_seeds)
+
+    def __getitem__(self, idx):
+        seed = self.selected_seeds[idx]
+        nodes_in_bubble = []
+        queue = collections.deque([(seed, 0)]) 
+        visited = {seed}
+        
+        while queue and len(nodes_in_bubble) < self.args.max_neighborhood_size:
+            curr, dist = queue.popleft()
+            nodes_in_bubble.append(curr)
+
+            if dist < self.radius:
+                neighbors = self.dataset_graph.successors(curr) if self.is_directed else self.dataset_graph.neighbors(curr)
+                for neighbor in neighbors:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, dist + 1))
+        
+        neigh_graph = self.dataset_graph.subgraph(nodes_in_bubble).copy()
+        neigh_graph.graph['anchor_node_original'] = seed
+        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
+        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
+        
+        new_anchor_id = mapping[seed]
+        neigh_graph.graph['anchor_node'] = new_anchor_id
+        nx.set_node_attributes(neigh_graph, 0, 'anchor')
+        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
+        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
+        return neigh_graph
 
 
 def collate_fn(ds_graphs):
@@ -136,8 +218,7 @@ def generate_target_embeddings(dataset, model, args):
     # Reproducibility
     random.seed(42)
     np.random.seed(42)
-    
-    # In batch mode, dataset is a list containing typically one large graph
+
     dataset_graph = dataset[0] 
     
     # select seeds from the FULL graph first to ensure we start exactly where intended.
@@ -156,66 +237,51 @@ def generate_target_embeddings(dataset, model, args):
             selected_seeds = np.random.choice(all_nodes, size=n_seeds, replace=False)
             logger.info(f"Tree Method: Sampled {n_seeds} random seeds for graph coverage.")
 
-    is_directed = (args.graph_type == "directed")
-    radius = args.radius
+    targeted_dataset = TargetedDataset(dataset_graph, selected_seeds, args)
     
-    seed_graphs = []
-    
-    logger.info(f"Extracting neighborhoods (Max Size: {args.max_neighborhood_size}, Radius: {radius})...")
-    
-    for seed in tqdm(selected_seeds):
-        nodes_in_bubble = []
-        queue = collections.deque([(seed, 0)]) 
-        visited = {seed}
-        
-        while queue and len(nodes_in_bubble) < args.max_neighborhood_size:
-            curr, dist = queue.popleft()
-            nodes_in_bubble.append(curr)
-
-            if dist < radius:
-                neighbors = dataset_graph.successors(curr) if is_directed else dataset_graph.neighbors(curr)
-                for neighbor in neighbors:
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        queue.append((neighbor, dist + 1))
-        
-        neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
-        
-        neigh_graph.graph['anchor_node_original'] = seed
-        
-        mapping = {node: i for i, node in enumerate(neigh_graph.nodes())}
-        neigh_graph = nx.relabel_nodes(neigh_graph, mapping)
-        
-        new_anchor_id = mapping[seed]
-        
-        neigh_graph.graph['anchor_node'] = new_anchor_id
-        
-        nx.set_node_attributes(neigh_graph, 0, 'anchor')
-        neigh_graph.nodes[new_anchor_id]['anchor'] = 1
-        neigh_graph.add_edge(new_anchor_id, new_anchor_id)
-        seed_graphs.append(neigh_graph)
-
-    # Precise Batching
-    targeted_dataset = TargetedDataset(seed_graphs)
-    
-    num_workers = 0 
+    num_workers = args.streaming_workers
+    safe_batch_size = min(args.batch_size, 64) if num_workers > 0 else args.batch_size
     pin_memory = torch.cuda.is_available()
     
-    dataloader = DataLoader(targeted_dataset, batch_size=args.batch_size, 
-                            shuffle=False, collate_fn=collate_fn, 
-                            num_workers=num_workers, pin_memory=pin_memory)
+    def create_loader(w, b):
+        return DataLoader(targeted_dataset, batch_size=b, 
+                          shuffle=False, collate_fn=collate_fn, 
+                          num_workers=w, pin_memory=pin_memory)
+
+    dataloader = create_loader(num_workers, safe_batch_size)
 
     embs = []
     device = utils.get_device()
     model.to(device)
     
-    logger.info(f"Generating embeddings for {len(seed_graphs)} targeted neighborhoods...")
-    for batch in tqdm(dataloader):
-        with torch.no_grad():
-            emb = model.emb_model(batch.to(device))
-            embs.append(emb.to(torch.device("cpu")))
+    logger.info(f"Generating embeddings for {len(selected_seeds)} targeted neighborhoods (Batch: {safe_batch_size}, Workers: {num_workers})...")
     
-    return embs, seed_graphs
+    try:
+        for batch in tqdm(dataloader):
+            with torch.no_grad():
+                emb = model.emb_model(batch.to(device))
+                embs.append(emb.to(torch.device("cpu")))
+    except RuntimeError as e:
+        if "unable to write to file" in str(e) or "shared memory" in str(e).lower():
+            logger.warning("Docker SHM Limit Hit! Falling back to 100% stable single-process mode...")
+            
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Fallback to single process
+            num_workers = 0
+            dataloader = create_loader(0, args.batch_size)
+            embs = []
+            for batch in tqdm(dataloader, desc="Stable Fallback"):
+                with torch.no_grad():
+                    emb = model.emb_model(batch.to(device))
+                    embs.append(emb.to(torch.device("cpu")))
+        else:
+            raise e
+    lazy_graphs = LazyNeighborhoodGraphList(dataset_graph, selected_seeds, args)
+    return embs, lazy_graphs
 
 
 def ensure_directories():
@@ -325,7 +391,11 @@ def pattern_growth_streaming(dataset, task, args):
     
     # Parallel search
     logger.info("Search phase starting with precomputed embeddings...")
+    # Force use_whole_graphs=True because the input 'seed_graphs' are already the extracted neighborhoods
+    original_use_whole = args.use_whole_graphs
+    args.use_whole_graphs = True
     found_patterns = pattern_growth(seed_graphs, task, args, precomputed_data=global_embs, preloaded_model=model)
+    args.use_whole_graphs = original_use_whole
     
     # Global Frequency Validation (Accuracy validator for batch processing)
     logger.info("Performing Global Frequency Validation on discovered patterns...")
@@ -348,9 +418,10 @@ def pattern_growth_streaming(dataset, task, args):
             epsilon = 1e-5
             support_count = (violation_sq < epsilon).sum().item()
             
-            logger.info(f"Pattern Size {len(pattern)}: Corrected Support {pattern.graph.get('support', 0)} -> {support_count} (Universe Size: {len(global_embs)})")
+            total_universe_size = global_matrix.shape[0]
+            logger.info(f"Pattern Size {len(pattern)}: Corrected Support {pattern.graph.get('support', 0)} -> {support_count} (Universe Size: {total_universe_size})")
             pattern.graph['support'] = support_count
-            pattern.graph['frequency'] = support_count / len(global_embs)
+            pattern.graph['frequency'] = support_count / total_universe_size
 
     return found_patterns
 
@@ -899,7 +970,6 @@ def save_and_visualize_all_instances(agent, args):
                 
                 if VISUALIZER_AVAILABLE:
                     try:
-                        from visualizer.visualizer import visualize_all_pattern_instances, visualize_pattern_graph_ext, clear_visualizations
                         
                         # Cleanup once at the start of the batch if needed (using rank=1 as trigger)
                         if rank == 1 and size == args.min_pattern_size:
@@ -960,6 +1030,12 @@ def save_and_visualize_all_instances(agent, args):
         else:
             logger.error("✗ PKL file was not created!")
             return None
+        
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.info("GPU memory cleared after visualization.")
         
         logger.info("="*70)
         logger.info("✓ COMPLETE")
@@ -1344,8 +1420,8 @@ def main():
         
         threshold = getattr(args, 'auto_streaming_threshold', 100000)
         
-        # Check if streaming should be used (large graph OR many trials) AND multi-core enabled
-        use_streaming = (num_nodes > threshold or args.n_trials > 2000) and getattr(args, 'streaming_workers', 1) > 1
+        # Check if streaming should be used (large graph OR many trials)
+        use_streaming = (num_nodes > threshold or args.n_trials > 2000)
         
         logger.info("\nStarting pattern mining...")
         if use_streaming:
