@@ -425,9 +425,10 @@ def pattern_growth_streaming(dataset, task, args):
             epsilon = 1e-5
             support_count = (violation_sq < epsilon).sum().item()
             
-            logger.info(f"Pattern Size {len(pattern)}: Corrected Support {pattern.graph.get('support', 0)} -> {support_count} (Universe Size: {len(global_embs)})")
+            total_universe_size = global_matrix.shape[0]
+            logger.info(f"Pattern Size {len(pattern)}: Corrected Support {pattern.graph.get('support', 0)} -> {support_count} (Universe Size: {total_universe_size})")
             pattern.graph['support'] = support_count
-            pattern.graph['frequency'] = support_count / len(global_embs)
+            pattern.graph['frequency'] = support_count / total_universe_size
 
     return found_patterns
 
@@ -1421,8 +1422,8 @@ def main():
         
         threshold = getattr(args, 'auto_streaming_threshold', 100000)
         
-        # Check if streaming should be used (large graph OR many trials) AND multi-core enabled
-        use_streaming = (num_nodes > threshold or args.n_trials > 2000) and getattr(args, 'streaming_workers', 1) > 1
+        # Check if streaming should be used (large graph OR many trials)
+        use_streaming = (num_nodes > threshold or args.n_trials > 2000)
         
         logger.info("\nStarting pattern mining...")
         if use_streaming:
