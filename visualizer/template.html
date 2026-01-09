@@ -9,12 +9,27 @@
     <title>Interactive Graph Visualizer</title>
     <style>
         :root {
-            /* Color Palette - Light Theme */
-            --bg-primary: #fafafa;
-            --bg-secondary: rgba(255, 255, 255, 0.9);
-            --border-light: rgba(0, 0, 0, 0.1);
-            --text-primary: #374151;
-            --text-secondary: #6b7280;
+            /* Color Palette - Light Theme (matching annotation tool) */
+            --bg-primary: oklch(0.96 0 0);
+            --bg-secondary: oklch(0.97 0 0);
+            --border-light: oklch(0.86 0 0);
+            --text-primary: oklch(0.32 0 0);
+            --text-secondary: oklch(0.51 0 0);
+
+            /* Card Elements */
+            --card-bg: oklch(0.97 0 0);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --card-border: oklch(0.86 0 0);
+
+            /* UI Components */
+            --primary: oklch(0.21 0.006 285.885);
+            --primary-foreground: oklch(0.985 0 0);
+            --secondary: oklch(0.91 0 0);
+            --secondary-foreground: oklch(0.32 0 0);
+            --muted: oklch(0.89 0 0);
+            --muted-foreground: oklch(0.51 0 0);
+            --accent: oklch(0.81 0 0);
+            --accent-foreground: oklch(0.32 0 0);
 
             /* Node Colors */
             --node-default: rgba(59, 130, 246, 0.7);
@@ -25,17 +40,61 @@
             --edge-default: rgba(107, 114, 128, 0.6);
             --edge-hover: rgba(59, 130, 246, 0.8);
 
-            /* UI Elements */
-            --card-bg: rgba(255, 255, 255, 0.95);
-            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            --card-border: rgba(0, 0, 0, 0.1);
-
             /* Grid Colors */
             --grid-minor: rgba(0, 0, 0, 0.03);
             --grid-major: rgba(0, 0, 0, 0.08);
             --grid-axis: rgba(59, 130, 246, 0.15);
             --grid-dots: rgba(0, 0, 0, 0.1);
             --grid-center: rgba(59, 130, 246, 0.2);
+
+            /* Button Colors */
+            --button-bg: white;
+            --button-hover: oklch(0.96 0 0);
+        }
+
+        /* Dark Theme (matching annotation tool) */
+        .dark {
+            /* Color Palette - Dark Theme */
+            --bg-primary: oklch(0.22 0 0);
+            --bg-secondary: oklch(0.24 0 0);
+            --border-light: oklch(0.33 0 0);
+            --text-primary: oklch(0.89 0 0);
+            --text-secondary: oklch(0.6 0 0);
+
+            /* Card Elements */
+            --card-bg: oklch(0.24 0 0);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+            --card-border: oklch(0.33 0 0);
+
+            /* UI Components */
+            --primary: oklch(0.92 0.004 286.32);
+            --primary-foreground: oklch(0.21 0.006 285.885);
+            --secondary: oklch(0.31 0 0);
+            --secondary-foreground: oklch(0.89 0 0);
+            --muted: oklch(0.29 0 0);
+            --muted-foreground: oklch(0.6 0 0);
+            --accent: oklch(0.37 0 0);
+            --accent-foreground: oklch(0.89 0 0);
+
+            /* Node Colors - Enhanced for dark mode */
+            --node-default: rgba(96, 165, 250, 0.8);
+            --node-anchor: rgba(248, 113, 113, 0.9);
+            --node-border: rgba(255, 255, 255, 0.4);
+
+            /* Edge Colors - Enhanced for dark mode */
+            --edge-default: rgba(156, 163, 175, 0.7);
+            --edge-hover: rgba(96, 165, 250, 0.9);
+
+            /* Grid Colors - Dark mode */
+            --grid-minor: rgba(255, 255, 255, 0.03);
+            --grid-major: rgba(255, 255, 255, 0.08);
+            --grid-axis: rgba(96, 165, 250, 0.2);
+            --grid-dots: rgba(255, 255, 255, 0.1);
+            --grid-center: rgba(96, 165, 250, 0.25);
+
+            /* Button Colors */
+            --button-bg: oklch(0.31 0 0);
+            --button-hover: oklch(0.37 0 0);
         }
 
         * {
@@ -155,7 +214,7 @@
             height: 36px;
             border: 1px solid var(--border-light);
             border-radius: 6px;
-            background: white;
+            background: var(--button-bg);
             color: var(--text-primary);
             cursor: pointer;
             font-size: 18px;
@@ -167,12 +226,17 @@
         }
 
         #zoom-controls button:hover {
-            background: var(--bg-primary);
+            background: var(--button-hover);
             border-color: var(--text-secondary);
         }
 
         #zoom-controls button:active {
             transform: scale(0.95);
+        }
+
+        /* Theme toggle button styling */
+        #theme-toggle {
+            font-size: 20px;
         }
 
         /* Legend card styling */
@@ -285,7 +349,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: #ccc;
+            background-color: var(--muted);
             transition: 0.3s;
             border-radius: 24px;
         }
@@ -297,7 +361,7 @@
             width: 18px;
             left: 3px;
             bottom: 3px;
-            background-color: white;
+            background-color: var(--button-bg);
             transition: 0.3s;
             border-radius: 50%;
         }
@@ -320,7 +384,7 @@
             padding: 8px 12px;
             border: 1px solid var(--border-light);
             border-radius: 4px;
-            background: white;
+            background: var(--button-bg);
             color: var(--text-primary);
             cursor: pointer;
             font-size: 12px;
@@ -328,7 +392,7 @@
         }
 
         .export-buttons button:hover {
-            background: var(--bg-primary);
+            background: var(--button-hover);
             border-color: var(--text-secondary);
         }
 
@@ -463,8 +527,8 @@
 
         #api-key-container {
             padding: 8px 16px;
-            background: #f1f5f9;
-            border-bottom: 1px solid #e2e8f0;
+            background: var(--secondary);
+            border-bottom: 1px solid var(--border-light);
             display: flex;
             gap: 8px;
             align-items: center;
@@ -473,14 +537,16 @@
         #api-key-input {
             flex: 1;
             padding: 6px 10px;
-            border: 1px solid #cbd5e1;
+            border: 1px solid var(--border-light);
             border-radius: 4px;
             font-size: 12px;
             outline: none;
+            background: var(--button-bg);
+            color: var(--text-primary);
         }
 
         #api-key-input:focus {
-            border-color: #6366f1;
+            border-color: var(--primary);
         }
 
         #chat-toggle-btn {
@@ -507,7 +573,7 @@
         #chat-window {
             width: 350px;
             height: 500px;
-            background: white;
+            background: var(--card-bg);
             border-radius: 16px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
             display: flex;
@@ -516,7 +582,7 @@
             margin-bottom: 20px;
             transform-origin: bottom left;
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            border: 1px solid rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--border-light);
             opacity: 0;
             pointer-events: none;
             transform: scale(0.9) translateY(20px);
@@ -559,7 +625,7 @@
             flex: 1;
             padding: 16px;
             overflow-y: auto;
-            background: #f8fafc;
+            background: var(--bg-secondary);
             display: flex;
             flex-direction: column;
             gap: 12px;
@@ -587,16 +653,16 @@
         }
 
         .message.user {
-            background: #6366f1;
-            color: white;
+            background: var(--primary);
+            color: var(--primary-foreground);
             align-self: flex-end;
             border-bottom-right-radius: 2px;
         }
 
         .message.bot {
-            background: white;
-            border: 1px solid #e2e8f0;
-            color: #1e293b;
+            background: var(--card-bg);
+            border: 1px solid var(--border-light);
+            color: var(--text-primary);
             align-self: flex-start;
             border-bottom-left-radius: 2px;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
@@ -604,29 +670,31 @@
 
         .chat-input-area {
             padding: 12px;
-            background: white;
-            border-top: 1px solid #e2e8f0;
+            background: var(--card-bg);
+            border-top: 1px solid var(--border-light);
             display: flex;
             gap: 8px;
         }
 
         #chat-input {
             flex: 1;
-            border: 1px solid #e2e8f0;
+            border: 1px solid var(--border-light);
             border-radius: 20px;
             padding: 10px 16px;
             outline: none;
             font-size: 14px;
             transition: border-color 0.2s;
+            background: var(--button-bg);
+            color: var(--text-primary);
         }
 
         #chat-input:focus {
-            border-color: #6366f1;
+            border-color: var(--primary);
         }
 
         #chat-send {
-            background: #6366f1;
-            color: white;
+            background: var(--primary);
+            color: var(--primary-foreground);
             border: none;
             border-radius: 50%;
             width: 38px;
@@ -639,11 +707,12 @@
         }
 
         #chat-send:hover {
-            background: #4f46e5;
+            background: var(--primary);
+            opacity: 0.9;
         }
 
         #chat-send:disabled {
-            background: #cbd5e1;
+            background: var(--muted);
             cursor: not-allowed;
         }
 
@@ -656,7 +725,7 @@
         .typing-dot {
             width: 6px;
             height: 6px;
-            background: #94a3b8;
+            background: var(--muted-foreground);
             border-radius: 50%;
             animation: bounce 1.4s infinite ease-in-out both;
         }
@@ -704,6 +773,7 @@
         <button id="zoom-in" title="Zoom In">+</button>
         <button id="zoom-out" title="Zoom Out">−</button>
         <button id="recenter" title="Recenter">⌂</button>
+        <button id="theme-toggle" title="Toggle Dark/Light Mode">☀️</button>
     </div>
 
     <!-- Legend card in bottom-right area (upper) -->
@@ -4102,6 +4172,38 @@
 
         // Initialize canvas and set up navigation system
         document.addEventListener('DOMContentLoaded', function () {
+            // Theme Management
+            const themeToggle = document.getElementById('theme-toggle');
+            const html = document.documentElement;
+
+            // Load saved theme from localStorage or default to light
+            const savedTheme = localStorage.getItem('visualizer-theme') || 'light';
+            if (savedTheme === 'dark') {
+                html.classList.add('dark');
+                themeToggle.textContent = '🌙';
+            } else {
+                html.classList.remove('dark');
+                themeToggle.textContent = '☀️';
+            }
+
+            // Theme toggle event listener
+            themeToggle.addEventListener('click', function() {
+                const isDark = html.classList.contains('dark');
+                if (isDark) {
+                    html.classList.remove('dark');
+                    themeToggle.textContent = '☀️';
+                    localStorage.setItem('visualizer-theme', 'light');
+                } else {
+                    html.classList.add('dark');
+                    themeToggle.textContent = '🌙';
+                    localStorage.setItem('visualizer-theme', 'dark');
+                }
+                // Redraw canvas with new theme colors
+                if (window.canvasNavigator) {
+                    window.canvasNavigator.render();
+                }
+            });
+
             const canvas = document.getElementById('graph-canvas');
             const ctx = canvas.getContext('2d');
 
