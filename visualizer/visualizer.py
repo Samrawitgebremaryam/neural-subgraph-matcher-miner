@@ -1039,12 +1039,48 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
 def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representative=False, has_instances=False, representative_idx=-1):
     """Create an index.html to browse all instances of a pattern with tabs for representative and instances."""
     html_content = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{pattern_key} - Pattern Overview</title>
     <style>
+        :root {{
+            /* Light Theme (matching annotation tool) */
+            --bg-primary: oklch(0.96 0 0);
+            --bg-secondary: oklch(0.97 0 0);
+            --border-light: oklch(0.86 0 0);
+            --text-primary: oklch(0.32 0 0);
+            --text-secondary: oklch(0.51 0 0);
+            --card-bg: oklch(0.97 0 0);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --card-border: oklch(0.86 0 0);
+            --primary: oklch(0.21 0.006 285.885);
+            --primary-foreground: oklch(0.985 0 0);
+            --accent: oklch(0.81 0 0);
+            --hover-bg: oklch(0.98 0 0);
+            --button-bg: white;
+            --button-hover: oklch(0.96 0 0);
+        }}
+
+        /* Dark Theme (matching annotation tool) */
+        .dark {{
+            --bg-primary: oklch(0.22 0 0);
+            --bg-secondary: oklch(0.24 0 0);
+            --border-light: oklch(0.33 0 0);
+            --text-primary: oklch(0.89 0 0);
+            --text-secondary: oklch(0.6 0 0);
+            --card-bg: oklch(0.24 0 0);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+            --card-border: oklch(0.33 0 0);
+            --primary: oklch(0.92 0.004 286.32);
+            --primary-foreground: oklch(0.21 0.006 285.885);
+            --accent: oklch(0.37 0 0);
+            --hover-bg: oklch(0.29 0 0);
+            --button-bg: oklch(0.31 0 0);
+            --button-hover: oklch(0.37 0 0);
+        }}
+
         * {{
             margin: 0;
             padding: 0;
@@ -1053,36 +1089,65 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
 
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #fafafa;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s, color 0.3s;
         }}
 
         .header {{
-            background: white;
+            background: var(--card-bg);
             padding: 20px;
-            border-bottom: 2px solid #e5e7eb;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border-bottom: 2px solid var(--border-light);
+            box-shadow: var(--card-shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+
+        .header-content {{
+            flex: 1;
         }}
 
         h1 {{
-            color: #111827;
+            color: var(--text-primary);
             font-size: 24px;
             margin-bottom: 8px;
         }}
 
         .subtitle {{
-            color: #6b7280;
+            color: var(--text-secondary);
             font-size: 14px;
+        }}
+
+        #theme-toggle {{
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            background: var(--button-bg);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }}
+
+        #theme-toggle:hover {{
+            background: var(--button-hover);
+            border-color: var(--text-secondary);
         }}
 
         /* Tabs */
         .tabs {{
             display: {'flex' if has_instances else 'none'};
-            background: white;
-            border-bottom: 1px solid #e5e7eb;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border-light);
             position: sticky;
             top: 0;
             z-index: 100;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            box-shadow: var(--card-shadow);
         }}
 
         .tab {{
@@ -1091,20 +1156,20 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
             border-bottom: 2px solid transparent;
             transition: all 0.2s;
             font-weight: 500;
-            color: #6b7280;
+            color: var(--text-secondary);
             background: none;
             border: none;
             font-size: 15px;
         }}
 
         .tab:hover {{
-            background: #f9fafb;
-            color: #111827;
+            background: var(--hover-bg);
+            color: var(--text-primary);
         }}
 
         .tab.active {{
-            color: #2563eb;
-            border-bottom-color: #2563eb;
+            color: var(--primary);
+            border-bottom-color: var(--primary);
         }}
 
         /* Tab content */
@@ -1128,7 +1193,7 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
             width: 100%;
             height: 100%;
             border: none;
-            background: white;
+            background: var(--card-bg);
         }}
 
         /* Instances grid */
@@ -1138,14 +1203,15 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
         }}
 
         .stats {{
-            background: white;
+            background: var(--card-bg);
             padding: 20px;
             border-radius: 8px;
             margin-bottom: 24px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            box-shadow: var(--card-shadow);
             display: flex;
             gap: 32px;
             align-items: center;
+            border: 1px solid var(--border-light);
         }}
 
         .stat-item {{
@@ -1154,7 +1220,7 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
         }}
 
         .stat-label {{
-            color: #6b7280;
+            color: var(--text-secondary);
             font-size: 13px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -1162,7 +1228,7 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
         }}
 
         .stat-value {{
-            color: #111827;
+            color: var(--text-primary);
             font-size: 24px;
             font-weight: 700;
         }}
@@ -1174,42 +1240,47 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
         }}
 
         .instance-card {{
-            background: white;
-            border: 2px solid #e5e7eb;
+            background: var(--card-bg);
+            border: 2px solid var(--border-light);
             border-radius: 8px;
             padding: 20px;
             text-align: center;
             transition: all 0.2s;
             cursor: pointer;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            box-shadow: var(--card-shadow);
         }}
 
         .instance-card:hover {{
-            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
             transform: translateY(-4px);
-            border-color: #2563eb;
+            border-color: var(--primary);
         }}
 
         .instance-card a {{
             text-decoration: none;
-            color: #2563eb;
+            color: var(--primary);
             font-weight: 600;
             font-size: 16px;
             display: block;
         }}
 
         .instance-number {{
-            color: #9ca3af;
+            color: var(--text-secondary);
             font-size: 13px;
             margin-top: 8px;
             font-family: 'Courier New', monospace;
         }}
 
+        .instance-card.representative {{
+            border-color: var(--primary);
+            background: var(--accent);
+        }}
+
         /* No representative message */
         .no-representative {{
-            background: #fef3c7;
-            border: 1px solid #fbbf24;
-            color: #92400e;
+            background: var(--accent);
+            border: 1px solid var(--border-light);
+            color: var(--text-primary);
             padding: 16px;
             border-radius: 8px;
             margin: 20px auto;
@@ -1220,8 +1291,11 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
 </head>
 <body>
     <div class="header">
-        <h1>{pattern_key}</h1>
-        <div class="subtitle">Pattern Discovery and Analysis{' - Representative Only' if not has_instances else ''}</div>
+        <div class="header-content">
+            <h1>{pattern_key}</h1>
+            <div class="subtitle">Pattern Discovery and Analysis{' - Representative Only' if not has_instances else ''}</div>
+        </div>
+        <button id="theme-toggle" title="Toggle Dark/Light Mode">🌙</button>
     </div>
 """
 
@@ -1286,7 +1360,7 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
                 is_rep = True
 
             html_content += f"""
-                <div class="instance-card" {'style="border-color: #2563eb; background: #eff6ff;"' if is_rep else ''}>
+                <div class="instance-card{' representative' if is_rep else ''}">
                     <a href="{href}" target="_blank">Instance {i} {' (Rep)' if is_rep else ''}</a>
                     <div class="instance-number">#{i:04d}</div>
                 </div>
@@ -1298,31 +1372,90 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
     </div>
 """
 
+    # Add theme switching script (always needed)
+    html_content += """
+    <script>
+        // Theme Management
+        document.addEventListener('DOMContentLoaded', function() {
+            const themeToggle = document.getElementById('theme-toggle');
+            const html = document.documentElement;
+
+            // Load saved theme from localStorage or default to dark (matching annotation tool)
+            const savedTheme = localStorage.getItem('neural-miner-theme') || 'dark';
+            if (savedTheme === 'dark') {
+                html.classList.add('dark');
+                themeToggle.textContent = '🌙';
+            } else {
+                html.classList.remove('dark');
+                themeToggle.textContent = '☀️';
+            }
+
+            // Theme toggle event listener
+            themeToggle.addEventListener('click', function() {
+                const isDark = html.classList.contains('dark');
+                const newTheme = isDark ? 'light' : 'dark';
+
+                if (isDark) {
+                    html.classList.remove('dark');
+                    themeToggle.textContent = '☀️';
+                    localStorage.setItem('neural-miner-theme', 'light');
+                } else {
+                    html.classList.add('dark');
+                    themeToggle.textContent = '🌙';
+                    localStorage.setItem('neural-miner-theme', 'dark');
+                }
+
+                // Notify iframe to update theme
+                const iframe = document.querySelector('.representative-frame');
+                if (iframe && iframe.contentWindow) {
+                    iframe.contentWindow.postMessage({
+                        type: 'theme-change',
+                        theme: newTheme
+                    }, '*');
+                }
+            });
+
+            // Listen for theme changes from other windows/tabs/iframes
+            window.addEventListener('storage', function(e) {
+                if (e.key === 'neural-miner-theme' && e.newValue) {
+                    const newTheme = e.newValue;
+                    if (newTheme === 'dark') {
+                        html.classList.add('dark');
+                        themeToggle.textContent = '🌙';
+                    } else {
+                        html.classList.remove('dark');
+                        themeToggle.textContent = '☀️';
+                    }
+                }
+            });
+"""
+
     # Only add tab switching script if we have tabs
     if has_instances:
         html_content += """
-    <script>
-        function openTab(evt, tabName) {
-            // Hide all tab contents
-            const tabContents = document.getElementsByClassName('tab-content');
-            for (let i = 0; i < tabContents.length; i++) {
-                tabContents[i].classList.remove('active');
-            }
+            // Tab Switching
+            window.openTab = function(evt, tabName) {
+                // Hide all tab contents
+                const tabContents = document.getElementsByClassName('tab-content');
+                for (let i = 0; i < tabContents.length; i++) {
+                    tabContents[i].classList.remove('active');
+                }
 
-            // Remove active class from all tabs
-            const tabs = document.getElementsByClassName('tab');
-            for (let i = 0; i < tabs.length; i++) {
-                tabs[i].classList.remove('active');
-            }
+                // Remove active class from all tabs
+                const tabs = document.getElementsByClassName('tab');
+                for (let i = 0; i < tabs.length; i++) {
+                    tabs[i].classList.remove('active');
+                }
 
-            // Show the selected tab content and mark tab as active
-            document.getElementById(tabName).classList.add('active');
-            evt.currentTarget.classList.add('active');
-        }
-    </script>
+                // Show the selected tab content and mark tab as active
+                document.getElementById(tabName).classList.add('active');
+                evt.currentTarget.classList.add('active');
+            };
 """
 
     html_content += """
+        });
+    </script>
 </body>
 </html>
 """
