@@ -1039,7 +1039,7 @@ def visualize_all_pattern_instances(pattern_instances, pattern_key, count, outpu
 def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representative=False, has_instances=False, representative_idx=-1):
     """Create an index.html to browse all instances of a pattern with tabs for representative and instances."""
     html_content = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1408,10 +1408,10 @@ def _create_pattern_index_html(pattern_key, count, pattern_dir, has_representati
                 // Notify iframe to update theme
                 const iframe = document.querySelector('.representative-frame');
                 if (iframe && iframe.contentWindow) {
-                    iframe.contentWindow.postMessage({{
+                    iframe.contentWindow.postMessage({
                         type: 'theme-change',
                         theme: newTheme
-                    }}, '*');
+                    }, '*');
                 }
             });
 
