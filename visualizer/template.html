@@ -4176,8 +4176,8 @@
             const themeToggle = document.getElementById('theme-toggle');
             const html = document.documentElement;
 
-            // Load saved theme from localStorage or default to light
-            const savedTheme = localStorage.getItem('visualizer-theme') || 'light';
+            // Load saved theme from localStorage or default to dark (matching annotation tool)
+            const savedTheme = localStorage.getItem('visualizer-theme') || 'dark';
             if (savedTheme === 'dark') {
                 html.classList.add('dark');
                 themeToggle.textContent = '🌙';
