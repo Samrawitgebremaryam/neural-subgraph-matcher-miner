@@ -4177,7 +4177,7 @@
             const html = document.documentElement;
 
             // Load saved theme from localStorage or default to dark (matching annotation tool)
-            const savedTheme = localStorage.getItem('visualizer-theme') || 'dark';
+            const savedTheme = localStorage.getItem('neural-miner-theme') || 'dark';
             if (savedTheme === 'dark') {
                 html.classList.add('dark');
                 themeToggle.textContent = '🌙';
@@ -4192,15 +4192,51 @@
                 if (isDark) {
                     html.classList.remove('dark');
                     themeToggle.textContent = '☀️';
-                    localStorage.setItem('visualizer-theme', 'light');
+                    localStorage.setItem('neural-miner-theme', 'light');
                 } else {
                     html.classList.add('dark');
                     themeToggle.textContent = '🌙';
-                    localStorage.setItem('visualizer-theme', 'dark');
+                    localStorage.setItem('neural-miner-theme', 'dark');
                 }
                 // Redraw canvas with new theme colors
                 if (window.canvasNavigator) {
                     window.canvasNavigator.render();
+                }
+            });
+
+            // Listen for theme changes from other windows/tabs/iframes
+            window.addEventListener('storage', function(e) {
+                if (e.key === 'neural-miner-theme' && e.newValue) {
+                    const newTheme = e.newValue;
+                    if (newTheme === 'dark') {
+                        html.classList.add('dark');
+                        themeToggle.textContent = '🌙';
+                    } else {
+                        html.classList.remove('dark');
+                        themeToggle.textContent = '☀️';
+                    }
+                    // Redraw canvas with new theme colors
+                    if (window.canvasNavigator) {
+                        window.canvasNavigator.render();
+                    }
+                }
+            });
+
+            // Listen for theme change messages from parent window
+            window.addEventListener('message', function(e) {
+                if (e.data && e.data.type === 'theme-change') {
+                    const newTheme = e.data.theme;
+                    if (newTheme === 'dark') {
+                        html.classList.add('dark');
+                        themeToggle.textContent = '🌙';
+                    } else {
+                        html.classList.remove('dark');
+                        themeToggle.textContent = '☀️';
+                    }
+                    // Redraw canvas with new theme colors
+                    if (window.canvasNavigator) {
+                        window.canvasNavigator.render();
+                    }
                 }
             });
 
