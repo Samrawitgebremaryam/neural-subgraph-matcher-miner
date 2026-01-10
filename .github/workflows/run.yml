@@ -48,7 +48,7 @@ jobs:
               python -m subgraph_mining.decoder \
                 --dataset=Email_new.pkl \
                 --n_trials=1000 \
-                --search_strategy=beam \
+                --search_strategy=greedy \
                 --beam_width=10 \
                 --node_anchored \
                 --out_path=/app/results/patterns.pkl \
