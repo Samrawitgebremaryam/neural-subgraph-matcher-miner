@@ -46,8 +46,8 @@ jobs:
               set -e
               echo 'Starting decoder run...'
               python -m subgraph_mining.decoder \
-                --dataset=directed.pkl \
-                --n_trials=200 \
+                --dataset=Email_new.pkl \
+                --n_trials=1000 \
                 --search_strategy=beam \
                 --beam_width=10 \
                 --node_anchored \
