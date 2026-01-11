@@ -23,7 +23,7 @@ def mine(
     search_strategy: str = Form("greedy"),
     sample_method: str = Form("tree"),
     visualize_instances: bool = Form(...),
-    out_batch_size: int = Form(10)
+    out_batch_size: int = Form(3)
 ):
     # Validate file
     if not graph_file.filename:
