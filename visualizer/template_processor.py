@@ -8,7 +8,14 @@ import time
 import random
 from typing import Dict, Any, Optional
 
-from .config import DEFAULT_TEMPLATE_NAME, REQUIRED_TEMPLATE_ELEMENTS, DENSITY_SPARSE_THRESHOLD, DENSITY_MEDIUM_THRESHOLD
+from .config import (
+    DEFAULT_TEMPLATE_NAME, 
+    REQUIRED_TEMPLATE_ELEMENTS, 
+    DENSITY_SPARSE_THRESHOLD, 
+    DENSITY_MEDIUM_THRESHOLD,
+    ANNOTATION_TOOL_PORT,
+    CHAT_API_PORT
+)
 from .utils import sanitize_filename, validate_graph_data
 
 
@@ -118,6 +125,32 @@ class HTMLTemplateProcessor:
             raise RuntimeError(f"Failed to serialize graph data to JSON: {str(e)}")
         except Exception as e:
             raise RuntimeError(f"Data injection failed: {str(e)}")
+    
+    def _inject_port_configuration(self, template_content: str) -> str:
+        """
+        Inject port configuration into template, replacing hardcoded ports.
+        
+        Args:
+            template_content: HTML template content
+            
+        Returns:
+            Template with injected port configuration
+        """
+        # Replace annotation tool port (localhost:3000)
+        template_content = re.sub(
+            r'localhost:3000',
+            f'localhost:{ANNOTATION_TOOL_PORT}',
+            template_content
+        )
+        
+        # Replace chat API port (localhost:9002)
+        template_content = re.sub(
+            r'localhost:9002',
+            f'localhost:{CHAT_API_PORT}',
+            template_content
+        )
+        
+        return template_content
     
     def generate_filename(self, graph_data: Dict[str, Any], base_name: str = "pattern") -> str:
         """
@@ -239,6 +272,11 @@ class HTMLTemplateProcessor:
         """
         try:
             template_content = self.read_template()
+            
+            # Inject port configuration
+            template_content = self._inject_port_configuration(template_content)
+            
+            # Inject graph data
             injected_content = self.inject_graph_data(template_content, graph_data) 
             
             if output_filename is None:
@@ -249,3 +287,4 @@ class HTMLTemplateProcessor:
             
         except Exception as e:
             raise RuntimeError(f"Template processing failed: {str(e)}")
+

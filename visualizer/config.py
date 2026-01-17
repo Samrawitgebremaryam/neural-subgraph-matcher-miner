@@ -1,6 +1,10 @@
 """
 Configuration constants for the graph visualizer.
 """
+import os
+
+ANNOTATION_TOOL_PORT = os.getenv('ANNOTATION_TOOL_PORT', '3000')
+CHAT_API_PORT = os.getenv('CHAT_API_PORT', '9002')
 
 # Color palettes for visualization
 NODE_COLOR_PALETTE = [
