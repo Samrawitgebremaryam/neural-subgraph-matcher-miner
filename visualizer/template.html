@@ -7,148 +7,411 @@
     <!-- Dependencies -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
     <style>
         :root {
-            --bg-primary: oklch(0.96 0 0);
-            --bg-secondary: oklch(0.97 0 0);
-            --text-primary: oklch(0.32 0 0);
-            --text-secondary: oklch(0.51 0 0);
-            --card-bg: rgba(255, 255, 255, 0.9);
-            --card-border: oklch(0.86 0 0);
-            --accent: #3b82f6;
+            --bg-primary: #121212;
+            --bg-secondary: #0f172a;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --card-bg: rgba(15, 23, 42, 0.8);
+            --card-border: rgba(255, 255, 255, 0.1);
+            --accent: #8b5cf6;
+            --accent-hover: #7c3aed;
         }
-        .dark {
-            --bg-primary: oklch(0.22 0 0);
-            --bg-secondary: oklch(0.24 0 0);
-            --text-primary: oklch(0.89 0 0);
-            --text-secondary: oklch(0.6 0 0);
-            --card-bg: rgba(30, 41, 59, 0.85);
-            --card-border: oklch(0.33 0 0);
-            --accent: #60a5fa;
-        }
-        body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-primary); color: var(--text-primary); overflow: hidden; }
+        body { margin: 0; font-family: 'Inter', system-ui, sans-serif; background: #0a0a0a; color: var(--text-primary); overflow: hidden; }
         #app { width: 100vw; height: 100vh; position: relative; }
-        canvas { position: absolute; top: 0; left: 0; cursor: grab; }
+        
+        canvas { position: absolute; top: 0; left: 0; cursor: grab; z-index: 1; }
         canvas:active { cursor: grabbing; }
-        .ui-card { position: absolute; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; backdrop-filter: blur(12px); padding: 16px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); z-index: 100; }
-        .legend { top: 20px; left: 20px; min-width: 200px; }
-        .controls { top: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; }
-        .chat-widget { bottom: 20px; right: 20px; width: 350px; height: 450px; display: flex; flex-direction: column; }
-        .btn { padding: 8px 12px; border: 1px solid var(--card-border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; font-size: 13px; transition: all 0.2s; }
-        .btn:hover { background: var(--accent); color: white; }
+
+        .ui-card { 
+            background: var(--card-bg); 
+            border: 1px solid var(--card-border); 
+            border-radius: 12px; 
+            backdrop-filter: blur(12px); 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5); 
+            z-index: 100; 
+        }
+
+        /* Top Center Title */
+        .top-center {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            padding: 14px 28px;
+            min-width: 320px;
+        }
+        .top-center h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
+        .top-center .stats { font-size: 11px; color: var(--text-secondary); margin-top: 6px; }
+
+        /* Right Side Panels */
+        .right-panel {
+            position: absolute;
+            top: 20px;
+            right: 60px; /* Offset for zoom controls if needed, but in image they are next to each other */
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            width: 210px;
+        }
+
+        .panel-section { padding: 18px; }
+        .panel-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 12px; border-bottom: 1px solid var(--card-border); padding-bottom: 8px; }
+
+        /* Zoom Controls (Top Right Vertical) */
+        .zoom-controls {
+            position: absolute;
+            top: 20px;
+            right: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 110;
+        }
+        .zoom-btn {
+            width: 34px;
+            height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .zoom-btn:hover { background: var(--bg-secondary); border-color: var(--accent); }
+
+        /* Chat Widget / Pattern Analyser (Bubble & Window) */
+        .chat-toggle {
+            position: absolute;
+            bottom: 25px;
+            left: 25px;
+            width: 50px;
+            height: 50px;
+            background: var(--accent);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+            z-index: 1000;
+            transition: transform 0.2s;
+        }
+        .chat-toggle:hover { transform: scale(1.05); }
+
+        .chat-widget {
+            position: absolute;
+            bottom: 85px;
+            left: 25px;
+            width: 320px;
+            height: 500px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid var(--card-border);
+            z-index: 1000;
+        }
+        .chat-header {
+            background: var(--accent);
+            padding: 12px 16px;
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: white;
+        }
+        .chat-body {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: rgba(15, 23, 42, 0.6);
+        }
+        .message { padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.5; max-width: 85%; }
+        .message.ai { background: rgba(255,255,255,0.05); border: 1px solid var(--card-border); align-self: flex-start; }
+        .message.user { background: var(--accent); color: white; align-self: flex-end; }
+
+        .chat-input-container {
+            padding: 14px;
+            border-top: 1px solid var(--card-border);
+            display: flex;
+            gap: 10px;
+            background: var(--bg-secondary);
+        }
+        .chat-input {
+            flex: 1;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 8px 16px;
+            color: white;
+            font-size: 13px;
+            outline: none;
+        }
+        .chat-input:focus { border-color: var(--accent); }
+        .send-btn {
+            width: 36px;
+            height: 36px;
+            background: var(--accent);
+            border: none;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: white;
+        }
+
+        /* Buttons & Toggles */
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .btn-sm { padding: 7px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: var(--text-primary); font-size: 11px; font-weight: 500; cursor: pointer; transition: 0.2s; }
+        .btn-sm:hover { background: rgba(255,255,255,0.1); border-color: var(--accent); }
+
+        .switch { position: relative; display: inline-block; width: 42px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334155; transition: .4s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #3b82f6; } /* Matching original Blue toggle */
+        input:checked + .slider:before { transform: translateX(20px); }
+
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; }
+        .toggle-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); text-transform: uppercase; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
     </style>
 </head>
 <body>
-    <div id="app" :class="theme">
+    <div id="app">
         <canvas ref="canvasEl" @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="onMouseUp" @wheel.prevent="onWheel"></canvas>
         
-        <!-- Legend Component -->
-        <div class="ui-card legend">
-            <h3 style="margin: 0 0 12px 0; font-size: 14px;">Legend</h3>
-            <div v-for="type in legend.nodeTypes" :key="type.label" style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                <div :style="{ backgroundColor: type.color, width: '12px', height: '12px', borderRadius: '3px' }"></div>
-                <span style="font-size: 12px;">{{ type.label }}</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px; border-top: 1px solid var(--card-border); padding-top: 8px;">
-                <div style="background: rgba(239, 68, 68, 0.8); width: '12px'; height: '12px'; border-radius: '2px'"></div>
-                <span style="font-size: 12px; font-weight: bold;">Anchor Node</span>
+        <!-- Top Title Card -->
+        <div class="ui-card top-center">
+            <h1>{{ metadata.title }}</h1>
+            <div class="stats">
+                {{ metadata.nodeCount }} nodes ({{ legend.nodeTypes.length }} types), 
+                {{ metadata.edgeCount }} edges ({{ legend.edgeTypes.length }} types)
             </div>
         </div>
 
-        <!-- Controls Component -->
-        <div class="controls">
-            <div class="ui-card" style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-                <button class="btn" @click="recenter">Recenter</button>
-                <button class="btn" @click="toggleTheme">{{ theme === 'dark' ? '☀️ Light' : '🌙 Dark' }}</button>
-                <button class="btn" @click="toggleLabels">{{ showLabels ? '🫣 Hide Labels' : '👁️ Show Labels' }}</button>
-            </div>
-            <div class="ui-card" style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-                <button class="btn" @click="exportPDF">Export PDF</button>
-                <button class="btn" @click="exportPNG">Export PNG</button>
-            </div>
-            <div class="ui-card" style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-                <button class="btn" @click="openLink('http://localhost:3000/import')">Upload</button>
-                <button class="btn" @click="openLink('http://localhost:3000')">Annotation</button>
-            </div>
+        <!-- Right Side Zoom Controls -->
+        <div class="zoom-controls">
+            <button class="zoom-btn" @click="zoomIn" title="Zoom In">+</button>
+            <button class="zoom-btn" @click="zoomOut" title="Zoom Out">-</button>
+            <button class="zoom-btn" @click="recenter" title="Recenter View">⌂</button>
         </div>
 
-        <!-- Chat Widget -->
-        <div class="ui-card chat-widget">
-            <div style="border-bottom: 1px solid var(--card-border); padding-bottom: 8px; margin-bottom: 8px; font-weight: bold;">AI Graph Assistant</div>
-            <div style="flex: 1; overflow-y: auto; font-size: 13px; color: var(--text-secondary);">
-                <div v-for="msg in messages" :key="msg.id" style="margin-bottom: 12px;">
-                    <b>{{ msg.role === 'user' ? 'You' : 'AI' }}:</b> {{ msg.text }}
+        <!-- Right Side Panel Stack -->
+        <div class="right-panel">
+            <!-- Legend Section -->
+            <div class="ui-card panel-section">
+                <div class="panel-title">Legend</div>
+                <div style="margin-bottom: 20px;">
+                    <div style="font-size: 9px; font-weight: 700; color: var(--text-secondary); margin-bottom: 10px; opacity: 0.6;">NODE TYPES</div>
+                    <div v-for="type in legend.nodeTypes" :key="type.label" style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <div :style="{ backgroundColor: type.color, width: '12px', height: '12px', borderRadius: '3px' }"></div>
+                        <span style="font-size: 12px;">{{ type.label }}</span>
+                    </div>
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <div style="font-size: 9px; font-weight: 700; color: var(--text-secondary); margin-bottom: 10px; opacity: 0.6;">EDGE TYPES</div>
+                    <div v-for="type in legend.edgeTypes" :key="type.label" style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <div :style="{ backgroundColor: type.color, width: '12px', height: '12px', borderRadius: '3px' }"></div>
+                        <span style="font-size: 12px;">{{ type.label }}</span>
+                    </div>
+                </div>
+                <div>
+                    <div style="font-size: 9px; font-weight: 700; color: var(--text-secondary); margin-bottom: 10px; opacity: 0.6;">SPECIAL NODES</div>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="background: #ef4444; width: 12px; height: 12px; border-radius: 2px;"></div>
+                        <span style="font-size: 12px;">Anchor Nodes</span>
+                    </div>
                 </div>
             </div>
-            <div style="display: flex; gap: 8px; margin-top: 12px;">
-                <input v-model="userInput" @keyup.enter="sendMessage" style="flex: 1; background: var(--bg-secondary); border: 1px solid var(--card-border); color: var(--text-primary); padding: 8px; border-radius: 6px;" placeholder="Ask about the graph...">
-                <button class="btn" @click="sendMessage">Send</button>
+
+            <!-- Management & Control Section -->
+            <div class="ui-card panel-section">
+                <div class="toggle-row">
+                    <span class="toggle-label">Show Labels</span>
+                    <label class="switch">
+                        <input type="checkbox" v-model="showLabels" @change="draw">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                
+                <div class="panel-title" style="margin-top: 20px;">Navigation</div>
+                <div class="btn-grid">
+                    <button class="btn-sm" @click="openLink('http://localhost:3000/import')">Upload</button>
+                    <button class="btn-sm" @click="openLink('http://localhost:3000')">Annotation</button>
+                </div>
+
+                <div class="panel-title" style="margin-top: 20px;">Export</div>
+                <div class="btn-grid">
+                    <button class="btn-sm" @click="exportPDF">PDF</button>
+                    <button class="btn-sm" @click="exportPNG">PNG</button>
+                </div>
             </div>
         </div>
+
+        <!-- Bottom Left Chat Bubble -->
+        <div class="chat-toggle" @click="chatOpen = !chatOpen">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        </div>
+
+        <!-- Floating Chat Widget -->
+        <transition name="fade">
+            <div v-if="chatOpen" class="ui-card chat-widget">
+                <div class="chat-header">
+                    <span>Pattern Analyser</span>
+                    <span style="cursor: pointer; opacity: 0.7;" @click="chatOpen = false">×</span>
+                </div>
+                <div class="chat-body" ref="chatBody">
+                    <div v-for="msg in messages" :key="msg.id" :class="['message', msg.role]">
+                        {{ msg.text }}
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <input v-model="userInput" @keyup.enter="sendMessage" class="chat-input" placeholder="Ask about this pattern...">
+                    <button class="send-btn" @click="sendMessage">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+            </div>
+        </transition>
     </div>
 
     <script>
         /* const GRAPH_DATA = {{ GRAPH_DATA_JSON }}; */
         if (typeof GRAPH_DATA === 'undefined') {
-            window.GRAPH_DATA = { metadata: { title: "Sample Graph" }, nodes: [], edges: [], legend: { nodeTypes: [] } };
+            window.GRAPH_DATA = { 
+                metadata: { title: "Motif Analysis Results", nodeCount: 0, edgeCount: 0 }, 
+                nodes: [], edges: [], legend: { nodeTypes: [], edgeTypes: [] } 
+            };
         }
 
-        const { createApp, ref, onMounted, reactive } = Vue;
+        const { createApp, ref, onMounted, nextTick } = Vue;
 
         createApp({
             setup() {
                 const canvasEl = ref(null);
-                const theme = ref('dark');
+                const chatBody = ref(null);
                 const showLabels = ref(true);
+                const chatOpen = ref(false);
+                const metadata = ref(window.GRAPH_DATA.metadata);
                 const legend = ref(window.GRAPH_DATA.legend);
-                const messages = ref([{ id: 1, role: 'assistant', text: 'Hello! How can I help you analyze this sub-graph?' }]);
+                const messages = ref([{ id: 1, role: 'ai', text: "Hello! I'm your Pattern Analyst. I can help you understand the topological structure of this motif. Ask me anything!" }]);
                 const userInput = ref('');
                 
                 let ctx, transform = { x: 0, y: 0, k: 1 };
                 let isDragging = false, lastPos = { x: 0, y: 0 };
 
                 const recenter = () => { transform = { x: 0, y: 0, k: 1 }; draw(); };
-                const toggleTheme = () => { theme.value = theme.value === 'dark' ? 'light' : 'dark'; document.documentElement.className = theme.value; draw(); };
-                const toggleLabels = () => { showLabels.value = !showLabels.value; draw(); };
+                const zoomIn = () => { transform.k *= 1.2; draw(); };
+                const zoomOut = () => { transform.k *= 0.8; draw(); };
 
                 const draw = () => {
                     if (!ctx) return;
                     const canvas = canvasEl.value;
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                     
+                    // Faint Background Grid
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(255,255,255,0.02)';
+                    const gridSize = 60 * transform.k;
+                    const offsetX = (canvas.width/2 + transform.x) % gridSize;
+                    const offsetY = (canvas.height/2 + transform.y) % gridSize;
+                    for(let x=offsetX; x<canvas.width; x+=gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+                    for(let y=offsetY; y<canvas.height; y+=gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+                    ctx.restore();
+
                     ctx.save();
                     ctx.translate(canvas.width/2 + transform.x, canvas.height/2 + transform.y);
                     ctx.scale(transform.k, transform.k);
 
-                    // Draw Edges
+                    // Render Edges
                     window.GRAPH_DATA.edges.forEach(edge => {
                         const s = window.GRAPH_DATA.nodes.find(n => n.id === edge.source);
                         const t = window.GRAPH_DATA.nodes.find(n => n.id === edge.target);
                         if (!s || !t) return;
+                        
                         ctx.beginPath();
                         ctx.moveTo(s.x, s.y);
                         ctx.lineTo(t.x, t.y);
-                        ctx.strokeStyle = theme.value === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)';
-                        ctx.lineWidth = 1/transform.k;
+                        ctx.strokeStyle = '#4f46e5'; // Deep Indigo
+                        ctx.globalAlpha = 0.5;
+                        ctx.lineWidth = 2;
                         ctx.stroke();
+
+                        if (edge.directed) {
+                            const angle = Math.atan2(t.y - s.y, t.x - s.x);
+                            const r = t.anchor ? 24 : 16;
+                            const tx = t.x - r * Math.cos(angle);
+                            const ty = t.y - r * Math.sin(angle);
+                            ctx.beginPath();
+                            ctx.moveTo(tx, ty);
+                            ctx.lineTo(tx - 10 * Math.cos(angle - 0.5), ty - 10 * Math.sin(angle - 0.5));
+                            ctx.lineTo(tx - 10 * Math.cos(angle + 0.5), ty - 10 * Math.sin(angle + 0.5));
+                            ctx.closePath();
+                            ctx.fillStyle = '#4f46e5';
+                            ctx.fill();
+                        }
+
+                        if (showLabels.value && edge.label && edge.label !== 'default') {
+                            ctx.fillStyle = '#64748b';
+                            ctx.font = '9px Inter';
+                            ctx.textAlign = 'center';
+                            const labelText = edge.label;
+                            const tw = ctx.measureText(labelText).width;
+                            ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+                            ctx.fillRect((s.x+t.x)/2 - tw/2 - 4, (s.y+t.y)/2 - 7, tw + 8, 14);
+                            ctx.fillStyle = '#94a3b8';
+                            ctx.fillText(labelText, (s.x+t.x)/2, (s.y+t.y)/2 + 3);
+                        }
                     });
 
-                    // Draw Nodes
+                    // Render Nodes
                     window.GRAPH_DATA.nodes.forEach(node => {
+                        const r = node.anchor ? 22 : 14;
+                        ctx.save();
+                        ctx.shadowBlur = 10;
+                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                        
                         ctx.beginPath();
-                        const r = node.anchor ? 15 : 10;
-                        if (node.anchor) ctx.rect(node.x-r, node.y-r, r*2, r*2);
+                        if (node.anchor) ctx.roundRect(node.x-r, node.y-r, r*2, r*2, 4);
                         else ctx.arc(node.x, node.y, r, 0, Math.PI*2);
                         
-                        ctx.fillStyle = node.anchor ? '#ef4444' : (legend.value.nodeTypes.find(t => t.label === node.label)?.color || '#3b82f6');
+                        const color = node.anchor ? '#ef4444' : (legend.value.nodeTypes.find(t => t.label === node.label)?.color || '#3b82f6');
+                        ctx.fillStyle = color;
                         ctx.fill();
                         
+                        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                        ctx.restore();
+
                         if (showLabels.value) {
-                            ctx.fillStyle = theme.value === 'dark' ? '#cbd5e1' : '#475569';
-                            ctx.font = '10px sans-serif';
+                            const label = node.label || 'Node';
+                            ctx.font = 'bold 10px Inter';
+                            const tw = ctx.measureText(label).width;
+                            ctx.fillStyle = 'white';
+                            ctx.beginPath();
+                            ctx.roundRect(node.x - tw/2 - 6, node.y + r + 6, tw + 12, 16, 4);
+                            ctx.fill();
+                            ctx.fillStyle = '#0f172a';
                             ctx.textAlign = 'center';
-                            ctx.fillText(node.label || '', node.x, node.y + r + 12);
+                            ctx.fillText(label, node.x, node.y + r + 18);
                         }
                     });
 
@@ -171,40 +434,37 @@
                 };
 
                 const sendMessage = async () => {
-                    const text = userInput.value.trim();
-                    if (!text) return;
-                    
+                    if (!userInput.value.trim()) return;
+                    const text = userInput.value;
                     messages.value.push({ id: Date.now(), role: 'user', text });
                     userInput.value = '';
                     
+                    nextTick(() => { if(chatBody.value) chatBody.value.scrollTop = chatBody.value.scrollHeight; });
+
                     try {
-                        const apiUrl = 'http://localhost:9002/chat';
-                        const response = await fetch(apiUrl, {
+                        const res = await fetch('http://localhost:9002/chat', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ message: text, graph_data: window.GRAPH_DATA })
                         });
-                        const data = await response.json();
-                        messages.value.push({ id: Date.now(), role: 'assistant', text: data.response || "No response." });
-                    } catch (err) {
-                        console.error("Chat Error:", err);
-                        messages.value.push({ id: Date.now(), role: 'assistant', text: "Error connecting to AI Assistant." });
+                        const data = await res.json();
+                        messages.value.push({ id: Date.now(), role: 'ai', text: data.response || "No response received." });
+                    } catch (e) {
+                        messages.value.push({ id: Date.now(), role: 'ai', text: "Error connecting to Pattern Analyst." });
                     }
+                    nextTick(() => { if(chatBody.value) chatBody.value.scrollTop = chatBody.value.scrollHeight; });
                 };
 
-                const exportPDF = async () => {
+                const exportPDF = () => {
                     const { jsPDF } = window.jspdf;
                     const doc = new jsPDF('l', 'px', [canvasEl.value.width, canvasEl.value.height]);
-                    
-                    // Simple capture of the current canvas state
-                    const dataUrl = canvasEl.value.toDataURL('image/png');
-                    doc.addImage(dataUrl, 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height);
-                    doc.save('graph-export.pdf');
+                    doc.addImage(canvasEl.value.toDataURL('image/png'), 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height);
+                    doc.save(`graph-analysis-${Date.now()}.pdf`);
                 };
 
                 const exportPNG = () => {
                     const link = document.createElement('a');
-                    link.download = 'graph-export.png';
+                    link.download = `graph-preview-${Date.now()}.png`;
                     link.href = canvasEl.value.toDataURL();
                     link.click();
                 };
@@ -226,9 +486,9 @@
                 });
 
                 return { 
-                    canvasEl, theme, showLabels, legend, messages, userInput, 
-                    recenter, toggleTheme, toggleLabels, onMouseDown, onMouseMove, 
-                    onMouseUp, onWheel, sendMessage, exportPDF, exportPNG, openLink 
+                    canvasEl, chatBody, showLabels, chatOpen, metadata, legend, messages, userInput, 
+                    recenter, zoomIn, zoomOut, onMouseDown, onMouseMove, onMouseUp, onWheel, 
+                    sendMessage, exportPDF, exportPNG, openLink, draw
                 };
             }
         }).mount('#app');
