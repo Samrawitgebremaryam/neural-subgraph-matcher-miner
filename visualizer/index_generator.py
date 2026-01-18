@@ -6,22 +6,13 @@ from typing import Optional
 
 
 class IndexHTMLGenerator:
-    """Generates index.html files for browsing pattern instances."""
+    # Generates index.html files for browsing pattern instances."""
     
     def create_pattern_index(self, pattern_key: str, count: int, pattern_dir: str,
                             has_representative: bool = False, has_instances: bool = False,
                             representative_idx: int = -1) -> None:
-        """
-        Create an index.html to browse all instances of a pattern with tabs.
+        # Create an index.html to browse all instances of a pattern with tabs.
         
-        Args:
-            pattern_key: Unique pattern identifier
-            count: Number of pattern instances
-            pattern_dir: Directory to save index.html
-            has_representative: Whether representative visualization exists
-            has_instances: Whether instance visualizations exist
-            representative_idx: Index of the representative instance
-        """
         html_content = self._build_html_structure(
             pattern_key, count, has_representative, has_instances, representative_idx
         )
@@ -33,7 +24,7 @@ class IndexHTMLGenerator:
     def _build_html_structure(self, pattern_key: str, count: int,
                              has_representative: bool, has_instances: bool,
                              representative_idx: int) -> str:
-        """Build complete HTML structure."""
+        # Build complete HTML structure.
         parts = [
             self._build_header(pattern_key, has_instances),
             self._build_tabs(pattern_key, count, has_instances),
@@ -44,7 +35,7 @@ class IndexHTMLGenerator:
         return ''.join(parts)
     
     def _build_header(self, pattern_key: str, has_instances: bool) -> str:
-        """Build HTML header section."""
+        # Build HTML header section.
         return f"""<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
