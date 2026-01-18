@@ -30,10 +30,7 @@ def select_representative_pattern(pattern_instances: List[nx.Graph]) -> Optional
 
 
 def _calculate_pattern_score(pattern: nx.Graph) -> float:
-    """
-    Calculate a score for pattern quality.
-    
-    """
+    """Calculate a score for pattern quality."""
     score = 0.0
 
     # Prefer patterns with more balanced degree distribution
@@ -55,10 +52,7 @@ def _calculate_pattern_score(pattern: nx.Graph) -> float:
 
 
 def generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int]) -> str:
-    """
-    Generate filename for pattern visualization based on graph characteristics.
-    
-    """
+    """Generate filename for pattern visualization based on graph characteristics."""
     try:
         num_nodes = len(pattern)
         num_edges = pattern.number_of_edges()
