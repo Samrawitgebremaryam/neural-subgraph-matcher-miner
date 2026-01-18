@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Graph Visualizer v2.0</title>
     <!-- Dependencies -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <style>
@@ -50,7 +51,7 @@
         .right-panel {
             position: absolute;
             top: 20px;
-            right: 60px; /* Offset for zoom controls if needed, but in image they are next to each other */
+            right: 60px;
             display: flex;
             flex-direction: column;
             gap: 12px;
@@ -60,7 +61,7 @@
         .panel-section { padding: 18px; }
         .panel-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 12px; border-bottom: 1px solid var(--card-border); padding-bottom: 8px; }
 
-        /* Zoom Controls (Top Right Vertical) */
+        /* Zoom Controls */
         .zoom-controls {
             position: absolute;
             top: 20px;
@@ -87,7 +88,7 @@
         }
         .zoom-btn:hover { background: var(--bg-secondary); border-color: var(--accent); }
 
-        /* Chat Widget / Pattern Analyser (Bubble & Window) */
+        /* Chat Widget */
         .chat-toggle {
             position: absolute;
             bottom: 25px;
@@ -102,10 +103,7 @@
             cursor: pointer;
             box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
             z-index: 1000;
-            transition: transform 0.2s;
         }
-        .chat-toggle:hover { transform: scale(1.05); }
-
         .chat-widget {
             position: absolute;
             bottom: 85px;
@@ -158,7 +156,6 @@
             font-size: 13px;
             outline: none;
         }
-        .chat-input:focus { border-color: var(--accent); }
         .send-btn {
             width: 36px;
             height: 36px;
@@ -181,16 +178,14 @@
         .switch input { opacity: 0; width: 0; height: 0; }
         .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334155; transition: .4s; border-radius: 20px; }
         .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: #3b82f6; } /* Matching original Blue toggle */
+        input:checked + .slider { background-color: #3b82f6; }
         input:checked + .slider:before { transform: translateX(20px); }
 
-        .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; }
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; }
         .toggle-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); text-transform: uppercase; }
 
-        /* Scrollbar */
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
     </style>
 </head>
 <body>
@@ -206,16 +201,15 @@
             </div>
         </div>
 
-        <!-- Right Side Zoom Controls -->
+        <!-- Zoom Controls -->
         <div class="zoom-controls">
-            <button class="zoom-btn" @click="zoomIn" title="Zoom In">+</button>
-            <button class="zoom-btn" @click="zoomOut" title="Zoom Out">-</button>
-            <button class="zoom-btn" @click="recenter" title="Recenter View">⌂</button>
+            <button class="zoom-btn" @click="zoomIn">+</button>
+            <button class="zoom-btn" @click="zoomOut">-</button>
+            <button class="zoom-btn" @click="recenter">⌂</button>
         </div>
 
-        <!-- Right Side Panel Stack -->
+        <!-- Right Side Panel -->
         <div class="right-panel">
-            <!-- Legend Section -->
             <div class="ui-card panel-section">
                 <div class="panel-title">Legend</div>
                 <div style="margin-bottom: 20px;">
@@ -241,7 +235,6 @@
                 </div>
             </div>
 
-            <!-- Management & Control Section -->
             <div class="ui-card panel-section">
                 <div class="toggle-row">
                     <span class="toggle-label">Show Labels</span>
@@ -265,12 +258,10 @@
             </div>
         </div>
 
-        <!-- Bottom Left Chat Bubble -->
         <div class="chat-toggle" @click="chatOpen = !chatOpen">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
         </div>
 
-        <!-- Floating Chat Widget -->
         <transition name="fade">
             <div v-if="chatOpen" class="ui-card chat-widget">
                 <div class="chat-header">
@@ -293,24 +284,30 @@
     </div>
 
     <script>
-        /* const GRAPH_DATA = {{ GRAPH_DATA_JSON }}; */
-        if (typeof GRAPH_DATA === 'undefined') {
-            window.GRAPH_DATA = { 
-                metadata: { title: "Motif Analysis Results", nodeCount: 0, edgeCount: 0 }, 
-                nodes: [], edges: [], legend: { nodeTypes: [], edgeTypes: [] } 
-            };
-        }
+        const GRAPH_DATA = null;
 
         const { createApp, ref, onMounted, nextTick } = Vue;
 
         createApp({
             setup() {
+                console.log("Visualizer starting... GRAPH_DATA state:", GRAPH_DATA ? "DATA_PRESENT" : "NO_DATA_FALLBACK");
+                
                 const canvasEl = ref(null);
                 const chatBody = ref(null);
                 const showLabels = ref(true);
                 const chatOpen = ref(false);
-                const metadata = ref(window.GRAPH_DATA.metadata);
-                const legend = ref(window.GRAPH_DATA.legend);
+                
+                // Use injected data if present, otherwise default to empty sample
+                const rawData = GRAPH_DATA || { 
+                    metadata: { title: "Motif Analysis Results", nodeCount: 0, edgeCount: 0 }, 
+                    nodes: [], edges: [], legend: { nodeTypes: [], edgeTypes: [] } 
+                };
+                
+                const metadata = ref(rawData.metadata);
+                const legend = ref(rawData.legend);
+                const nodes = ref(rawData.nodes);
+                const edges = ref(rawData.edges);
+                
                 const messages = ref([{ id: 1, role: 'ai', text: "Hello! I'm your Pattern Analyst. I can help you understand the topological structure of this motif. Ask me anything!" }]);
                 const userInput = ref('');
                 
@@ -322,72 +319,64 @@
                 const zoomOut = () => { transform.k *= 0.8; draw(); };
 
                 const draw = () => {
-                    if (!ctx) return;
                     const canvas = canvasEl.value;
+                    if (!canvas || !ctx) return;
+                    
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                     
-                    // Faint Background Grid
+                    // Background dots
                     ctx.save();
-                    ctx.strokeStyle = 'rgba(255,255,255,0.02)';
-                    const gridSize = 60 * transform.k;
-                    const offsetX = (canvas.width/2 + transform.x) % gridSize;
-                    const offsetY = (canvas.height/2 + transform.y) % gridSize;
-                    for(let x=offsetX; x<canvas.width; x+=gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
-                    for(let y=offsetY; y<canvas.height; y+=gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+                    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+                    const dotSize = 2;
+                    const spacing = 40 * transform.k;
+                    const offX = (canvas.width/2 + transform.x) % spacing;
+                    const offY = (canvas.height/2 + transform.y) % spacing;
+                    for(let x=offX; x<canvas.width; x+=spacing) {
+                        for(let y=offY; y<canvas.height; y+=spacing) {
+                            ctx.beginPath();
+                            ctx.arc(x, y, dotSize/2, 0, Math.PI*2);
+                            ctx.fill();
+                        }
+                    }
                     ctx.restore();
 
                     ctx.save();
                     ctx.translate(canvas.width/2 + transform.x, canvas.height/2 + transform.y);
                     ctx.scale(transform.k, transform.k);
 
-                    // Render Edges
-                    window.GRAPH_DATA.edges.forEach(edge => {
-                        const s = window.GRAPH_DATA.nodes.find(n => n.id === edge.source);
-                        const t = window.GRAPH_DATA.nodes.find(n => n.id === edge.target);
+                    // Draw Edges
+                    edges.value.forEach(edge => {
+                        const s = nodes.value.find(n => n.id === edge.source);
+                        const t = nodes.value.find(n => n.id === edge.target);
                         if (!s || !t) return;
                         
                         ctx.beginPath();
                         ctx.moveTo(s.x, s.y);
                         ctx.lineTo(t.x, t.y);
-                        ctx.strokeStyle = '#4f46e5'; // Deep Indigo
-                        ctx.globalAlpha = 0.5;
-                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = '#4f46e5';
+                        ctx.globalAlpha = 0.6;
+                        ctx.lineWidth = 1.5;
                         ctx.stroke();
 
                         if (edge.directed) {
                             const angle = Math.atan2(t.y - s.y, t.x - s.x);
-                            const r = t.anchor ? 24 : 16;
+                            const r = t.anchor ? 22 : 14;
                             const tx = t.x - r * Math.cos(angle);
                             const ty = t.y - r * Math.sin(angle);
                             ctx.beginPath();
                             ctx.moveTo(tx, ty);
-                            ctx.lineTo(tx - 10 * Math.cos(angle - 0.5), ty - 10 * Math.sin(angle - 0.5));
-                            ctx.lineTo(tx - 10 * Math.cos(angle + 0.5), ty - 10 * Math.sin(angle + 0.5));
+                            ctx.lineTo(tx - 8 * Math.cos(angle - 0.4), ty - 8 * Math.sin(angle - 0.4));
+                            ctx.lineTo(tx - 8 * Math.cos(angle + 0.4), ty - 8 * Math.sin(angle + 0.4));
                             ctx.closePath();
                             ctx.fillStyle = '#4f46e5';
                             ctx.fill();
                         }
-
-                        if (showLabels.value && edge.label && edge.label !== 'default') {
-                            ctx.fillStyle = '#64748b';
-                            ctx.font = '9px Inter';
-                            ctx.textAlign = 'center';
-                            const labelText = edge.label;
-                            const tw = ctx.measureText(labelText).width;
-                            ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
-                            ctx.fillRect((s.x+t.x)/2 - tw/2 - 4, (s.y+t.y)/2 - 7, tw + 8, 14);
-                            ctx.fillStyle = '#94a3b8';
-                            ctx.fillText(labelText, (s.x+t.x)/2, (s.y+t.y)/2 + 3);
-                        }
                     });
 
-                    // Render Nodes
-                    window.GRAPH_DATA.nodes.forEach(node => {
-                        const r = node.anchor ? 22 : 14;
+                    // Draw Nodes
+                    nodes.value.forEach(node => {
+                        const r = node.anchor ? 20 : 12;
                         ctx.save();
-                        ctx.shadowBlur = 10;
-                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                        
                         ctx.beginPath();
                         if (node.anchor) ctx.roundRect(node.x-r, node.y-r, r*2, r*2, 4);
                         else ctx.arc(node.x, node.y, r, 0, Math.PI*2);
@@ -396,22 +385,24 @@
                         ctx.fillStyle = color;
                         ctx.fill();
                         
-                        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+                        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
                         ctx.lineWidth = 1.5;
                         ctx.stroke();
                         ctx.restore();
 
                         if (showLabels.value) {
-                            const label = node.label || 'Node';
+                            ctx.save();
+                            const label = node.label || '';
                             ctx.font = 'bold 10px Inter';
                             const tw = ctx.measureText(label).width;
                             ctx.fillStyle = 'white';
                             ctx.beginPath();
-                            ctx.roundRect(node.x - tw/2 - 6, node.y + r + 6, tw + 12, 16, 4);
+                            ctx.roundRect(node.x - tw/2 - 5, node.y + r + 5, tw + 10, 14, 3);
                             ctx.fill();
                             ctx.fillStyle = '#0f172a';
                             ctx.textAlign = 'center';
-                            ctx.fillText(label, node.x, node.y + r + 18);
+                            ctx.fillText(label, node.x, node.y + r + 15);
+                            ctx.restore();
                         }
                     });
 
@@ -438,17 +429,16 @@
                     const text = userInput.value;
                     messages.value.push({ id: Date.now(), role: 'user', text });
                     userInput.value = '';
-                    
                     nextTick(() => { if(chatBody.value) chatBody.value.scrollTop = chatBody.value.scrollHeight; });
 
                     try {
                         const res = await fetch('http://localhost:9002/chat', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ message: text, graph_data: window.GRAPH_DATA })
+                            body: JSON.stringify({ message: text, graph_data: rawData })
                         });
                         const data = await res.json();
-                        messages.value.push({ id: Date.now(), role: 'ai', text: data.response || "No response received." });
+                        messages.value.push({ id: Date.now(), role: 'ai', text: data.response || "No response." });
                     } catch (e) {
                         messages.value.push({ id: Date.now(), role: 'ai', text: "Error connecting to Pattern Analyst." });
                     }
@@ -459,12 +449,12 @@
                     const { jsPDF } = window.jspdf;
                     const doc = new jsPDF('l', 'px', [canvasEl.value.width, canvasEl.value.height]);
                     doc.addImage(canvasEl.value.toDataURL('image/png'), 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height);
-                    doc.save(`graph-analysis-${Date.now()}.pdf`);
+                    doc.save('graph.pdf');
                 };
 
                 const exportPNG = () => {
                     const link = document.createElement('a');
-                    link.download = `graph-preview-${Date.now()}.png`;
+                    link.download = 'graph.png';
                     link.href = canvasEl.value.toDataURL();
                     link.click();
                 };
