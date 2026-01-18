@@ -13,14 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def sanitize_filename(filename: str) -> str:
-    # Sanitize filename to be filesystem-safe.
-    
-    Args:
-        filename: The filename to sanitize
-        
-    Returns:
-        Sanitized filename
-    """
+    """Sanitize filename to be filesystem-safe."""
     # Remove or replace invalid characters
     filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
     

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def visualize_pattern_graph_ext(pattern: nx.Graph, args: Any, 
                                 count_by_size: Dict[int, int], 
                                 pattern_key: Optional[str] = None) -> bool:
-    # Main visualizer integration function matching existing API signature.
+    """Main visualizer integration function matching existing API signature."""
     try:
         # Validate input
         if not _validate_pattern_input(pattern):
@@ -69,7 +69,7 @@ def visualize_all_pattern_instances(pattern_instances: List[nx.Graph],
                                     output_dir: str = DEFAULT_OUTPUT_DIR,
                                     representative_pattern: Optional[nx.Graph] = None,
                                     visualize_instances: bool = False) -> bool:
-    # Visualize all instances of a pattern with representative and optional instances.
+    """Visualize all instances of a pattern with representative and optional instances."""
 
     try:
         pattern_dir = os.path.join(output_dir, pattern_key)
@@ -323,7 +323,7 @@ def _create_index_html(pattern_key: str, count: int, pattern_dir: str,
 def _log_visualization_summary(visualize_instances: bool, success_count: int,
                                count: int, pattern_dir: str,
                                representative_data: Optional[Dict[str, Any]]) -> None:
-    # Log visualization summary.
+    """Log visualization summary."""
     if visualize_instances:
         logger.info(f"✓ Successfully created representative + {success_count}/{count} "
                    f"instance visualizations in {pattern_dir}")
@@ -334,7 +334,7 @@ def _log_visualization_summary(visualize_instances: bool, success_count: int,
 # Convenience functions for backward compatibility
 
 def extract_graph_data(graph: nx.Graph) -> Dict[str, Any]:
- #Convenience function to extract graph data using GraphDataExtractor.
+    """Convenience function to extract graph data using GraphDataExtractor."""
    
     extractor = GraphDataExtractor()
     return extractor.extract_graph_data(graph)
@@ -344,7 +344,6 @@ def process_html_template(graph_data: Dict[str, Any],
                          template_path: str = DEFAULT_TEMPLATE_NAME,
                          output_filename: Optional[str] = None,
                          output_dir: str = ".") -> str:
-
-    # Convenience function for HTML template processing.
+    """Convenience function for HTML template processing."""
     processor = HTMLTemplateProcessor(template_path)
     return processor.process_template(graph_data, output_filename, output_dir)
