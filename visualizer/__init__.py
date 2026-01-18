@@ -1,22 +1,5 @@
-"""
-Graph Visualizer Package
-
-A modular package for visualizing NetworkX graphs as interactive HTML pages.
-
-Main Functions:
-    - visualize_pattern_graph_ext: Visualize a single pattern graph
-    - visualize_all_pattern_instances: Visualize pattern with all instances
-    - extract_graph_data: Extract graph data for visualization
-    - process_html_template: Process HTML template with graph data
-
-Modules:
-    - config: Configuration constants
-    - extractor: Graph data extraction
-    - template_processor: HTML template processing
-    - pattern_utils: Pattern selection and filename generation
-    - index_generator: Index HTML generation
-    - utils: Utility functions
-"""
+# Graph Visualizer Package
+# A modular package for visualizing NetworkX graphs as interactive HTML pages.
 
 from .visualizer import (
     visualize_pattern_graph_ext,

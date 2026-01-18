@@ -13,8 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def sanitize_filename(filename: str) -> str:
-    """
-    Sanitize filename to be filesystem-safe.
+    # Sanitize filename to be filesystem-safe.
     
     Args:
         filename: The filename to sanitize

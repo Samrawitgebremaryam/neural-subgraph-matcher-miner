@@ -1,6 +1,4 @@
-"""
-HTML template processing and generation.
-"""
+# HTML template processing and generation.
 import os
 import json
 import re
@@ -20,32 +18,17 @@ from .utils import sanitize_filename, validate_graph_data
 
 
 class HTMLTemplateProcessor:
-    """
-    Processes HTML templates and injects graph data for visualization.
-    """
+    # Processes HTML templates and injects graph data for visualization.
     
     def __init__(self, template_path: str = DEFAULT_TEMPLATE_NAME):
-        """
-        Initialize the HTML template processor.
+        # Initialize the HTML template processor.
         
-        Args:
-            template_path: Path to the HTML template file
-        """
         self.template_path = template_path
         self.template_content = None
         
     def read_template(self) -> str:
-        """
-        Read template.html file from filesystem.
+        # Read template.html file from filesystem.
         
-        Returns:
-            Template content as string
-            
-        Raises:
-            FileNotFoundError: If template file doesn't exist
-            ValueError: If template is empty or invalid
-            IOError: If file cannot be read
-        """
         try:
             with open(self.template_path, 'r', encoding='utf-8') as file:
                 content = file.read()
@@ -65,32 +48,12 @@ class HTMLTemplateProcessor:
             raise IOError(f"Failed to read template file {self.template_path}: {str(e)}")
     
     def _validate_template_structure(self, content: str) -> bool:
-        """
-        Validate that template has required structure for data injection.
-        
-        Args:
-            content: Template content to validate
-            
-        Returns:
-            True if valid, False otherwise
-        """
+        # Validate that template has required structure for data injection.
         return all(element in content for element in REQUIRED_TEMPLATE_ELEMENTS)
     
     def inject_graph_data(self, template_content: str, graph_data: Dict[str, Any]) -> str:
-        """
-        Inject graph data into JavaScript section of template.
+        # Inject graph data into JavaScript section of template.
         
-        Args:
-            template_content: HTML template content
-            graph_data: Graph data dictionary to inject
-            
-        Returns:
-            Template with injected data
-            
-        Raises:
-            ValueError: If template or data is invalid
-            RuntimeError: If injection fails
-        """
         if not template_content or not template_content.strip():
             raise ValueError("Template content cannot be empty")
             
@@ -104,21 +67,31 @@ class HTMLTemplateProcessor:
             json_data = json.dumps(graph_data, indent=8, ensure_ascii=False)
             replacement = f'const GRAPH_DATA = {json_data};'
             
-            # Try complex pattern first
-            pattern = r'const GRAPH_DATA\s*=\s*\{[^}]*\}(?:\s*,\s*\{[^}]*\})*\s*;'
-            if re.search(pattern, template_content, re.DOTALL):
-                injected_content = re.sub(pattern, replacement, template_content, flags=re.DOTALL)
-            else:
-                # Fallback to simple pattern
-                simple_pattern = r'const GRAPH_DATA\s*=\s*[^;]+;'
-                if re.search(simple_pattern, template_content, re.DOTALL):
-                    injected_content = re.sub(simple_pattern, replacement, template_content, flags=re.DOTALL)
-                else:
-                    raise RuntimeError("Could not find GRAPH_DATA placeholder in template")
             
-            if 'const GRAPH_DATA' not in injected_content:
-                raise RuntimeError("Data injection failed - GRAPH_DATA not found in result")
-                
+            patterns = [
+                r'const GRAPH_DATA\s*=\s*\{[^}]*\}(?:\s*,\s*\{[^}]*\})*\s*;', # Complex legacy
+                r'/\* const GRAPH_DATA\s*=\s*[^;]+\s* \*/',                   # Modular placeholder
+                r'const GRAPH_DATA\s*=\s*null\s*;',                          # Default modular
+                r'const GRAPH_DATA\s*=\s*[^;]+;'                             # Simple fallback
+            ]
+            
+            injected_content = template_content
+            data_injected = False
+            
+            for pattern in patterns:
+                if re.search(pattern, injected_content, re.DOTALL):
+                    injected_content = re.sub(pattern, replacement, injected_content, flags=re.DOTALL)
+                    data_injected = True
+                    break
+            
+            if not data_injected:
+                # If no pattern matched, try a direct injection before the first script
+                if '</head>' in injected_content:
+                    injected_content = injected_content.replace('</head>', f'<script>{replacement}</script></head>', 1)
+                    data_injected = True
+                else:
+                    raise RuntimeError("Could not find suitable GRAPH_DATA placeholder or target in template")
+            
             return injected_content
             
         except json.JSONEncodeError as e:
@@ -127,15 +100,8 @@ class HTMLTemplateProcessor:
             raise RuntimeError(f"Data injection failed: {str(e)}")
     
     def _inject_port_configuration(self, template_content: str) -> str:
-        """
-        Inject port configuration into template, replacing hardcoded ports.
+        # Inject port configuration into template, replacing hardcoded ports.
         
-        Args:
-            template_content: HTML template content
-            
-        Returns:
-            Template with injected port configuration
-        """
         # Replace annotation tool port (localhost:3000)
         template_content = re.sub(
             r'localhost:3000',
@@ -153,19 +119,8 @@ class HTMLTemplateProcessor:
         return template_content
     
     def generate_filename(self, graph_data: Dict[str, Any], base_name: str = "pattern") -> str:
-        """
-        Generate filename based on graph characteristics.
+        # Generate filename based on graph characteristics.
         
-        Args:
-            graph_data: Graph data dictionary
-            base_name: Base name for the file
-            
-        Returns:
-            Generated filename
-            
-        Raises:
-            ValueError: If graph data is invalid
-        """
         if not graph_data or not isinstance(graph_data, dict):
             raise ValueError("Graph data must be a non-empty dictionary")
             
@@ -206,21 +161,8 @@ class HTMLTemplateProcessor:
             return "dense"
     
     def write_html_file(self, content: str, filename: str, output_dir: str = ".") -> str:
-        """
-        Write HTML content to file.
+        # Write HTML content to file.
         
-        Args:
-            content: HTML content to write
-            filename: Output filename
-            output_dir: Output directory
-            
-        Returns:
-            Full path to created file
-            
-        Raises:
-            ValueError: If content or filename is empty
-            IOError: If file cannot be written
-        """
         if not content or not content.strip():
             raise ValueError("Content cannot be empty")
             
@@ -256,20 +198,7 @@ class HTMLTemplateProcessor:
     def process_template(self, graph_data: Dict[str, Any], 
                         output_filename: Optional[str] = None,
                         output_dir: str = ".") -> str:
-        """
-        Complete template processing workflow: read, inject, and write.
-        
-        Args:
-            graph_data: Graph data to inject
-            output_filename: Optional output filename
-            output_dir: Output directory
-            
-        Returns:
-            Path to created HTML file
-            
-        Raises:
-            RuntimeError: If processing fails
-        """
+        # Complete template processing workflow: read, inject, and write.
         try:
             template_content = self.read_template()
             

@@ -1,6 +1,4 @@
-"""
-Configuration constants for the graph visualizer.
-"""
+# Configuration constants for the graph visualizer.
 import os
 
 ANNOTATION_TOOL_PORT = os.getenv('ANNOTATION_TOOL_PORT', '3000')
@@ -54,11 +52,9 @@ EDGE_METADATA_EXCLUDED_KEYS = {'type', 'label', 'source', 'target', 'directed',
 
 # Template validation requirements
 REQUIRED_TEMPLATE_ELEMENTS = [
-    '<script>',
+    '<script',
     'const GRAPH_DATA',
     '</script>',
-    '<canvas id="graph-canvas">',
-    '<div id="legend-content">'
 ]
 
 # Density thresholds for classification
