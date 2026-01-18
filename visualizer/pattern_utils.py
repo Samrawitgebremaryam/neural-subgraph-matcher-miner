@@ -11,12 +11,6 @@ def select_representative_pattern(pattern_instances: List[nx.Graph]) -> Optional
     """
     Select a representative pattern from a list of instances.
     Uses heuristics like centrality, average degree, etc.
-    
-    Args:
-        pattern_instances: List of pattern graph instances
-        
-    Returns:
-        Representative pattern or None if list is empty
     """
     if not pattern_instances:
         return None
@@ -39,11 +33,6 @@ def _calculate_pattern_score(pattern: nx.Graph) -> float:
     """
     Calculate a score for pattern quality.
     
-    Args:
-        pattern: Graph pattern to score
-        
-    Returns:
-        Quality score
     """
     score = 0.0
 
@@ -69,12 +58,6 @@ def generate_pattern_filename(pattern: nx.Graph, count_by_size: Dict[int, int]) 
     """
     Generate filename for pattern visualization based on graph characteristics.
     
-    Args:
-        pattern: NetworkX graph pattern
-        count_by_size: Dictionary mapping size to rank/count
-        
-    Returns:
-        Generated filename
     """
     try:
         num_nodes = len(pattern)

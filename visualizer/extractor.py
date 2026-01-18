@@ -32,19 +32,7 @@ class GraphDataExtractor:
         self.edge_color_palette = EDGE_COLOR_PALETTE
     
     def extract_graph_data(self, graph: nx.Graph) -> Dict[str, Any]:
-        """
-        Extract complete graph data from NetworkX graph.
-        
-        Args:
-            graph: NetworkX graph object to extract data from
-            
-        Returns:
-            Dictionary containing metadata, nodes, edges, and legend data
-            
-        Raises:
-            ValueError: If graph is None or empty
-            TypeError: If graph is not a NetworkX graph
-        """
+        # Extract complete graph data from NetworkX graph.
         self._validate_graph(graph)
         
         try:
@@ -64,7 +52,7 @@ class GraphDataExtractor:
             raise RuntimeError(f"Failed to extract graph data: {str(e)}") from e
     
     def _validate_graph(self, graph: nx.Graph) -> None:
-        """Validate graph input."""
+        # Validate graph input.
         if graph is None:
             raise ValueError("Graph cannot be None")
             
@@ -75,15 +63,7 @@ class GraphDataExtractor:
             raise ValueError("Graph cannot be empty")
     
     def _extract_metadata(self, graph: nx.Graph) -> Dict[str, Any]:
-        """
-        Extract metadata information from the graph.
-        
-        Args:
-            graph: NetworkX graph object
-            
-        Returns:
-            Dictionary containing graph metadata
-        """
+        # Extract metadata information from the graph.
         num_nodes = len(graph)
         num_edges = graph.number_of_edges()
         
@@ -102,7 +82,7 @@ class GraphDataExtractor:
         }
     
     def _calculate_density(self, graph: nx.Graph, num_nodes: int, num_edges: int) -> float:
-        """Calculate graph density."""
+        # Calculate graph density.
         if num_nodes > 1:
             max_edges = num_nodes * (num_nodes - 1)
             if not graph.is_directed():
@@ -111,14 +91,14 @@ class GraphDataExtractor:
         return 0
     
     def _generate_graph_title(self, graph: nx.Graph) -> str:
-        """Generate descriptive title for the graph."""
+        # Generate descriptive title for the graph.
         graph_type = "Directed" if graph.is_directed() else "Undirected"
         has_anchors = any(graph.nodes[n].get('anchor', 0) == 1 for n in graph.nodes())
         anchor_info = " with Anchors" if has_anchors else ""
         return f"{graph_type} Graph{anchor_info}"
     
     def _extract_nodes(self, graph: nx.Graph) -> List[Dict[str, Any]]:
-        """Extract node data with positions and attributes."""
+        # Extract node data with positions and attributes.
         nodes = []
         pos = self._get_node_positions(graph)
         
@@ -131,7 +111,7 @@ class GraphDataExtractor:
     
     def _build_node_dict(self, node_key: Any, node_data: Dict[str, Any], 
                          pos: Dict[str, Tuple[float, float]]) -> Dict[str, Any]:
-        """Build node dictionary with all required attributes."""
+        # Build node dictionary with all required attributes.
         node_id = str(node_data['id']) if 'id' in node_data and node_data['id'] is not None else str(node_key)
         x, y = pos.get(node_key, (0, 0))
         is_anchor = node_data.get('anchor', 0) == 1
@@ -152,7 +132,7 @@ class GraphDataExtractor:
         return node_dict
     
     def _build_display_label(self, node_data: Dict[str, Any]) -> str:
-        """Build display label from node attributes."""
+        # Build display label from node attributes.
         display_label_parts = []
         for key, value in node_data.items():
             if key not in {'anchor', 'x', 'y'} and value is not None:
@@ -161,7 +141,7 @@ class GraphDataExtractor:
         return "\\n".join(display_label_parts) if display_label_parts else str(node_data.get('id', ''))
     
     def _extract_edges(self, graph: nx.Graph) -> List[Dict[str, Any]]:
-        """Extract edge data with attributes."""
+        # Extract edge data with attributes.
         edges = []
         for source, target, edge_data in graph.edges(data=True):
             edge_dict = self._build_edge_dict(graph, source, target, edge_data)
@@ -170,7 +150,7 @@ class GraphDataExtractor:
     
     def _build_edge_dict(self, graph: nx.Graph, source: Any, target: Any, 
                          edge_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Build edge dictionary with all required attributes."""
+        # Build edge dictionary with all required attributes.
         source_id = str(graph.nodes[source].get('id', source))
         target_id = str(graph.nodes[target].get('id', target))
         
@@ -185,15 +165,7 @@ class GraphDataExtractor:
         return edge_dict
     
     def _get_node_positions(self, graph: nx.Graph) -> Dict[str, Tuple[float, float]]:
-        """
-        Get or generate node positions for layout.
-        
-        Args:
-            graph: NetworkX graph object
-            
-        Returns:
-            Dictionary mapping node IDs to (x, y) positions
-        """
+        # Get or generate node positions for layout.
         # Check if positions already exist in node attributes
         has_positions = all('x' in graph.nodes[n] and 'y' in graph.nodes[n] 
                            for n in graph.nodes())
@@ -206,7 +178,7 @@ class GraphDataExtractor:
         return self._generate_layout(graph)
     
     def _generate_layout(self, graph: nx.Graph) -> Dict[str, Tuple[float, float]]:
-        """Generate graph layout using spring algorithm."""
+        # Generate graph layout using spring algorithm.
         try:
             pos = nx.spring_layout(
                 graph, 
@@ -223,14 +195,14 @@ class GraphDataExtractor:
             return {n: (pos[n][0], pos[n][1]) for n in pos}
     
     def _get_node_type(self, node_data: Dict[str, Any]) -> str:
-        """Determine node type from node attributes."""
+        # Determine node type from node attributes.
         for key in NODE_TYPE_KEYS:
             if key in node_data and node_data[key] is not None:
                 return str(node_data[key])
         return 'default'
     
     def _get_edge_type(self, edge_data: Dict[str, Any]) -> str:
-        """Determine edge type from edge attributes."""
+        # Determine edge type from edge attributes.
         for key in EDGE_TYPE_KEYS:
             if key in edge_data and edge_data[key] is not None and edge_data[key] != '':
                 return str(edge_data[key])
@@ -244,7 +216,7 @@ class GraphDataExtractor:
     
     def _generate_legend(self, nodes: List[Dict[str, Any]], 
                         edges: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-        """Generate legend data for node and edge types."""
+        # Generate legend data for node and edge types.
         node_types = set(node['label'] for node in nodes)
         edge_types = set(edge['label'] for edge in edges)
         
@@ -257,7 +229,7 @@ class GraphDataExtractor:
         }
     
     def _create_node_legend(self, node_types: set) -> List[Dict[str, Any]]:
-        """Create legend entries for node types."""
+        # Create legend entries for node types.
         legend = []
         for i, node_type in enumerate(sorted(node_types)):
             color = self.color_palette[i % len(self.color_palette)]
@@ -269,7 +241,7 @@ class GraphDataExtractor:
         return legend
     
     def _create_edge_legend(self, edge_types: set) -> List[Dict[str, Any]]:
-        """Create legend entries for edge types."""
+        # Create legend entries for edge types.
         legend = []
         for i, edge_type in enumerate(sorted(edge_types)):
             color = self.edge_color_palette[i % len(self.edge_color_palette)]
