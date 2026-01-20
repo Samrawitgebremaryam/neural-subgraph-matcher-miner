@@ -1,72 +1,84 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pattern Discovery Visualizer</title>
+    <title>Interactive Graph Visualizer</title>
     <!-- Dependencies -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <style>
         :root {
-            --bg-deep: #0d1117;
-            --bg-card: #161b22;
-            --border-card: #30363d;
-            --text-main: #c9d1d9;
-            --text-dim: #8b949e;
-            --accent-violet: #8b5cf6;
-            --accent-blue: #3b82f6;
-            --card-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            /* Color Palette - Light Theme (Start with backup defaults) */
+            --bg-primary: oklch(0.96 0 0);
+            --bg-secondary: oklch(0.97 0 0);
+            --border-light: oklch(0.86 0 0);
+            --text-primary: oklch(0.32 0 0);
+            --text-secondary: oklch(0.51 0 0);
+            --node-default: rgba(59, 130, 246, 0.7);
+            --node-anchor: rgba(239, 68, 68, 0.8);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Dark Theme - The default for this app */
+        .dark {
+            --bg-primary: oklch(0.22 0 0); /* #0d1117 */
+            --bg-secondary: oklch(0.24 0 0); /* #161b22 */
+            --border-light: oklch(0.33 0 0); /* #30363d */
+            --text-primary: oklch(0.89 0 0); /* #e2e8f0 */
+            --text-secondary: oklch(0.6 0 0); /* #8b949e */
+            --card-bg: oklch(0.24 0 0);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+            --button-bg: oklch(0.31 0 0);
+            --button-hover: oklch(0.37 0 0);
+            --accent: oklch(0.37 0 0);
         }
 
         body { 
             margin: 0; 
-            font-family: 'Inter', sans-serif; 
-            background: var(--bg-deep); 
-            color: var(--text-main); 
+            font-family: 'Inter', system-ui, -apple-system, sans-serif; 
+            background: var(--bg-primary); 
+            color: var(--text-primary); 
             overflow: hidden; 
             user-select: none;
         }
 
         #app { width: 100vw; height: 100vh; position: relative; }
         
-        /* Subtle Background Grid */
-        .background-grid {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
-            background-size: 40px 40px;
-            z-index: 0;
+        /* Canvas */
+        canvas { 
+            position: absolute; top: 0; left: 0; z-index: 1; cursor: grab; 
+            background-color: var(--bg-primary);
+            background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0);
+            background-size: 20px 20px;
         }
-
-        canvas { position: absolute; top: 0; left: 0; z-index: 1; cursor: grab; }
         canvas:active { cursor: grabbing; }
 
-        /* UI Base Class */
+        /* UI Cards */
         .ui-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-card);
-            border-radius: 10px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
             box-shadow: var(--card-shadow);
             z-index: 100;
             position: absolute;
-            backdrop-filter: blur(8px);
+            backdrop-filter: blur(10px);
+            padding: 12px;
         }
 
-        /* Top Title Card */
+        /* Top Title */
         .top-card {
             top: 20px;
             left: 50%;
             transform: translateX(-50%);
-            padding: 12px 30px;
             text-align: center;
             min-width: 300px;
         }
-        .top-card h1 { margin: 0; font-size: 15px; font-weight: 700; color: #fff; }
-        .top-card p { margin: 2px 0 0; font-size: 11px; color: var(--text-dim); }
+        .top-card h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); }
+        .top-card p { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
 
-        /* Zoom Controls (Top Right) */
+        /* Zoom Controls */
         .zoom-controls {
             right: 20px;
             top: 20px;
@@ -78,10 +90,10 @@
         .zoom-btn {
             width: 36px;
             height: 36px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-card);
-            border-radius: 8px;
-            color: white;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            color: var(--text-primary);
             cursor: pointer;
             font-size: 18px;
             display: flex;
@@ -89,93 +101,127 @@
             justify-content: center;
             transition: all 0.2s;
         }
-        .zoom-btn:hover { border-color: var(--text-main); background: #1f242c; }
+        .zoom-btn:hover { background: var(--button-hover); }
 
-        /* Right Panel Stack */
+        /* Right Panel */
         .right-panel {
             top: 75px;
             right: 20px;
-            width: 210px;
+            width: 220px;
             display: flex;
             flex-direction: column;
             gap: 12px;
         }
-        .section { padding: 18px; }
         .section-title {
-            font-size: 11px;
-            font-weight: 800;
-            color: var(--text-dim);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border-light);
+            padding-bottom: 8px;
+            margin-bottom: 12px;
         }
-        .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border-card); margin-left: 10px; }
+        .sub-header { 
+            font-size: 12px; 
+            font-weight: 600; 
+            color: var(--text-secondary); 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px;
+            margin-bottom: 8px; 
+        }
 
-        /* Legend Elements */
-        .legend-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+        /* Legend */
+        .legend-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
         .legend-item { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-        .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
-        .sub-header { font-size: 9px; font-weight: 700; color: var(--text-dim); opacity: 0.6; margin-bottom: 8px; }
+        .swatch { 
+            width: 18px; height: 18px; 
+            border-radius: 4px; 
+            border: 1px solid var(--border-light);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            flex-shrink: 0; 
+        }
 
-        /* Toggle Button */
-        .toggle-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 15px; }
-        .switch { position: relative; width: 42px; height: 22px; }
+        /* Toggle */
+        .toggle-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+        .toggle-row label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+        .switch { position: relative; width: 44px; height: 24px; display: inline-block; }
         .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; bottom: 0; left: 0; right: 0; background-color: #334155; transition: .4s; border-radius: 20px; }
-        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--accent-blue); }
+        .slider { position: absolute; cursor: pointer; top: 0; bottom: 0; left: 0; right: 0; background-color: #2b3137; transition: .3s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: var(--bg-secondary); transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--node-default); }
         input:checked + .slider:before { transform: translateX(20px); }
 
-        /* Action Buttons */
-        .grid-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        /* Buttons */
+        .grid-buttons { display: flex; gap: 8px; }
         .btn-action {
-            background: rgba(255,255,255,0.05);
-            border: 1px solid var(--border-card);
-            color: #fff;
-            padding: 8px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 500;
+            flex: 1;
+            background: var(--button-bg);
+            border: 1px solid var(--border-light);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
             cursor: pointer;
             transition: 0.2s;
         }
-        .btn-action:hover { background: rgba(255,255,255,0.1); border-color: var(--text-dim); }
+        .btn-action:hover { background: var(--button-hover); }
 
-        /* Chat Bubble (Violet) */
-        .chat-trigger {
+        /* Context Menu */
+        #context-menu {
             position: absolute;
-            bottom: 25px;
-            left: 25px;
-            width: 54px;
-            height: 54px;
-            background: var(--accent-violet);
-            border-radius: 14px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            box-shadow: var(--card-shadow);
+            z-index: 2000;
+            padding: 4px 0;
+            min-width: 140px;
+        }
+        .context-menu-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-primary);
+            transition: background 0.2s;
+        }
+        .context-menu-item:hover { background: var(--button-hover); }
+
+        /* Chat */
+        .chat-trigger {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
-            z-index: 1000;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+            z-index: 2000;
+            transition: transform 0.2s;
         }
+        .chat-trigger:hover { transform: scale(1.1); }
 
-        /* Pattern Analyser Window */
         .chat-container {
-            position: absolute;
-            bottom: 90px;
-            left: 25px;
-            width: 340px;
+            position: fixed;
+            bottom: 80px;
+            left: 20px;
+            width: 350px;
             height: 500px;
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            border: 1px solid var(--border-card);
+            border-radius: 16px;
+            border: 1px solid var(--border-light);
+            z-index: 2000;
+            background: var(--bg-secondary);
         }
         .chat-header {
-            background: var(--accent-violet);
+            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
             color: white;
-            padding: 14px 18px;
+            padding: 16px;
             font-weight: 600;
             font-size: 14px;
             display: flex;
@@ -184,33 +230,32 @@
         }
         .chat-main {
             flex: 1;
-            background: #0d1117;
+            background: var(--bg-secondary);
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
         
-        /* API Key Field */
         .api-key-box {
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border-card);
-            background: rgba(255,255,255,0.02);
+            padding: 8px 16px;
+            background: var(--button-bg);
+            border-bottom: 1px solid var(--border-light);
         }
         .api-input {
             width: 100%;
-            background: rgba(0,0,0,0.2);
-            border: 1px solid var(--border-card);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
             border-radius: 4px;
-            padding: 8px 12px;
-            color: white;
-            font-size: 11px;
+            padding: 6px 10px;
+            color: var(--text-primary);
+            font-size: 12px;
             outline: none;
             box-sizing: border-box;
         }
 
         .messages-area {
             flex: 1;
-            padding: 18px;
+            padding: 16px;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
@@ -219,34 +264,45 @@
         .message-bubble { 
             padding: 10px 14px; 
             border-radius: 12px; 
-            font-size: 13px; 
+            font-size: 14px; 
             line-height: 1.5; 
             max-width: 85%; 
         }
-        .message-bubble.ai { background: rgba(255,255,255,0.05); border: 1px solid var(--border-card); align-self: flex-start; }
-        .message-bubble.user { background: var(--accent-violet); color: white; align-self: flex-end; }
+        .message-bubble.ai { 
+            background: var(--button-bg); 
+            border: 1px solid var(--border-light); 
+            color: var(--text-primary); 
+            align-self: flex-start; 
+            border-bottom-left-radius: 2px;
+        }
+        .message-bubble.user { 
+            background: #6366f1; 
+            color: white; 
+            align-self: flex-end; 
+            border-bottom-right-radius: 2px;
+        }
 
         .chat-input-bar {
-            padding: 18px;
-            border-top: 1px solid var(--border-card);
+            padding: 12px;
+            border-top: 1px solid var(--border-light);
             display: flex;
-            gap: 10px;
-            background: #161b22;
+            gap: 8px;
+            background: var(--bg-secondary);
         }
         .chat-field {
             flex: 1;
-            background: rgba(0,0,0,0.3);
-            border: 1px solid var(--border-card);
+            background: var(--bg-primary);
+            border: 1px solid var(--border-light);
             border-radius: 20px;
-            padding: 8px 16px;
-            color: white;
-            font-size: 13px;
+            padding: 10px 16px;
+            color: var(--text-primary);
+            font-size: 14px;
             outline: none;
         }
         .send-icon-btn {
-            width: 36px;
-            height: 36px;
-            background: var(--accent-violet);
+            width: 38px;
+            height: 38px;
+            background: #6366f1;
             border: none;
             border-radius: 50%;
             display: flex;
@@ -256,9 +312,8 @@
             color: white;
         }
 
-        /* Vue Animations */
         .fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.3s ease; }
-        .fade-slide-enter-from, .fade-slide-leave-to { opacity: 0; transform: translateY(20px); }
+        .fade-slide-enter-from, .fade-slide-leave-to { opacity: 0; transform: translateY(20px) scale(0.9); }
 
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 10px; }
@@ -266,26 +321,42 @@
 </head>
 <body>
     <div id="app">
-        <div class="background-grid"></div>
-        <canvas ref="canvasEl" @mousedown="startDrag" @mousemove="onDrag" @mouseup="endDrag" @wheel.prevent="onWheel"></canvas>
+        <!-- Canvas -->
+        <canvas ref="canvasEl" 
+            @mousedown="handleMouseDown" 
+            @mousemove="handleMouseMove" 
+            @mouseup="handleMouseUp" 
+            @wheel.prevent="handleWheel"
+            @contextmenu.prevent="handleRightClick">
+        </canvas>
+
+        <!-- Context Menu -->
+        <div id="context-menu" v-if="contextMenu.visible" :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }">
+            <template v-if="isolatedNode && isolatedNode.id === contextMenu.node?.id">
+                 <div class="context-menu-item" @click="cancelIsolation">Cancel Isolation</div>
+            </template>
+            <template v-else>
+                <div class="context-menu-item" @click="isolateNode">Isolate Node</div>
+            </template>
+            <div class="context-menu-item" @click="copyLabel">Copy Label</div>
+        </div>
         
-        <!-- Header Info -->
+        <!-- Header -->
         <div class="ui-card top-card">
-            <h1>{{ metadata.title }}</h1>
+            <h1>Graph Visualization</h1>
             <p>{{ metadata.nodeCount }} nodes ({{ legend.nodeTypes.length }} types), {{ metadata.edgeCount }} edges</p>
         </div>
 
-        <!-- Zoom Controls -->
+        <!-- Zoom -->
         <div class="zoom-controls">
             <button class="zoom-btn" @click="changeZoom(1.1)">+</button>
             <button class="zoom-btn" @click="changeZoom(0.9)">-</button>
             <button class="zoom-btn" @click="resetCamera">⌂</button>
         </div>
 
-        <!-- Functional Sidebar -->
+        <!-- Sidebar -->
         <div class="right-panel">
-            <!-- Legend Area -->
-            <div class="ui-card section">
+            <div class="ui-card">
                 <div class="section-title">Legend</div>
                 <div class="sub-header">NODE TYPES</div>
                 <div class="legend-list">
@@ -294,55 +365,47 @@
                         <span>{{ t.label }}</span>
                     </div>
                 </div>
-                <div class="sub-header">EDGE TYPES</div>
-                <div class="legend-list">
-                    <div v-for="t in legend.edgeTypes" :key="t.label" class="legend-item">
-                        <div class="swatch" :style="{ background: t.color }"></div>
-                        <span>{{ t.label }}</span>
-                    </div>
-                </div>
                 <div class="sub-header">SPECIAL NODES</div>
                 <div class="legend-item">
-                    <div class="swatch" style="background: #ef4444; border-radius: 2px;"></div>
+                    <div class="swatch" style="background: rgba(248, 113, 113, 0.9);"></div>
                     <span>Anchor Nodes</span>
                 </div>
             </div>
 
-            <!-- Controls Area -->
-            <div class="ui-card section">
+            <div class="ui-card">
                 <div class="toggle-row">
-                    <span>Show Labels</span>
+                    <label>Show Labels</label>
                     <label class="switch">
-                        <input type="checkbox" v-model="showLabels" @change="drawGraph">
+                        <input type="checkbox" v-model="showLabels" @change="render">
                         <span class="slider"></span>
                     </label>
                 </div>
-                
-                <div class="section-title" style="margin-top: 20px;">Navigation</div>
-                <div class="grid-buttons">
-                    <button class="btn-action" @click="nav('http://localhost:3000/import')">Upload</button>
-                    <button class="btn-action" @click="nav('http://localhost:3000')">Annotation</button>
+                <!-- Navigation -->
+                <div class="toggle-row">
+                    <label>Navigation</label>
+                    <div class="grid-buttons">
+                        <button class="btn-action" @click="nav('http://localhost:3000/import')">Upload</button>
+                        <button class="btn-action" @click="nav('http://localhost:3000')">Annotation</button>
+                    </div>
                 </div>
-
-                <div class="section-title" style="margin-top: 20px;">Export</div>
-                <div class="grid-buttons">
+                 <!-- Export -->
+                 <div class="grid-buttons" style="margin-top: 10px;">
                     <button class="btn-action" @click="savePDF">PDF</button>
                     <button class="btn-action" @click="savePNG">PNG</button>
                 </div>
             </div>
         </div>
 
-        <!-- Floating Action Button -->
+        <!-- Chat -->
         <div class="chat-trigger" @click="openChat = !openChat">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
         </div>
 
-        <!-- Pattern Analyser Module -->
         <transition name="fade-slide">
-            <div v-if="openChat" class="ui-card chat-container">
+            <div v-if="openChat" class="chat-container">
                 <div class="chat-header">
                     <span>Pattern Analyser</span>
-                    <span @click="openChat = false" style="cursor: pointer; opacity: 0.6;">×</span>
+                    <span @click="openChat = false" style="cursor: pointer; opacity: 0.8;">×</span>
                 </div>
                 <div class="chat-main">
                     <div class="api-key-box">
@@ -365,10 +428,65 @@
     </div>
 
     <script>
-        // DATA INJECTION POINT
         const GRAPH_DATA = null;
 
-        const { createApp, ref, onMounted, nextTick } = Vue;
+        const { createApp, ref, onMounted, nextTick, reactive } = Vue;
+
+        class LayoutEngine {
+            static computeLayout(nodes, edges) {
+                const adj = {};
+                const degree = {};
+                nodes.forEach(n => { adj[n.id] = []; degree[n.id] = 0; });
+                edges.forEach(e => {
+                    if (adj[e.source] && adj[e.target]) {
+                        adj[e.source].push(e.target);
+                        if (!adj[e.target].includes(e.source)) adj[e.target].push(e.source);
+                        degree[e.source]++; degree[e.target]++;
+                    }
+                });
+                let centerNodeId = nodes[0]?.id;
+                let maxDeg = -1;
+                for (let id in degree) { if(degree[id] > maxDeg) { maxDeg = degree[id]; centerNodeId = id; } }
+                
+                const layers = {};
+                const q = [{id: centerNodeId, d: 0}];
+                const visited = new Set([centerNodeId]);
+                while(q.length) {
+                    const cur = q.shift();
+                    if(!layers[cur.d]) layers[cur.d] = [];
+                    layers[cur.d].push(cur.id);
+                    (adj[cur.id] || []).forEach(nId => {
+                        if(!visited.has(nId)) {
+                            visited.add(nId);
+                            q.push({id: nId, d: cur.d+1});
+                        }
+                    });
+                }
+                const pos = {};
+                const baseRad = 250;
+                Object.keys(layers).forEach(d => {
+                    const depth = parseInt(d);
+                    const levelNodes = layers[d];
+                    const radius = depth * baseRad;
+                    levelNodes.forEach((nid, i) => {
+                        const angle = (2 * Math.PI * i) / levelNodes.length;
+                        pos[nid] = { x: radius * Math.cos(angle), y: radius * Math.sin(angle) };
+                    });
+                });
+                nodes.forEach(n => {
+                    if(pos[n.id]) { n.x = pos[n.id].x; n.y = pos[n.id].y; }
+                    else { n.x = 0; n.y = 0; }
+                });
+            }
+        }
+
+        // Color Generation (from Backup StyleManager)
+        const generateColor = (seed) => {
+            const hue = (seed * 137.508) % 360;
+            const saturation = 50 + (seed * 19) % 25; 
+            const lightness = 65 + (seed * 13) % 20; 
+            return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        };
 
         createApp({
             setup() {
@@ -378,43 +496,85 @@
                 const showLabels = ref(true);
                 const query = ref('');
                 const geminiApiKey = ref('');
+                const isolatedNode = ref(null);
                 
                 const raw = GRAPH_DATA || {
-                    metadata: { title: "Motif Analysis Results", nodeCount: 0, edgeCount: 0 },
+                    metadata: { title: "No Data", nodeCount: 0, edgeCount: 0 },
                     nodes: [], edges: [], legend: { nodeTypes: [], edgeTypes: [] }
                 };
 
+                // Auto-generate Legend if missing
+                if (raw.nodes.length > 0 && raw.legend.nodeTypes.length === 0) {
+                    const types = new Set();
+                    raw.nodes.forEach(n => { if (n.label && !n.anchor) types.add(n.label); });
+                    let seed = 0;
+                    types.forEach(t => {
+                        raw.legend.nodeTypes.push({ label: t, color: generateColor(seed++) });
+                    });
+                }
+
+                if (raw.nodes.length > 0) LayoutEngine.computeLayout(raw.nodes, raw.edges);
+
                 const metadata = ref(raw.metadata);
                 const legend = ref(raw.legend);
-                const chats = ref([
-                    { id: 1, role: 'ai', text: "Hello! I'm your Pattern Analyst. I can help you understand the topological structure of this motif. Ask me anything!" }
-                ]);
+                const chats = ref([{ id: 1, role: 'ai', text: "Hello! I'm your Pattern Analyst. I can help you understand the topological structure of this motif. Ask me anything!" }]);
+                
+                const contextMenu = reactive({ visible: false, x: 0, y: 0, node: null });
 
-                let ctx, cam = { x: 0, y: 0, k: 1 };
-                let mouse = { down: false, last: { x: 0, y: 0 } };
+                let ctx;
+                let cam = { x: 0, y: 0, k: 1 };
+                let isDragging = false;
+                let draggedNode = null;
+                let lastMouse = { x: 0, y: 0 };
+                let hoveredNode = null;
 
-                const drawGraph = () => {
+                const getWorldPos = (ex, ey) => {
+                    const canvas = canvasEl.value;
+                    const wx = (ex - canvas.width/2 - cam.x) / cam.k;
+                    const wy = (ey - canvas.height/2 - cam.y) / cam.k;
+                    return { x: wx, y: wy };
+                };
+
+                const getNodeAt = (wx, wy) => {
+                    for (let i = raw.nodes.length - 1; i >= 0; i--) {
+                        const n = raw.nodes[i];
+                        const r = n.anchor ? 30 : 25;
+                        const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
+                        if (dist < r) return n;
+                    }
+                    return null;
+                };
+
+                const render = () => {
                     const canvas = canvasEl.value;
                     if (!canvas || !ctx) return;
-                    
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    
                     ctx.save();
                     ctx.translate(canvas.width/2 + cam.x, canvas.height/2 + cam.y);
                     ctx.scale(cam.k, cam.k);
 
-                    // Render Connections
+                    const iso = isolatedNode.value;
+
+                    // Edges
                     raw.edges.forEach(e => {
                         const s = raw.nodes.find(n => n.id === e.source);
                         const t = raw.nodes.find(n => n.id === e.target);
                         if (!s || !t) return;
 
+                        // Isolation Logic
+                        let isDimmed = false;
+                        if (iso) {
+                            const connected = (s.id === iso.id || t.id === iso.id);
+                            if (!connected) isDimmed = true;
+                        }
+
+                        ctx.globalAlpha = isDimmed ? 0.1 : 0.6;
+                        ctx.strokeStyle = isDimmed ? '#555' : 'rgba(156, 163, 175, 0.7)';
+                        ctx.lineWidth = 2;
+
                         ctx.beginPath();
                         ctx.moveTo(s.x, s.y);
                         ctx.lineTo(t.x, t.y);
-                        ctx.strokeStyle = '#4f46e5';
-                        ctx.globalAlpha = 0.5;
-                        ctx.lineWidth = 2;
                         ctx.stroke();
 
                         if (e.directed) {
@@ -422,95 +582,166 @@
                             const r = t.anchor ? 24 : 16;
                             const ax = t.x - r * Math.cos(angle);
                             const ay = t.y - r * Math.sin(angle);
+                            ctx.fillStyle = ctx.strokeStyle;
                             ctx.beginPath();
                             ctx.moveTo(ax, ay);
                             ctx.lineTo(ax - 10*Math.cos(angle - 0.4), ay - 10*Math.sin(angle - 0.4));
                             ctx.lineTo(ax - 10*Math.cos(angle + 0.4), ay - 10*Math.sin(angle + 0.4));
                             ctx.closePath();
-                            ctx.fillStyle = '#4f46e5';
                             ctx.fill();
                         }
                         
-                        if (showLabels.value && e.label && e.label !== 'default') {
-                            drawLabel(e.label, (s.x+t.x)/2, (s.y+t.y)/2, 8, false);
+                        if (showLabels.value && e.label && e.label !== 'default' && !isDimmed) {
+                            drawLabelBox(e.label, (s.x+t.x)/2, (s.y+t.y)/2, 8, false);
                         }
                     });
 
-                    // Render Components
+                    // Nodes
                     raw.nodes.forEach(n => {
-                        const r = n.anchor ? 22 : 14;
-                        ctx.save();
-                        ctx.shadowBlur = 12;
-                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                        let isDimmed = false;
+                        if (iso) {
+                            // Keep isolated node and its direct neighbors
+                            const isNeighbor = raw.edges.some(e => 
+                                (e.source === iso.id && e.target === n.id) || 
+                                (e.target === iso.id && e.source === n.id)
+                            );
+                            if (n.id !== iso.id && !isNeighbor) isDimmed = true;
+                        }
+
+                        const isAnchor = n.anchor;
+                        const r = isAnchor ? 24 : 18; 
                         
-                        ctx.beginPath();
-                        if (n.anchor) {
-                            ctx.roundRect(n.x - r, n.y - r, r*2, r*2, 4);
+                        ctx.save();
+                        ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
+                        if (draggedNode === n) {
+                            ctx.shadowColor = 'rgba(59, 130, 246, 0.4)';
+                            ctx.shadowBlur = 10;
+                            ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
+                        } else if (hoveredNode === n) {
+                            ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)';
                         } else {
-                            ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+                            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
                         }
                         
-                        const color = n.anchor ? '#ef4444' : (legend.value.nodeTypes.find(t => t.label === n.label)?.color || '#3b82f6');
-                        ctx.fillStyle = color;
+                        const fill = isAnchor ? 'rgba(239, 68, 68, 0.9)' : 
+                                    (legend.value.nodeTypes.find(t => t.label === n.label)?.color || 'rgba(96, 165, 250, 0.8)');
+                        
+                        ctx.fillStyle = fill;
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        if (isAnchor) ctx.rect(n.x - r, n.y - r, r*2, r*2);
+                        else ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
                         ctx.fill();
-                        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-                        ctx.lineWidth = 1.5;
                         ctx.stroke();
                         ctx.restore();
 
-                        if (showLabels.value) {
-                            drawLabel(n.label || 'Node', n.x, n.y + r + 16, 10, true);
+                        if (showLabels.value && !isDimmed) {
+                            drawLabelBox(n.label || 'Node', n.x, n.y, 10, true);
                         }
                     });
-
                     ctx.restore();
                 };
 
-                const drawLabel = (text, x, y, size, isNode) => {
-                    ctx.font = `bold ${size}px Inter`;
-                    const w = ctx.measureText(text).width;
-                    const p = 6;
-                    
+                const drawLabelBox = (text, x, y, fontSize, isNode) => {
                     ctx.save();
-                    ctx.fillStyle = isNode ? 'white' : 'rgba(22, 27, 34, 0.9)';
+                    ctx.font = `${fontSize}px Inter, sans-serif`;
+                    const metrics = ctx.measureText(text);
+                    const w = metrics.width;
+                    const h = fontSize;
+                    const p = 4;
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
+                    ctx.lineWidth = 1;
                     ctx.beginPath();
-                    ctx.roundRect(x - w/2 - p, y - size/2 - p, w + p*2, size + p*2, 4);
+                    ctx.roundRect(x - w/2 - p, y - h/2 - p, w + p*2, h + p*2, 4);
                     ctx.fill();
-                    
-                    ctx.fillStyle = isNode ? '#161b22' : '#8b949e';
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     ctx.fillText(text, x, y + 1);
                     ctx.restore();
                 };
 
-                const changeZoom = (f) => { cam.k *= f; drawGraph(); };
-                const resetCamera = () => { cam = { x: 0, y: 0, k: 1 }; drawGraph(); };
-                const startDrag = (e) => { mouse.down = true; mouse.last = { x: e.clientX, y: e.clientY }; };
-                const endDrag = () => mouse.down = false;
-                const onDrag = (e) => {
-                    if (!mouse.down) return;
-                    cam.x += (e.clientX - mouse.last.x);
-                    cam.y += (e.clientY - mouse.last.y);
-                    mouse.last = { x: e.clientX, y: e.clientY };
-                    drawGraph();
-                };
-                const onWheel = (e) => {
-                    const f = e.deltaY > 0 ? 0.9 : 1.1;
-                    cam.k *= f;
-                    drawGraph();
+                // Mouse Event Handlers
+                const handleMouseDown = (e) => {
+                    if (e.button !== 0) return; // Only left click
+                    contextMenu.visible = false;
+                    const { x, y } = getWorldPos(e.clientX, e.clientY);
+                    const node = getNodeAt(x, y);
+                    if (node) draggedNode = node;
+                    else isDragging = true;
+                    lastMouse = { x: e.clientX, y: e.clientY };
+                    render();
                 };
 
+                const handleMouseMove = (e) => {
+                    const { x, y } = getWorldPos(e.clientX, e.clientY);
+                    if (draggedNode) {
+                        draggedNode.x = x;
+                        draggedNode.y = y;
+                        canvasEl.value.style.cursor = 'grabbing';
+                    } else if (isDragging) {
+                        cam.x += (e.clientX - lastMouse.x);
+                        cam.y += (e.clientY - lastMouse.y);
+                        canvasEl.value.style.cursor = 'grabbing';
+                    } else {
+                        const node = getNodeAt(x, y);
+                        hoveredNode = node;
+                        canvasEl.value.style.cursor = node ? 'pointer' : 'grab';
+                    }
+                    lastMouse = { x: e.clientX, y: e.clientY };
+                    render();
+                };
+
+                const handleMouseUp = () => { draggedNode = null; isDragging = false; render(); };
+                const handleWheel = (e) => {
+                    const f = e.deltaY > 0 ? 0.9 : 1.1;
+                    cam.k *= f;
+                    render();
+                };
+                
+                const handleRightClick = (e) => {
+                    const { x, y } = getWorldPos(e.clientX, e.clientY);
+                    const node = getNodeAt(x, y);
+                    if (node) {
+                        contextMenu.visible = true;
+                        contextMenu.x = e.clientX;
+                        contextMenu.y = e.clientY;
+                        contextMenu.node = node;
+                    }
+                };
+
+                // Context Actions
+                const isolateNode = () => {
+                    isolatedNode.value = contextMenu.node;
+                    contextMenu.visible = false;
+                    render();
+                };
+                const cancelIsolation = () => {
+                    isolatedNode.value = null;
+                    contextMenu.visible = false;
+                    render();
+                };
+                const copyLabel = () => {
+                   if (contextMenu.node && contextMenu.node.label) {
+                       navigator.clipboard.writeText(contextMenu.node.label);
+                       alert("Label copied: " + contextMenu.node.label);
+                   }
+                   contextMenu.visible = false;
+                };
+
+                const changeZoom = (f) => { cam.k *= f; render(); };
+                const resetCamera = () => { cam = { x: 0, y: 0, k: 1 }; render(); };
+                
                 const doChat = async () => {
                     const t = query.value.trim();
                     if (!t) return;
                     chats.value.push({ id: Date.now(), role: 'user', text: t });
                     query.value = '';
-                    
-                    nextTick(() => { if(scrollRef.value) scrollRef.value.scrollTop = scrollRef.value.scrollHeight; });
-
+                    nextTick(() => scrollRef.value.scrollTop = scrollRef.value.scrollHeight);
                     try {
-                        const res = await fetch('http://localhost:9002/chat', {
+                        const res = await fetch(`http://localhost:${GRAPH_DATA?.CHAT_PORT || 9002}/chat`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ message: t, graph_data: raw, api_key: geminiApiKey.value })
@@ -518,24 +749,13 @@
                         const data = await res.json();
                         chats.value.push({ id: Date.now(), role: 'ai', text: data.response || "No response." });
                     } catch (e) {
-                        chats.value.push({ id: Date.now(), role: 'ai', text: "Error connecting to Pattern Analyst." });
+                         chats.value.push({ id: Date.now(), role: 'ai', text: "Error connecting to Pattern Analyst." });
                     }
-                    nextTick(() => { if(scrollRef.value) scrollRef.value.scrollTop = scrollRef.value.scrollHeight; });
+                    nextTick(() => scrollRef.value.scrollTop = scrollRef.value.scrollHeight);
                 };
 
-                const savePDF = () => {
-                    const doc = new window.jspdf.jsPDF('l', 'px', [canvasEl.value.width, canvasEl.value.height]);
-                    doc.addImage(canvasEl.value.toDataURL('image/png'), 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height);
-                    doc.save('graph.pdf');
-                };
-
-                const savePNG = () => {
-                    const link = document.createElement('a');
-                    link.download = 'graph.png';
-                    link.href = canvasEl.value.toDataURL();
-                    link.click();
-                };
-
+                const savePDF = () => { /* ... */ const doc = new window.jspdf.jsPDF('l', 'px', [canvasEl.value.width, canvasEl.value.height]); doc.addImage(canvasEl.value.toDataURL('image/png'), 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height); doc.save('graph.pdf'); };
+                const savePNG = () => { /* ... */ const l = document.createElement('a'); l.download='graph.png'; l.href=canvasEl.value.toDataURL(); l.click(); };
                 const nav = (u) => window.open(u, '_blank');
 
                 onMounted(() => {
@@ -543,17 +763,16 @@
                     c.width = window.innerWidth;
                     c.height = window.innerHeight;
                     ctx = c.getContext('2d');
-                    window.addEventListener('resize', () => {
-                        c.width = window.innerWidth;
-                        c.height = window.innerHeight;
-                        drawGraph();
-                    });
-                    drawGraph();
+                    window.addEventListener('resize', () => { c.width = window.innerWidth; c.height = window.innerHeight; render(); });
+                    document.addEventListener('click', (e) => { if (!e.target.closest('#context-menu')) contextMenu.visible = false; });
+                    render();
                 });
 
                 return {
                     canvasEl, scrollRef, openChat, showLabels, query, geminiApiKey, metadata, legend, chats,
-                    changeZoom, resetCamera, startDrag, onDrag, endDrag, onWheel, doChat, savePDF, savePNG, nav, drawGraph
+                    changeZoom, resetCamera, handleMouseDown, handleMouseMove, handleMouseUp, handleWheel, handleRightClick,
+                    contextMenu, isolateNode, cancelIsolation, copyLabel, isolatedNode,
+                    doChat, savePDF, savePNG, nav, render
                 };
             }
         }).mount('#app');
