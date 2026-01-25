@@ -103,15 +103,36 @@
         }
         .zoom-btn:hover { background: var(--button-hover); }
 
-        /* Right Panel */
-        .right-panel {
-            top: 75px;
+        /* Right Panel Layout (Legend and Controls) */
+        /* Changed from top: 75px to bottom: 20px to match backup */
+        .controls-container {
+            position: absolute;
             right: 20px;
-            width: 220px;
+            bottom: 20px;
             display: flex;
             flex-direction: column;
             gap: 12px;
+            z-index: 100;
         }
+
+        .legend-card {
+            /* Positioned above controls */
+            position: absolute;
+            right: 20px;
+            bottom: 180px; /* Adjust based on control height */
+            width: 220px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        /* Controls Card */
+        .controls-card {
+            position: absolute;
+            right: 20px;
+            bottom: 20px;
+            width: 220px;
+        }
+
         .section-title {
             font-size: 14px;
             font-weight: 600;
@@ -354,45 +375,44 @@
             <button class="zoom-btn" @click="resetCamera">⌂</button>
         </div>
 
-        <!-- Sidebar -->
-        <div class="right-panel">
-            <div class="ui-card">
-                <div class="section-title">Legend</div>
-                <div class="sub-header">NODE TYPES</div>
-                <div class="legend-list">
-                    <div v-for="t in legend.nodeTypes" :key="t.label" class="legend-item">
-                        <div class="swatch" :style="{ background: t.color }"></div>
-                        <span>{{ t.label }}</span>
-                    </div>
-                </div>
-                <div class="sub-header">SPECIAL NODES</div>
-                <div class="legend-item">
-                    <div class="swatch" style="background: rgba(248, 113, 113, 0.9);"></div>
-                    <span>Anchor Nodes</span>
+        <!-- Legend Card (Bottom Right Upper) -->
+        <div class="ui-card legend-card">
+            <div class="section-title">Legend</div>
+            <div class="sub-header">NODE TYPES</div>
+            <div class="legend-list">
+                <div v-for="t in legend.nodeTypes" :key="t.label" class="legend-item">
+                    <div class="swatch" :style="{ background: t.color }"></div>
+                    <span>{{ t.label }}</span>
                 </div>
             </div>
+            <div class="sub-header">SPECIAL NODES</div>
+            <div class="legend-item">
+                <div class="swatch" style="background: rgba(248, 113, 113, 0.9);"></div>
+                <span>Anchor Nodes</span>
+            </div>
+        </div>
 
-            <div class="ui-card">
-                <div class="toggle-row">
-                    <label>Show Labels</label>
-                    <label class="switch">
-                        <input type="checkbox" v-model="showLabels" @change="render">
-                        <span class="slider"></span>
-                    </label>
+        <!-- Controls Card (Bottom Right Lower) -->
+        <div class="ui-card controls-card">
+            <div class="toggle-row">
+                <label>Show Labels</label>
+                <label class="switch">
+                    <input type="checkbox" v-model="showLabels" @change="render">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <!-- Navigation -->
+            <div class="toggle-row">
+                <label>Navigation</label>
+                <div class="grid-buttons">
+                    <button class="btn-action" @click="nav('http://localhost:3000/import')">Upload</button>
+                    <button class="btn-action" @click="nav('http://localhost:3000')">Annotation</button>
                 </div>
-                <!-- Navigation -->
-                <div class="toggle-row">
-                    <label>Navigation</label>
-                    <div class="grid-buttons">
-                        <button class="btn-action" @click="nav('http://localhost:3000/import')">Upload</button>
-                        <button class="btn-action" @click="nav('http://localhost:3000')">Annotation</button>
-                    </div>
-                </div>
-                 <!-- Export -->
-                 <div class="grid-buttons" style="margin-top: 10px;">
-                    <button class="btn-action" @click="savePDF">PDF</button>
-                    <button class="btn-action" @click="savePNG">PNG</button>
-                </div>
+            </div>
+             <!-- Export -->
+             <div class="grid-buttons" style="margin-top: 10px;">
+                <button class="btn-action" @click="savePDF">PDF</button>
+                <button class="btn-action" @click="savePNG">PNG</button>
             </div>
         </div>
 
@@ -591,6 +611,7 @@
                             ctx.fill();
                         }
                         
+                        // Edge label rendering
                         if (showLabels.value && e.label && e.label !== 'default' && !isDimmed) {
                             drawLabelBox(e.label, (s.x+t.x)/2, (s.y+t.y)/2, 8, false);
                         }
@@ -636,6 +657,7 @@
                         ctx.restore();
 
                         if (showLabels.value && !isDimmed) {
+                            // Draw label with white background, centered on node
                             drawLabelBox(n.label || 'Node', n.x, n.y, 10, true);
                         }
                     });
@@ -649,14 +671,17 @@
                     const w = metrics.width;
                     const h = fontSize;
                     const p = 4;
-                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                    // White background for node labels as requested
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
                     ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
                     ctx.lineWidth = 1;
                     ctx.beginPath();
+                    // Centered on the coordinate
                     ctx.roundRect(x - w/2 - p, y - h/2 - p, w + p*2, h + p*2, 4);
                     ctx.fill();
                     ctx.stroke();
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    // Dark text
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     ctx.fillText(text, x, y + 1);
