@@ -21,13 +21,13 @@
             --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
 
-        /* Dark Theme - The default for this app */
+        /* Dark Theme - Default */
         .dark {
-            --bg-primary: oklch(0.22 0 0); /* #0d1117 */
-            --bg-secondary: oklch(0.24 0 0); /* #161b22 */
-            --border-light: oklch(0.33 0 0); /* #30363d */
-            --text-primary: oklch(0.89 0 0); /* #e2e8f0 */
-            --text-secondary: oklch(0.6 0 0); /* #8b949e */
+            --bg-primary: oklch(0.22 0 0);
+            --bg-secondary: oklch(0.24 0 0);
+            --border-light: oklch(0.33 0 0);
+            --text-primary: oklch(0.89 0 0);
+            --text-secondary: oklch(0.6 0 0);
             --card-bg: oklch(0.24 0 0);
             --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
             --button-bg: oklch(0.31 0 0);
@@ -55,7 +55,7 @@
         }
         canvas:active { cursor: grabbing; }
 
-        /* UI Cards */
+        /* General UI Card */
         .ui-card {
             background: var(--bg-secondary);
             border: 1px solid var(--border-light);
@@ -65,71 +65,56 @@
             position: absolute;
             backdrop-filter: blur(10px);
             padding: 12px;
+            color: var(--text-primary);
+            font-size: 14px;
         }
 
-        /* Top Title */
-        .top-card {
+        /* Top Center Title */
+        .top-center {
             top: 20px;
             left: 50%;
             transform: translateX(-50%);
             text-align: center;
             min-width: 300px;
         }
-        .top-card h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); }
-        .top-card p { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
+        .top-center h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); }
+        .top-center p { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
 
-        /* Zoom Controls */
-        .zoom-controls {
-            right: 20px;
+        /* Top Right: Zoom Controls */
+        .top-right {
             top: 20px;
+            right: 20px;
             display: flex;
             flex-direction: column;
             gap: 8px;
-            z-index: 110;
+            align-items: center;
         }
         .zoom-btn {
-            width: 36px;
-            height: 36px;
-            background: var(--bg-secondary);
+            width: 36px; height: 36px;
+            background: var(--button-bg);
             border: 1px solid var(--border-light);
             border-radius: 6px;
             color: var(--text-primary);
             cursor: pointer;
             font-size: 18px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: flex; align-items: center; justify-content: center;
             transition: all 0.2s;
         }
         .zoom-btn:hover { background: var(--button-hover); }
 
-        /* Right Panel Layout (Legend and Controls) */
-        /* Changed from top: 75px to bottom: 20px to match backup */
-        .controls-container {
-            position: absolute;
+        /* Bottom Right Upper: Legend */
+        .bottom-right-upper {
+            bottom: 240px; /* Increased spacing to prevent overlap */
             right: 20px;
-            bottom: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            z-index: 100;
-        }
-
-        .legend-card {
-            /* Positioned above controls */
-            position: absolute;
-            right: 20px;
-            bottom: 180px; /* Adjust based on control height */
             width: 220px;
             max-height: 300px;
             overflow-y: auto;
         }
 
-        /* Controls Card */
-        .controls-card {
-            position: absolute;
-            right: 20px;
+        /* Bottom Right Lower: Controls */
+        .bottom-right-lower {
             bottom: 20px;
+            right: 20px;
             width: 220px;
         }
 
@@ -150,7 +135,7 @@
             margin-bottom: 8px; 
         }
 
-        /* Legend */
+        /* Legend Items */
         .legend-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
         .legend-item { display: flex; align-items: center; gap: 10px; font-size: 12px; }
         .swatch { 
@@ -161,7 +146,7 @@
             flex-shrink: 0; 
         }
 
-        /* Toggle */
+        /* Toggles */
         .toggle-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
         .toggle-row label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
         .switch { position: relative; width: 44px; height: 24px; display: inline-block; }
@@ -206,7 +191,7 @@
         }
         .context-menu-item:hover { background: var(--button-hover); }
 
-        /* Chat */
+        /* Chat Widget Styles */
         .chat-trigger {
             position: fixed;
             bottom: 20px;
@@ -290,7 +275,7 @@
             max-width: 85%; 
         }
         .message-bubble.ai { 
-            background: var(--button-bg); 
+            background: #1f2937; 
             border: 1px solid var(--border-light); 
             color: var(--text-primary); 
             align-self: flex-start; 
@@ -323,14 +308,14 @@
         .send-icon-btn {
             width: 38px;
             height: 38px;
-            background: #6366f1;
+            background: white;
             border: none;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            color: white;
+            color: #6366f1;
         }
 
         .fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.3s ease; }
@@ -363,20 +348,20 @@
         </div>
         
         <!-- Header -->
-        <div class="ui-card top-card">
-            <h1>Graph Visualization</h1>
-            <p>{{ metadata.nodeCount }} nodes ({{ legend.nodeTypes.length }} types), {{ metadata.edgeCount }} edges</p>
+        <div class="ui-card top-center">
+            <h1>{{ metadata.title || 'Directed Graph with Anchors' }}</h1>
+            <p>{{ metadata.nodeCount }} nodes ({{ legend.nodeTypes.length }} types), {{ metadata.edgeCount }} edges ({{ legend.edgeTypes ? legend.edgeTypes.length : (raw && raw.edges ? 1 : 0) }} types)</p>
         </div>
 
-        <!-- Zoom -->
-        <div class="zoom-controls">
+        <!-- Zoom Controls -->
+        <div class="ui-card top-right">
             <button class="zoom-btn" @click="changeZoom(1.1)">+</button>
             <button class="zoom-btn" @click="changeZoom(0.9)">-</button>
             <button class="zoom-btn" @click="resetCamera">⌂</button>
         </div>
 
-        <!-- Legend Card (Bottom Right Upper) -->
-        <div class="ui-card legend-card">
+        <!-- Legend Card (Fixed Bottom Right Upper) -->
+        <div class="ui-card bottom-right-upper">
             <div class="section-title">Legend</div>
             <div class="sub-header">NODE TYPES</div>
             <div class="legend-list">
@@ -392,8 +377,8 @@
             </div>
         </div>
 
-        <!-- Controls Card (Bottom Right Lower) -->
-        <div class="ui-card controls-card">
+        <!-- Controls Card (Fixed Bottom Right Lower) -->
+        <div class="ui-card bottom-right-lower">
             <div class="toggle-row">
                 <label>Show Labels</label>
                 <label class="switch">
@@ -500,7 +485,6 @@
             }
         }
 
-        // Color Generation (from Backup StyleManager)
         const generateColor = (seed) => {
             const hue = (seed * 137.508) % 360;
             const saturation = 50 + (seed * 19) % 25; 
@@ -523,7 +507,6 @@
                     nodes: [], edges: [], legend: { nodeTypes: [], edgeTypes: [] }
                 };
 
-                // Auto-generate Legend if missing
                 if (raw.nodes.length > 0 && raw.legend.nodeTypes.length === 0) {
                     const types = new Set();
                     raw.nodes.forEach(n => { if (n.label && !n.anchor) types.add(n.label); });
@@ -558,7 +541,7 @@
                 const getNodeAt = (wx, wy) => {
                     for (let i = raw.nodes.length - 1; i >= 0; i--) {
                         const n = raw.nodes[i];
-                        const r = n.anchor ? 30 : 25;
+                        const r = n.anchor ? 40 : 32;
                         const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
                         if (dist < r) return n;
                     }
@@ -581,7 +564,6 @@
                         const t = raw.nodes.find(n => n.id === e.target);
                         if (!s || !t) return;
 
-                        // Isolation Logic
                         let isDimmed = false;
                         if (iso) {
                             const connected = (s.id === iso.id || t.id === iso.id);
@@ -611,7 +593,6 @@
                             ctx.fill();
                         }
                         
-                        // Edge label rendering
                         if (showLabels.value && e.label && e.label !== 'default' && !isDimmed) {
                             drawLabelBox(e.label, (s.x+t.x)/2, (s.y+t.y)/2, 8, false);
                         }
@@ -621,7 +602,6 @@
                     raw.nodes.forEach(n => {
                         let isDimmed = false;
                         if (iso) {
-                            // Keep isolated node and its direct neighbors
                             const isNeighbor = raw.edges.some(e => 
                                 (e.source === iso.id && e.target === n.id) || 
                                 (e.target === iso.id && e.source === n.id)
@@ -630,25 +610,25 @@
                         }
 
                         const isAnchor = n.anchor;
-                        const r = isAnchor ? 24 : 18; 
+                        const r = isAnchor ? 36 : 28; 
                         
                         ctx.save();
                         ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
                         if (draggedNode === n) {
                             ctx.shadowColor = 'rgba(59, 130, 246, 0.4)';
                             ctx.shadowBlur = 10;
-                            ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
+                            ctx.strokeStyle = '#000000'; // Black stroke as requested
                         } else if (hoveredNode === n) {
-                            ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)';
+                            ctx.strokeStyle = '#000000'; // Black stroke
                         } else {
-                            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                            ctx.strokeStyle = '#000000'; // Black stroke
                         }
                         
                         const fill = isAnchor ? 'rgba(239, 68, 68, 0.9)' : 
                                     (legend.value.nodeTypes.find(t => t.label === n.label)?.color || 'rgba(96, 165, 250, 0.8)');
                         
                         ctx.fillStyle = fill;
-                        ctx.lineWidth = 2;
+                        ctx.lineWidth = 2; // Keep 2px stroke
                         ctx.beginPath();
                         if (isAnchor) ctx.rect(n.x - r, n.y - r, r*2, r*2);
                         else ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
@@ -657,8 +637,8 @@
                         ctx.restore();
 
                         if (showLabels.value && !isDimmed) {
-                            // Draw label with white background, centered on node
-                            drawLabelBox(n.label || 'Node', n.x, n.y, 10, true);
+                            // Apply label: prefix and pure white bg
+                            drawLabelBox(`label: ${n.label || 'Node'}`, n.x, n.y, 10, true);
                         }
                     });
                     ctx.restore();
@@ -671,17 +651,18 @@
                     const w = metrics.width;
                     const h = fontSize;
                     const p = 4;
-                    // White background for node labels as requested
-                    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                    
+                    // PURE WHITE BACKGROUND as requested
+                    ctx.fillStyle = '#FFFFFF'; 
                     ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
                     ctx.lineWidth = 1;
                     ctx.beginPath();
-                    // Centered on the coordinate
                     ctx.roundRect(x - w/2 - p, y - h/2 - p, w + p*2, h + p*2, 4);
                     ctx.fill();
                     ctx.stroke();
-                    // Dark text
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+                    
+                    // Black Text
+                    ctx.fillStyle = '#000000';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     ctx.fillText(text, x, y + 1);
