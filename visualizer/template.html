@@ -106,7 +106,7 @@
         .bottom-right-upper {
             bottom: 240px; /* Increased spacing to prevent overlap */
             right: 20px;
-            width: 220px;
+            width: 200px;
             max-height: 300px;
             overflow-y: auto;
         }
@@ -115,7 +115,7 @@
         .bottom-right-lower {
             bottom: 20px;
             right: 20px;
-            width: 220px;
+            width: 200px;
         }
 
         .section-title {
@@ -402,9 +402,12 @@
                 </div>
             </div>
              <!-- Export -->
-             <div class="grid-buttons" style="margin-top: 10px;">
-                <button class="btn-action" @click="savePDF">PDF</button>
-                <button class="btn-action" @click="savePNG">PNG</button>
+             <div class="toggle-row">
+                <label>Export</label>
+                <div class="grid-buttons">
+                    <button class="btn-action" @click="savePDF">PDF</button>
+                    <button class="btn-action" @click="savePNG">PNG</button>
+                </div>
             </div>
         </div>
 
@@ -560,7 +563,7 @@
                 const getNodeAt = (wx, wy) => {
                     for (let i = raw.nodes.length - 1; i >= 0; i--) {
                         const n = raw.nodes[i];
-                        const r = n.anchor ? 40 : 32;
+                        const r = n.anchor ? 45 : 35;
                         const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
                         if (dist < r) return n;
                     }
@@ -591,10 +594,10 @@
 
                         ctx.globalAlpha = isDimmed ? 0.1 : 0.8;
                         ctx.strokeStyle = isDimmed ? '#555' : '#3b82f6';
-                        ctx.lineWidth = 3; // Thicker edges as requested
+                        ctx.lineWidth = 4; // Thicker edges as requested
 
-                        const sr = s.anchor ? 40 : 32;
-                        const tr = t.anchor ? 40 : 32;
+                        const sr = s.anchor ? 45 : 35;
+                        const tr = t.anchor ? 45 : 35;
                         
                         const dx = t.x - s.x;
                         const dy = t.y - s.y;
@@ -645,7 +648,7 @@
                         }
 
                         const isAnchor = n.anchor;
-                        const r = isAnchor ? 40 : 32; // Updated sizes
+                        const r = isAnchor ? 45 : 35; // Updated sizes
                         
                         ctx.save();
                         ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
