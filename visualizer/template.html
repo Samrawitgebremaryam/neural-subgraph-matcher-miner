@@ -10,29 +10,27 @@
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <style>
         :root {
-            /* Color Palette - Light Theme (Start with backup defaults) */
+            /* Color Palette - Light Theme */
             --bg-primary: oklch(0.96 0 0);
             --bg-secondary: oklch(0.97 0 0);
             --border-light: oklch(0.86 0 0);
             --text-primary: oklch(0.32 0 0);
             --text-secondary: oklch(0.51 0 0);
-            --node-default: rgba(59, 130, 246, 0.7);
-            --node-anchor: rgba(239, 68, 68, 0.8);
             --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
 
         /* Dark Theme - Default */
         .dark {
-            --bg-primary: oklch(0.22 0 0);
-            --bg-secondary: oklch(0.24 0 0);
-            --border-light: oklch(0.33 0 0);
-            --text-primary: oklch(0.89 0 0);
-            --text-secondary: oklch(0.6 0 0);
-            --card-bg: oklch(0.24 0 0);
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --border-light: #30363d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --card-bg: #161b22;
             --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
-            --button-bg: oklch(0.31 0 0);
-            --button-hover: oklch(0.37 0 0);
-            --accent: oklch(0.37 0 0);
+            --button-bg: #21262d;
+            --button-hover: #30363d;
+            --accent: #58a6ff;
         }
 
         body { 
@@ -104,9 +102,9 @@
 
         /* Bottom Right Upper: Legend */
         .bottom-right-upper {
-            bottom: 240px; /* Increased spacing to prevent overlap */
+            bottom: 220px; 
             right: 20px;
-            width: 220px;
+            width: 200px;
             max-height: 300px;
             overflow-y: auto;
         }
@@ -115,7 +113,7 @@
         .bottom-right-lower {
             bottom: 20px;
             right: 20px;
-            width: 220px;
+            width: 200px;
         }
 
         .section-title {
@@ -153,7 +151,7 @@
         .switch input { opacity: 0; width: 0; height: 0; }
         .slider { position: absolute; cursor: pointer; top: 0; bottom: 0; left: 0; right: 0; background-color: #2b3137; transition: .3s; border-radius: 24px; }
         .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: var(--bg-secondary); transition: .3s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--node-default); }
+        input:checked + .slider { background-color: var(--accent); }
         input:checked + .slider:before { transform: translateX(20px); }
 
         /* Buttons */
@@ -225,7 +223,7 @@
             background: var(--bg-secondary);
         }
         .chat-header {
-            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+            background: #8b5cf6; /* Updated to Purple */
             color: white;
             padding: 16px;
             font-weight: 600;
@@ -333,6 +331,7 @@
             @mousemove="handleMouseMove" 
             @mouseup="handleMouseUp" 
             @wheel.prevent="handleWheel"
+            @click="handleClick"
             @contextmenu.prevent="handleRightClick">
         </canvas>
 
@@ -350,7 +349,7 @@
         <!-- Header -->
         <div class="ui-card top-center">
             <h1>{{ metadata.title || 'Directed Graph with Anchors' }}</h1>
-            <p>{{ metadata.nodeCount }} nodes ({{ legend.nodeTypes.length }} types), {{ metadata.edgeCount }} edges ({{ legend.edgeTypes ? legend.edgeTypes.length : (raw && raw.edges ? 1 : 0) }} types)</p>
+            <p>{{ metadata.nodeCount }} nodes ({{ legend.nodeTypes.filter(t => t.label !== 'Anchor').length }} types), {{ metadata.edgeCount }} edges</p>
         </div>
 
         <!-- Zoom Controls -->
@@ -365,7 +364,7 @@
             <div class="section-title">Legend</div>
             <div class="sub-header">NODE TYPES</div>
             <div class="legend-list">
-                <div v-for="t in legend.nodeTypes" :key="t.label" class="legend-item">
+                <div v-for="t in legend.nodeTypes.filter(t => t.label !== 'Anchor')" :key="t.label" class="legend-item">
                     <div class="swatch" :style="{ background: t.color }"></div>
                     <span>{{ t.label }}</span>
                 </div>
@@ -379,7 +378,7 @@
             </div>
             <div class="sub-header">SPECIAL NODES</div>
             <div class="legend-item">
-                <div class="swatch" style="background: rgba(248, 113, 113, 0.9);"></div>
+                <div class="swatch" style="background: rgba(239, 68, 68, 0.9);"></div>
                 <span>Anchor Nodes</span>
             </div>
         </div>
@@ -393,6 +392,14 @@
                     <span class="slider"></span>
                 </label>
             </div>
+             <!-- Export -->
+            <div class="toggle-row">
+                <label>Export</label>
+                <div class="grid-buttons">
+                    <button class="btn-action" @click="savePDF">PDF</button>
+                    <button class="btn-action" @click="savePNG">PNG</button>
+                </div>
+            </div>
             <!-- Navigation -->
             <div class="toggle-row">
                 <label>Navigation</label>
@@ -400,11 +407,6 @@
                     <button class="btn-action" @click="nav('http://localhost:3000/import')">Upload</button>
                     <button class="btn-action" @click="nav('http://localhost:3000')">Annotation</button>
                 </div>
-            </div>
-             <!-- Export -->
-             <div class="grid-buttons" style="margin-top: 10px;">
-                <button class="btn-action" @click="savePDF">PDF</button>
-                <button class="btn-action" @click="savePNG">PNG</button>
             </div>
         </div>
 
@@ -514,9 +516,12 @@
                     nodes: [], edges: [], legend: { nodeTypes: [], edgeTypes: [] }
                 };
 
+                // Generate Colors and Legend if missing
                 if (raw.nodes.length > 0 && raw.legend.nodeTypes.length === 0) {
                     const types = new Set();
-                    raw.nodes.forEach(n => { if (n.label && !n.anchor) types.add(n.label); });
+                    raw.nodes.forEach(n => { 
+                        if (n.label && !n.anchor && n.label !== 'Anchor') types.add(n.label); 
+                    });
                     let seed = 0;
                     types.forEach(t => {
                         raw.legend.nodeTypes.push({ label: t, color: generateColor(seed++) });
@@ -528,9 +533,9 @@
                     if (!raw.legend.edgeTypes) raw.legend.edgeTypes = [];
                     const eTypes = new Set();
                     raw.edges.forEach(e => { if (e.label) eTypes.add(e.label); });
-                    let seed = 100; // Different seed for edges
+                    let seed = 100; 
                     eTypes.forEach(t => {
-                        raw.legend.edgeTypes.push({ label: t, color: '#3b82f6' }); // Default blue for edges
+                        raw.legend.edgeTypes.push({ label: t, color: '#3b82f6' }); 
                     });
                 }
 
@@ -548,6 +553,7 @@
                 let draggedNode = null;
                 let lastMouse = { x: 0, y: 0 };
                 let hoveredNode = null;
+                let selectedNode = null;
 
                 const getWorldPos = (ex, ey) => {
                     const canvas = canvasEl.value;
@@ -559,11 +565,63 @@
                 const getNodeAt = (wx, wy) => {
                     for (let i = raw.nodes.length - 1; i >= 0; i--) {
                         const n = raw.nodes[i];
-                        const r = n.anchor ? 40 : 32;
-                        const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
-                        if (dist < r) return n;
+                        const r = 50; // Base Radius
+                        // Check if within bounds
+                        if (n.anchor) {
+                            if (wx >= n.x - r * 1.2 && wx <= n.x + r * 1.2 &&
+                                wy >= n.y - r * 1.2 && wy <= n.y + r * 1.2) return n;
+                        } else {
+                            const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
+                            if (dist < r) return n;
+                        }
                     }
                     return null;
+                };
+
+                const getNodeEdgeIntersection = (node, x0, y0, x1, y1) => {
+                    // Returns the intersection point from (x0, y0) to (x1, y1) with the node's border
+                    const r = 50; 
+                    if (node.anchor) {
+                        // Square intersection
+                        const size = r * 1.2; 
+                        const cx = node.x, cy = node.y;
+                        const dx = x1 - x0, dy = y1 - y0;
+                        let tMin = Infinity, ix = cx, iy = cy;
+                        const borders = [
+                            { x: cx - size, y: null }, { x: cx + size, y: null },
+                            { x: null, y: cy - size }, { x: null, y: cy + size }
+                        ];
+                        for (const border of borders) {
+                            let t;
+                            if (border.x !== null) {
+                                if (dx !== 0) {
+                                    t = (border.x - x0) / dx;
+                                    const y = y0 + t * dy;
+                                    if (t > 0 && y >= cy - size && y <= cy + size && t < tMin) {
+                                        tMin = t; ix = border.x; iy = y;
+                                    }
+                                }
+                            } else {
+                                if (dy !== 0) {
+                                    t = (border.y - y0) / dy;
+                                    const x = x0 + t * dx;
+                                    if (t > 0 && x >= cx - size && x <= cx + size && t < tMin) {
+                                        tMin = t; ix = x; iy = border.y;
+                                    }
+                                }
+                            }
+                        }
+                        return { x: ix, y: iy };
+                    } else {
+                        // Circle intersection
+                        const dx = x1 - x0, dy = y1 - y0;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist === 0) return { x: node.x, y: node.y };
+                        return {
+                            x: node.x + (dx / dist) * r,
+                            y: node.y + (dy / dist) * r
+                        };
+                    }
                 };
 
                 const render = () => {
@@ -576,7 +634,9 @@
 
                     const iso = isolatedNode.value;
 
-                    // Edges
+                    // 1. Edges
+                    const baseLineWidth = 2; // Original code used 3/scale, but 2 is cleaner at default
+                    
                     raw.edges.forEach(e => {
                         const s = raw.nodes.find(n => n.id === e.source);
                         const t = raw.nodes.find(n => n.id === e.target);
@@ -588,25 +648,54 @@
                             if (!connected) isDimmed = true;
                         }
 
-                        ctx.globalAlpha = isDimmed ? 0.1 : 0.8;
-                        ctx.strokeStyle = isDimmed ? '#555' : '#3b82f6';
-                        ctx.lineWidth = 2;
+                        let edgeColor = '#3b82f6';
+                        let lineWidth = baseLineWidth;
+
+                        if (isDimmed) {
+                            ctx.globalAlpha = 0.2;
+                            edgeColor = '#555';
+                        } else {
+                            ctx.globalAlpha = 0.8;
+                            // Highlight if connected to dragged/selected
+                            if (draggedNode && (s.id === draggedNode.id || t.id === draggedNode.id)) {
+                                lineWidth = 4;
+                                ctx.globalAlpha = 1.0;
+                            } else if (selectedNode && (s.id === selectedNode.id || t.id === selectedNode.id)) {
+                                lineWidth = 3;
+                                ctx.globalAlpha = 0.9;
+                            }
+                        }
+
+                        ctx.strokeStyle = edgeColor;
+                        ctx.fillStyle = edgeColor;
+                        ctx.lineWidth = lineWidth;
+
+                        // Precise Intersection
+                        const start = getNodeEdgeIntersection(s, s.x, s.y, t.x, t.y);
+                        const end = getNodeEdgeIntersection(t, t.x, t.y, s.x, s.y);
 
                         ctx.beginPath();
-                        ctx.moveTo(s.x, s.y);
-                        ctx.lineTo(t.x, t.y);
+                        ctx.moveTo(start.x, start.y);
+                        ctx.lineTo(end.x, end.y);
                         ctx.stroke();
 
                         if (e.directed) {
-                            const angle = Math.atan2(t.y - s.y, t.x - s.x);
-                            const r = t.anchor ? 24 : 16;
-                            const ax = t.x - r * Math.cos(angle);
-                            const ay = t.y - r * Math.sin(angle);
-                            ctx.fillStyle = ctx.strokeStyle;
+                            const dx = end.x - start.x;
+                            const dy = end.y - start.y;
+                            const len = Math.sqrt(dx*dx + dy*dy);
+                            const ux = dx/len;
+                            const uy = dy/len;
+                            const arrowSize = 12;
+                            // Arrow
                             ctx.beginPath();
-                            ctx.moveTo(ax, ay);
-                            ctx.lineTo(ax - 10*Math.cos(angle - 0.4), ay - 10*Math.sin(angle - 0.4));
-                            ctx.lineTo(ax - 10*Math.cos(angle + 0.4), ay - 10*Math.sin(angle + 0.4));
+                            const angle = Math.PI/6;
+                            const x1 = end.x - arrowSize * (ux * Math.cos(angle) - uy * Math.sin(angle));
+                            const y1 = end.y - arrowSize * (uy * Math.cos(angle) + ux * Math.sin(angle));
+                            const x2 = end.x - arrowSize * (ux * Math.cos(-angle) - uy * Math.sin(-angle));
+                            const y2 = end.y - arrowSize * (uy * Math.cos(-angle) + ux * Math.sin(-angle));
+                            ctx.moveTo(end.x, end.y);
+                            ctx.lineTo(x1, y1);
+                            ctx.lineTo(x2, y2);
                             ctx.closePath();
                             ctx.fill();
                         }
@@ -616,7 +705,7 @@
                         }
                     });
 
-                    // Nodes
+                    // 2. Nodes
                     raw.nodes.forEach(n => {
                         let isDimmed = false;
                         if (iso) {
@@ -628,35 +717,61 @@
                         }
 
                         const isAnchor = n.anchor;
-                        const r = isAnchor ? 36 : 28; 
+                        const baseRadius = 50; 
                         
-                        ctx.save();
-                        ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
-                        if (draggedNode === n) {
+                        // State Logic
+                        const isHovered = hoveredNode && hoveredNode.id === n.id;
+                        const isSelected = selectedNode && selectedNode.id === n.id;
+                        const isDragged = draggedNode && draggedNode.id === n.id;
+
+                        let radius = baseRadius;
+                        let size = baseRadius * 1.2; // For anchor square
+                        let borderColor = 'transparent'; // Remove default black border
+                        let lineWidth = 0;
+                        let opacity = 1.0;
+
+                        if (isDimmed) opacity = 0.2;
+
+                        if (isDragged) {
+                            radius *= 1.1; size *= 1.1;
+                            borderColor = 'rgba(59, 130, 246, 0.8)';
+                            lineWidth = 4;
                             ctx.shadowColor = 'rgba(59, 130, 246, 0.4)';
                             ctx.shadowBlur = 10;
-                            ctx.strokeStyle = '#000000'; // Black stroke as requested
-                        } else if (hoveredNode === n) {
-                            ctx.strokeStyle = '#000000'; // Black stroke
-                        } else {
-                            ctx.strokeStyle = '#000000'; // Black stroke
+                        } else if (isSelected) {
+                            radius *= 1.05; size *= 1.05;
+                            borderColor = 'rgba(59, 130, 246, 0.8)'; // Blue border
+                            lineWidth = 3;
+                        } else if (isHovered) {
+                            radius *= 1.02; size *= 1.02;
+                            borderColor = 'rgba(59, 130, 246, 0.6)'; // Blue border
+                            lineWidth = 3;
                         }
+
+                        ctx.save();
+                        ctx.globalAlpha = opacity;
                         
                         const fill = isAnchor ? 'rgba(239, 68, 68, 0.9)' : 
                                     (legend.value.nodeTypes.find(t => t.label === n.label)?.color || 'rgba(96, 165, 250, 0.8)');
                         
                         ctx.fillStyle = fill;
-                        ctx.lineWidth = 2; // Keep 2px stroke
+                        ctx.strokeStyle = borderColor;
+                        ctx.lineWidth = lineWidth;
+
                         ctx.beginPath();
-                        if (isAnchor) ctx.rect(n.x - r, n.y - r, r*2, r*2);
-                        else ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+                        if (isAnchor) {
+                            ctx.rect(n.x - size, n.y - size, size*2, size*2);
+                        } else {
+                            ctx.arc(n.x, n.y, radius, 0, Math.PI * 2);
+                        }
                         ctx.fill();
-                        ctx.stroke();
+                        if (lineWidth > 0) ctx.stroke(); // Only stroke if we have a border
+                        
                         ctx.restore();
 
                         if (showLabels.value && !isDimmed) {
-                            // Apply label: prefix and pure white bg
-                            drawLabelBox(`label: ${n.label || 'Node'}`, n.x, n.y, 10, true);
+                            const labelText = `label: ${n.label || 'Node'}`;
+                            drawLabelBox(labelText, n.x, n.y, 10, true);
                         }
                     });
                     ctx.restore();
@@ -664,23 +779,21 @@
 
                 const drawLabelBox = (text, x, y, fontSize, isNode) => {
                     ctx.save();
-                    ctx.globalAlpha = 1.0; // Ensure opacity
                     ctx.font = `${fontSize}px Inter, sans-serif`;
                     const metrics = ctx.measureText(text);
                     const w = metrics.width;
                     const h = fontSize;
                     const p = 4;
                     
-                    // PURE WHITE BACKGROUND as requested
                     ctx.fillStyle = '#FFFFFF'; 
                     ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
                     ctx.lineWidth = 1;
+
                     ctx.beginPath();
                     ctx.roundRect(x - w/2 - p, y - h/2 - p, w + p*2, h + p*2, 4);
                     ctx.fill();
                     ctx.stroke();
                     
-                    // Black Text
                     ctx.fillStyle = '#000000';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
@@ -690,12 +803,17 @@
 
                 // Mouse Event Handlers
                 const handleMouseDown = (e) => {
-                    if (e.button !== 0) return; // Only left click
+                    if (e.button !== 0) return;
                     contextMenu.visible = false;
                     const { x, y } = getWorldPos(e.clientX, e.clientY);
                     const node = getNodeAt(x, y);
-                    if (node) draggedNode = node;
-                    else isDragging = true;
+                    if (node) {
+                        draggedNode = node;
+                        selectedNode = node; // Auto-select on click/drag
+                    } else {
+                        isDragging = true;
+                        selectedNode = null; // Deselect if clicking empty space
+                    }
                     lastMouse = { x: e.clientX, y: e.clientY };
                     render();
                 };
@@ -719,6 +837,10 @@
                     render();
                 };
 
+                const handleClick = (e) => {
+                    // Handled in mousedown mostly, but ensures click logic is clean
+                };
+
                 const handleMouseUp = () => { draggedNode = null; isDragging = false; render(); };
                 const handleWheel = (e) => {
                     const f = e.deltaY > 0 ? 0.9 : 1.1;
@@ -734,6 +856,8 @@
                         contextMenu.x = e.clientX;
                         contextMenu.y = e.clientY;
                         contextMenu.node = node;
+                        selectedNode = node; // Also select on right click
+                        render();
                     }
                 };
 
@@ -779,28 +903,30 @@
                     nextTick(() => scrollRef.value.scrollTop = scrollRef.value.scrollHeight);
                 };
 
-                const savePDF = () => { /* ... */ const doc = new window.jspdf.jsPDF('l', 'px', [canvasEl.value.width, canvasEl.value.height]); doc.addImage(canvasEl.value.toDataURL('image/png'), 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height); doc.save('graph.pdf'); };
-                const savePNG = () => { /* ... */ const l = document.createElement('a'); l.download='graph.png'; l.href=canvasEl.value.toDataURL(); l.click(); };
+                const savePDF = () => { const doc = new window.jspdf.jsPDF('l', 'px', [canvasEl.value.width, canvasEl.value.height]); doc.addImage(canvasEl.value.toDataURL('image/png'), 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height); doc.save('graph.pdf'); };
+                const savePNG = () => { const l = document.createElement('a'); l.download='graph.png'; l.href=canvasEl.value.toDataURL(); l.click(); };
                 const nav = (u) => window.open(u, '_blank');
 
                 onMounted(() => {
-                    const c = canvasEl.value;
-                    c.width = window.innerWidth;
-                    c.height = window.innerHeight;
-                    ctx = c.getContext('2d');
-                    window.addEventListener('resize', () => { c.width = window.innerWidth; c.height = window.innerHeight; render(); });
-                    document.addEventListener('click', (e) => { if (!e.target.closest('#context-menu')) contextMenu.visible = false; });
+                    canvasEl.value.width = window.innerWidth;
+                    canvasEl.value.height = window.innerHeight;
+                    ctx = canvasEl.value.getContext('2d');
+                    window.addEventListener('resize', () => {
+                        canvasEl.value.width = window.innerWidth;
+                        canvasEl.value.height = window.innerHeight;
+                        render();
+                    });
                     render();
                 });
 
                 return {
-                    canvasEl, scrollRef, openChat, showLabels, query, geminiApiKey, metadata, legend, chats,
-                    changeZoom, resetCamera, handleMouseDown, handleMouseMove, handleMouseUp, handleWheel, handleRightClick,
-                    contextMenu, isolateNode, cancelIsolation, copyLabel, isolatedNode,
-                    doChat, savePDF, savePNG, nav, render
+                    canvasEl, scrollRef, openChat, showLabels, chats, query, geminiApiKey, 
+                    metadata, legend, contextMenu, isolatedNode,
+                    handleMouseDown, handleMouseMove, handleMouseUp, handleWheel, handleRightClick, handleClick,
+                    isolateNode, cancelIsolation, copyLabel, changeZoom, resetCamera, doChat, savePDF, savePNG, nav, render
                 };
             }
-        }).mount('#app');
+        });
     </script>
 </body>
 </html>
