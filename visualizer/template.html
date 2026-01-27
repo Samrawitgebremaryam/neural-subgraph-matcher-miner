@@ -225,7 +225,7 @@
             background: var(--bg-secondary);
         }
         .chat-header {
-            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+            background: #8b5cf6;
             color: white;
             padding: 16px;
             font-weight: 600;
@@ -508,6 +508,7 @@
                 const query = ref('');
                 const geminiApiKey = ref('');
                 const isolatedNode = ref(null);
+                const selectedNode = ref(null);
                 
                 const raw = GRAPH_DATA || {
                     metadata: { title: "No Data", nodeCount: 0, edgeCount: 0 },
@@ -590,23 +591,39 @@
 
                         ctx.globalAlpha = isDimmed ? 0.1 : 0.8;
                         ctx.strokeStyle = isDimmed ? '#555' : '#3b82f6';
-                        ctx.lineWidth = 2;
+                        ctx.lineWidth = 3; // Thicker edges as requested
+
+                        const sr = s.anchor ? 40 : 32;
+                        const tr = t.anchor ? 40 : 32;
+                        
+                        const dx = t.x - s.x;
+                        const dy = t.y - s.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        
+                        if (dist === 0) return;
+
+                        // Calculate intersection points at node boundaries
+                        const ux = dx / dist;
+                        const uy = dy / dist;
+                        
+                        const sx = s.x + ux * sr;
+                        const sy = s.y + uy * sr;
+                        const tx = t.x - ux * tr;
+                        const ty = t.y - uy * tr;
 
                         ctx.beginPath();
-                        ctx.moveTo(s.x, s.y);
-                        ctx.lineTo(t.x, t.y);
+                        ctx.moveTo(sx, sy);
+                        ctx.lineTo(tx, ty);
                         ctx.stroke();
 
                         if (e.directed) {
-                            const angle = Math.atan2(t.y - s.y, t.x - s.x);
-                            const r = t.anchor ? 24 : 16;
-                            const ax = t.x - r * Math.cos(angle);
-                            const ay = t.y - r * Math.sin(angle);
+                            const angle = Math.atan2(dy, dx);
+                            // Arrowhead at the exact boundary point (tx, ty)
                             ctx.fillStyle = ctx.strokeStyle;
                             ctx.beginPath();
-                            ctx.moveTo(ax, ay);
-                            ctx.lineTo(ax - 10*Math.cos(angle - 0.4), ay - 10*Math.sin(angle - 0.4));
-                            ctx.lineTo(ax - 10*Math.cos(angle + 0.4), ay - 10*Math.sin(angle + 0.4));
+                            ctx.moveTo(tx, ty);
+                            ctx.lineTo(tx - 10*Math.cos(angle - 0.4), ty - 10*Math.sin(angle - 0.4));
+                            ctx.lineTo(tx - 10*Math.cos(angle + 0.4), ty - 10*Math.sin(angle + 0.4));
                             ctx.closePath();
                             ctx.fill();
                         }
@@ -628,34 +645,39 @@
                         }
 
                         const isAnchor = n.anchor;
-                        const r = isAnchor ? 36 : 28; 
+                        const r = isAnchor ? 40 : 32; // Updated sizes
                         
                         ctx.save();
                         ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
-                        if (draggedNode === n) {
-                            ctx.shadowColor = 'rgba(59, 130, 246, 0.4)';
-                            ctx.shadowBlur = 10;
-                            ctx.strokeStyle = '#000000'; // Black stroke as requested
-                        } else if (hoveredNode === n) {
-                            ctx.strokeStyle = '#000000'; // Black stroke
+                        
+                        // Stroke Logic: Only show blue border on Hover or Selection
+                        const isSelected = selectedNode.value && selectedNode.value.id === n.id;
+                        const isHovered = hoveredNode && hoveredNode.id === n.id;
+                        
+                        if (isSelected || isHovered) {
+                            ctx.strokeStyle = '#3b82f6';
+                            ctx.lineWidth = 3;
                         } else {
-                            ctx.strokeStyle = '#000000'; // Black stroke
+                            ctx.strokeStyle = 'transparent'; // No border by default
+                            ctx.lineWidth = 0;
                         }
                         
                         const fill = isAnchor ? 'rgba(239, 68, 68, 0.9)' : 
                                     (legend.value.nodeTypes.find(t => t.label === n.label)?.color || 'rgba(96, 165, 250, 0.8)');
                         
                         ctx.fillStyle = fill;
-                        ctx.lineWidth = 2; // Keep 2px stroke
                         ctx.beginPath();
                         if (isAnchor) ctx.rect(n.x - r, n.y - r, r*2, r*2);
                         else ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
                         ctx.fill();
-                        ctx.stroke();
+                        
+                        if (isSelected || isHovered) {
+                            ctx.stroke();
+                        }
+                        
                         ctx.restore();
 
                         if (showLabels.value && !isDimmed) {
-                            // Apply label: prefix and pure white bg
                             drawLabelBox(`label: ${n.label || 'Node'}`, n.x, n.y, 10, true);
                         }
                     });
@@ -671,7 +693,7 @@
                     const h = fontSize;
                     const p = 4;
                     
-                    // PURE WHITE BACKGROUND as requested
+                    // PURE WHITE BACKGROUND
                     ctx.fillStyle = '#FFFFFF'; 
                     ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
                     ctx.lineWidth = 1;
@@ -694,6 +716,10 @@
                     contextMenu.visible = false;
                     const { x, y } = getWorldPos(e.clientX, e.clientY);
                     const node = getNodeAt(x, y);
+                    
+                    // Selection Logic
+                    selectedNode.value = node; // Set selected node (or null if bg clicked)
+                    
                     if (node) draggedNode = node;
                     else isDragging = true;
                     lastMouse = { x: e.clientX, y: e.clientY };
@@ -734,6 +760,9 @@
                         contextMenu.x = e.clientX;
                         contextMenu.y = e.clientY;
                         contextMenu.node = node;
+                        // Right click also selects? Usually convenient.
+                        selectedNode.value = node;
+                        render();
                     }
                 };
 
