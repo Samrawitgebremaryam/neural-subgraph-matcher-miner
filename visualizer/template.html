@@ -238,8 +238,7 @@
         }
         .chat-main {
             flex: 1;
-            /* Use a white background for the Pattern Analyser area for better readability */
-            background: #ffffff;
+            background: var(--bg-secondary);
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -269,7 +268,6 @@
             display: flex;
             flex-direction: column;
             gap: 12px;
-            background: #ffffff;
         }
         .message-bubble { 
             padding: 10px 14px; 
@@ -279,15 +277,15 @@
             max-width: 85%; 
         }
         .message-bubble.ai { 
-            background: #f3f4f6; 
-            border: 1px solid #e5e7eb; 
-            color: #111827; 
+            background: rgba(255, 255, 255, 0.05); 
+            border: 1px solid var(--border-light); 
+            color: var(--text-primary); 
             align-self: flex-start; 
             border-bottom-left-radius: 2px;
         }
         .message-bubble.user { 
-            background: #6366f1; 
-            color: white; 
+            background: #ffffff; 
+            color: #111827; 
             align-self: flex-end; 
             border-bottom-right-radius: 2px;
         }
@@ -744,7 +742,7 @@
                     const canvas = targetCtx.canvas;
                     const padding = 16;
                     const lineHeight = 16;
-                    const boxWidth = 220;
+                    const boxWidth = 200;
                     let x, y;
 
                     if (position === 'top-right') {
@@ -782,10 +780,10 @@
                         y = y - boxHeight;
                     }
 
-                    // Background
+                    // Background + border (match original thin black box)
                     targetCtx.fillStyle = bgColor;
-                    targetCtx.strokeStyle = 'rgba(0,0,0,0.15)';
-                    targetCtx.lineWidth = 1;
+                    targetCtx.strokeStyle = '#000000';
+                    targetCtx.lineWidth = 1.2;
                     targetCtx.beginPath();
                     targetCtx.roundRect(x, y, boxWidth, boxHeight, 8);
                     targetCtx.fill();
@@ -957,13 +955,13 @@
                     if (!sourceCanvas) return;
 
                     // Create a high-resolution offscreen canvas for clarity
-                    const scale = 2;
+                    const scale = 3;
                     const exportCanvas = document.createElement('canvas');
                     exportCanvas.width = sourceCanvas.width * scale;
                     exportCanvas.height = sourceCanvas.height * scale;
                     const exportCtx = exportCanvas.getContext('2d');
 
-                    // White background for PDF
+                    // White background for PDF (full page)
                     exportCtx.fillStyle = '#ffffff';
                     exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
 
@@ -986,7 +984,8 @@
                     const imgData = exportCanvas.toDataURL('image/png');
                     const doc = new window.jspdf.jsPDF('l', 'px', [exportCanvas.width, exportCanvas.height]);
                     doc.addImage(imgData, 'PNG', 0, 0, exportCanvas.width, exportCanvas.height);
-                    doc.save('graph_visualization.pdf');
+                    const suffix = Date.now();
+                    doc.save(`graph_visualization_${suffix}.pdf`);
                 };
 
                 const savePNG = () => {
@@ -994,22 +993,33 @@
                     if (!sourceCanvas) return;
 
                     const exportCanvas = document.createElement('canvas');
-                    exportCanvas.width = sourceCanvas.width;
-                    exportCanvas.height = sourceCanvas.height;
+                    exportCanvas.width = sourceCanvas.width * 3;
+                    exportCanvas.height = sourceCanvas.height * 3;
                     const exportCtx = exportCanvas.getContext('2d');
 
-                    // Keep a black background for PNG as requested
-                    exportCtx.fillStyle = '#000000';
+                    // White background for PNG to match PDF
+                    exportCtx.fillStyle = '#ffffff';
                     exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
 
-                    // Draw the main canvas
-                    exportCtx.drawImage(sourceCanvas, 0, 0);
+                    // Draw the main canvas scaled up for clarity
+                    exportCtx.drawImage(
+                        sourceCanvas,
+                        0,
+                        0,
+                        sourceCanvas.width,
+                        sourceCanvas.height,
+                        0,
+                        0,
+                        exportCanvas.width,
+                        exportCanvas.height
+                    );
 
-                    // Draw legend in the bottom-left corner
-                    drawExportLegend(exportCtx, 'bottom-left', 'rgba(17,24,39,0.9)');
+                    // Draw legend in the top-right corner (same as PDF)
+                    drawExportLegend(exportCtx, 'top-right', '#ffffff');
 
                     const link = document.createElement('a');
-                    link.download = 'graph_visualization.png';
+                    const suffix = Date.now();
+                    link.download = `graph_visualization_${suffix}.png`;
                     link.href = exportCanvas.toDataURL('image/png');
                     link.click();
                 };
