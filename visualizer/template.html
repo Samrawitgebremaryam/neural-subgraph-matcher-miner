@@ -3,193 +3,738 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Graph Visualizer v2.0</title>
+    <title>Interactive Graph Visualizer</title>
     <!-- Dependencies -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
     <style>
         :root {
+            /* Color Palette - Light Theme (Start with backup defaults) */
             --bg-primary: oklch(0.96 0 0);
             --bg-secondary: oklch(0.97 0 0);
+            --border-light: oklch(0.86 0 0);
             --text-primary: oklch(0.32 0 0);
             --text-secondary: oklch(0.51 0 0);
-            --card-bg: rgba(255, 255, 255, 0.9);
-            --card-border: oklch(0.86 0 0);
-            --accent: #3b82f6;
+            --node-default: rgba(59, 130, 246, 0.7);
+            --node-anchor: rgba(239, 68, 68, 0.8);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
+
+        /* Dark Theme - Default */
         .dark {
             --bg-primary: oklch(0.22 0 0);
             --bg-secondary: oklch(0.24 0 0);
+            --border-light: oklch(0.33 0 0);
             --text-primary: oklch(0.89 0 0);
             --text-secondary: oklch(0.6 0 0);
-            --card-bg: rgba(30, 41, 59, 0.85);
-            --card-border: oklch(0.33 0 0);
-            --accent: #60a5fa;
+            --card-bg: oklch(0.24 0 0);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+            --button-bg: oklch(0.31 0 0);
+            --button-hover: oklch(0.37 0 0);
+            --accent: oklch(0.37 0 0);
         }
-        body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-primary); color: var(--text-primary); overflow: hidden; }
+
+        body { 
+            margin: 0; 
+            font-family: 'Inter', system-ui, -apple-system, sans-serif; 
+            background: var(--bg-primary); 
+            color: var(--text-primary); 
+            overflow: hidden; 
+            -webkit-user-select: none; /* Safari / iOS support */
+            user-select: none;
+        }
+
         #app { width: 100vw; height: 100vh; position: relative; }
-        canvas { position: absolute; top: 0; left: 0; cursor: grab; }
+        
+        /* Canvas */
+        canvas { 
+            position: absolute; top: 0; left: 0; z-index: 1; cursor: grab; 
+            background-color: var(--bg-primary);
+            background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0);
+            background-size: 20px 20px;
+        }
         canvas:active { cursor: grabbing; }
-        .ui-card { position: absolute; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; backdrop-filter: blur(12px); padding: 16px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); z-index: 100; }
-        .legend { top: 20px; left: 20px; min-width: 200px; }
-        .controls { top: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; }
-        .chat-widget { bottom: 20px; right: 20px; width: 350px; height: 450px; display: flex; flex-direction: column; }
-        .btn { padding: 8px 12px; border: 1px solid var(--card-border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; font-size: 13px; transition: all 0.2s; }
-        .btn:hover { background: var(--accent); color: white; }
+
+        /* General UI Card */
+        .ui-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            box-shadow: var(--card-shadow);
+            z-index: 100;
+            position: absolute;
+            -webkit-backdrop-filter: blur(10px); /* Safari / iOS support */
+            backdrop-filter: blur(10px);
+            padding: 12px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        /* Top Center Title */
+        .top-center {
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            min-width: 300px;
+        }
+        .top-center h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); }
+        .top-center p { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
+
+        /* Top Right: Zoom Controls */
+        .top-right {
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: center;
+        }
+        .zoom-btn {
+            width: 36px; height: 36px;
+            background: var(--button-bg);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 18px;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s;
+        }
+        .zoom-btn:hover { background: var(--button-hover); }
+
+        /* Bottom Right Upper: Legend */
+        .bottom-right-upper {
+            bottom: 240px; /* Slightly lower to add space from zoom controls */
+            right: 20px;
+            width: 200px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        /* Bottom Right Lower: Controls */
+        .bottom-right-lower {
+            bottom: 20px;
+            right: 20px;
+            width: 180px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border-light);
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+        .sub-header { 
+            font-size: 12px; 
+            font-weight: 600; 
+            color: var(--text-secondary); 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px;
+            margin-bottom: 8px; 
+        }
+
+        /* Legend Items */
+        .legend-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+        .legend-item { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+        .swatch { 
+            width: 18px; height: 18px; 
+            border-radius: 4px; 
+            border: 1px solid var(--border-light);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            flex-shrink: 0; 
+        }
+
+        /* Toggles */
+        .toggle-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+        .toggle-row label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+        .switch { position: relative; width: 44px; height: 24px; display: inline-block; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; bottom: 0; left: 0; right: 0; background-color: #2b3137; transition: .3s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: var(--bg-secondary); transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--node-default); }
+        input:checked + .slider:before { transform: translateX(20px); }
+
+        /* Buttons */
+        .grid-buttons { display: flex; gap: 8px; }
+        .btn-action {
+            flex: 1;
+            background: var(--button-bg);
+            border: 1px solid var(--border-light);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .btn-action:hover { background: var(--button-hover); }
+
+        /* Context Menu */
+        #context-menu {
+            position: absolute;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            box-shadow: var(--card-shadow);
+            z-index: 2000;
+            padding: 4px 0;
+            min-width: 140px;
+        }
+        .context-menu-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-primary);
+            transition: background 0.2s;
+        }
+        .context-menu-item:hover { background: var(--button-hover); }
+
+        /* Chat Widget Styles */
+        .chat-trigger {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+            z-index: 2000;
+            transition: transform 0.2s;
+        }
+        .chat-trigger:hover { transform: scale(1.1); }
+
+        .chat-container {
+            position: fixed;
+            bottom: 80px;
+            left: 20px;
+            width: 350px;
+            height: 500px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-radius: 16px;
+            border: 1px solid var(--border-light);
+            z-index: 2000;
+            background: var(--bg-secondary);
+        }
+        .chat-header {
+            background: #8b5cf6;
+            color: white;
+            padding: 16px;
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-main {
+            flex: 1;
+            background: var(--bg-secondary);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .api-key-box {
+            padding: 8px 16px;
+            background: var(--button-bg);
+            border-bottom: 1px solid var(--border-light);
+        }
+        .api-input {
+            width: 100%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 4px;
+            padding: 6px 10px;
+            color: var(--text-primary);
+            font-size: 12px;
+            outline: none;
+            box-sizing: border-box;
+        }
+
+        .messages-area {
+            flex: 1;
+            padding: 24px 16px 16px 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .message-bubble { 
+            padding: 10px 14px; 
+            border-radius: 12px; 
+            font-size: 14px; 
+            line-height: 1.5; 
+            max-width: 85%; 
+        }
+        .message-bubble.ai { 
+            background: rgba(255, 255, 255, 0.05); 
+            border: 1px solid var(--border-light); 
+            color: var(--text-primary); 
+            align-self: flex-start; 
+            border-bottom-left-radius: 2px;
+        }
+        .message-bubble.user { 
+            background: #ffffff; 
+            color: #111827; 
+            align-self: flex-end; 
+            border-bottom-right-radius: 2px;
+        }
+
+        .chat-input-bar {
+            padding: 12px;
+            border-top: 1px solid var(--border-light);
+            display: flex;
+            gap: 8px;
+            background: var(--bg-secondary);
+        }
+        .chat-field {
+            flex: 1;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-light);
+            border-radius: 20px;
+            padding: 10px 16px;
+            color: var(--text-primary);
+            font-size: 14px;
+            outline: none;
+        }
+        .send-icon-btn {
+            width: 38px;
+            height: 38px;
+            background: white;
+            border: none;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: black;
+        }
+
+        .fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.3s ease; }
+        .fade-slide-enter-from, .fade-slide-leave-to { opacity: 0; transform: translateY(20px) scale(0.9); }
+
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 10px; }
     </style>
 </head>
 <body>
-    <div id="app" :class="theme">
-        <canvas ref="canvasEl" @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="onMouseUp" @wheel.prevent="onWheel"></canvas>
+    <div id="app">
+        <!-- Canvas -->
+        <canvas ref="canvasEl" 
+            @mousedown="handleMouseDown" 
+            @mousemove="handleMouseMove" 
+            @mouseup="handleMouseUp" 
+            @wheel.prevent="handleWheel"
+            @contextmenu.prevent="handleRightClick">
+        </canvas>
+
+        <!-- Context Menu -->
+        <div id="context-menu" v-if="contextMenu.visible" :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }">
+            <template v-if="isolatedNode && isolatedNode.id === contextMenu.node?.id">
+                 <div class="context-menu-item" @click="cancelIsolation">Cancel Isolation</div>
+            </template>
+            <template v-else>
+                <div class="context-menu-item" @click="isolateNode">Isolate Node</div>
+            </template>
+            <div class="context-menu-item" @click="copyLabel">Copy Label</div>
+        </div>
         
-        <!-- Legend Component -->
-        <div class="ui-card legend">
-            <h3 style="margin: 0 0 12px 0; font-size: 14px;">Legend</h3>
-            <div v-for="type in legend.nodeTypes" :key="type.label" style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                <div :style="{ backgroundColor: type.color, width: '12px', height: '12px', borderRadius: '3px' }"></div>
-                <span style="font-size: 12px;">{{ type.label }}</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px; border-top: 1px solid var(--card-border); padding-top: 8px;">
-                <div style="background: rgba(239, 68, 68, 0.8); width: '12px'; height: '12px'; border-radius: '2px'"></div>
-                <span style="font-size: 12px; font-weight: bold;">Anchor Node</span>
-            </div>
+        <!-- Header -->
+        <div class="ui-card top-center">
+            <h1>{{ metadata.title || 'Directed Graph with Anchors' }}</h1>
+            <p>{{ metadata.nodeCount }} nodes ({{ legend.nodeTypes.length }} types), {{ metadata.edgeCount }} edges ({{ legend.edgeTypes ? legend.edgeTypes.length : (raw && raw.edges ? 1 : 0) }} types)</p>
         </div>
 
-        <!-- Controls Component -->
-        <div class="controls">
-            <div class="ui-card" style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-                <button class="btn" @click="recenter">Recenter</button>
-                <button class="btn" @click="toggleTheme">{{ theme === 'dark' ? '☀️ Light' : '🌙 Dark' }}</button>
-                <button class="btn" @click="toggleLabels">{{ showLabels ? '🫣 Hide Labels' : '👁️ Show Labels' }}</button>
-            </div>
-            <div class="ui-card" style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-                <button class="btn" @click="exportPDF">Export PDF</button>
-                <button class="btn" @click="exportPNG">Export PNG</button>
-            </div>
-            <div class="ui-card" style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-                <button class="btn" @click="openLink('http://localhost:3000/import')">Upload</button>
-                <button class="btn" @click="openLink('http://localhost:3000')">Annotation</button>
-            </div>
+        <!-- Zoom Controls -->
+        <div class="ui-card top-right">
+            <button class="zoom-btn" @click="changeZoom(1.1)">+</button>
+            <button class="zoom-btn" @click="changeZoom(0.9)">-</button>
+            <button class="zoom-btn" @click="resetCamera">⌂</button>
         </div>
 
-        <!-- Chat Widget -->
-        <div class="ui-card chat-widget">
-            <div style="border-bottom: 1px solid var(--card-border); padding-bottom: 8px; margin-bottom: 8px; font-weight: bold;">AI Graph Assistant</div>
-            <div style="flex: 1; overflow-y: auto; font-size: 13px; color: var(--text-secondary);">
-                <div v-for="msg in messages" :key="msg.id" style="margin-bottom: 12px;">
-                    <b>{{ msg.role === 'user' ? 'You' : 'AI' }}:</b> {{ msg.text }}
+        <!-- Legend Card (Fixed Bottom Right Upper) -->
+        <div class="ui-card bottom-right-upper">
+            <div class="section-title">Legend</div>
+            <div class="sub-header">NODE TYPES</div>
+            <div class="legend-list">
+                <div v-for="t in legend.nodeTypes" :key="t.label" class="legend-item">
+                    <div class="swatch" :style="{ background: t.color }"></div>
+                    <span>{{ t.label }}</span>
                 </div>
             </div>
-            <div style="display: flex; gap: 8px; margin-top: 12px;">
-                <input v-model="userInput" @keyup.enter="sendMessage" style="flex: 1; background: var(--bg-secondary); border: 1px solid var(--card-border); color: var(--text-primary); padding: 8px; border-radius: 6px;" placeholder="Ask about the graph...">
-                <button class="btn" @click="sendMessage">Send</button>
+            <div class="sub-header" v-if="legend.edgeTypes && legend.edgeTypes.length > 0">EDGE TYPES</div>
+            <div class="legend-list" v-if="legend.edgeTypes && legend.edgeTypes.length > 0">
+                <div v-for="t in legend.edgeTypes" :key="t.label" class="legend-item">
+                    <div class="swatch" :style="{ background: t.color, height: '4px', marginTop: '7px' }"></div>
+                    <span>{{ t.label }}</span>
+                </div>
+            </div>
+            <div class="sub-header">SPECIAL NODES</div>
+            <div class="legend-item">
+                <div class="swatch" style="background: rgba(248, 113, 113, 0.9);"></div>
+                <span>Anchor Nodes</span>
             </div>
         </div>
+
+        <!-- Controls Card (Fixed Bottom Right Lower) -->
+        <div class="ui-card bottom-right-lower">
+            <div class="toggle-row">
+                <label>Show Labels</label>
+                <label class="switch">
+                    <input
+                        type="checkbox"
+                        v-model="showLabels"
+                        @change="render"
+                        aria-label="Toggle node labels">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <!-- Navigation -->
+            <div class="toggle-row">
+                <label>Navigation</label>
+                <div class="grid-buttons">
+                    <button class="btn-action" @click="nav('http://localhost:3000/import')">Upload</button>
+                    <button class="btn-action" @click="nav('http://localhost:3000')">Annotation</button>
+                </div>
+            </div>
+             <!-- Export -->
+             <div class="toggle-row">
+                <label>Export</label>
+                <div class="grid-buttons">
+                    <button class="btn-action" @click="savePDF">PDF</button>
+                    <button class="btn-action" @click="savePNG">PNG</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat -->
+        <div class="chat-trigger" @click="openChat = !openChat">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        </div>
+
+        <transition name="fade-slide">
+            <div v-if="openChat" class="chat-container">
+                <div class="chat-header">
+                    <span>Pattern Analyser</span>
+                    <span @click="openChat = false" style="cursor: pointer; opacity: 0.8;">×</span>
+                </div>
+                <div class="chat-main">
+                    <div class="api-key-box">
+                    <input
+                        type="password"
+                        v-model="geminiApiKey"
+                        class="api-input"
+                        placeholder="Enter Gemini API Key"
+                        aria-label="Gemini API key">
+                    </div>
+                    <div class="messages-area" ref="scrollRef">
+                        <div v-for="m in chats" :key="m.id" :class="['message-bubble', m.role]">
+                            {{ m.text }}
+                        </div>
+                    </div>
+                </div>
+                <div class="chat-input-bar">
+                    <input
+                        v-model="query"
+                        @keyup.enter="doChat"
+                        class="chat-field"
+                        placeholder="Ask about this pattern..."
+                        aria-label="Pattern Analyser message">
+                    <button
+                        class="send-icon-btn"
+                        @click="doChat"
+                        aria-label="Send message"
+                        title="Send message">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+            </div>
+        </transition>
     </div>
 
     <script>
-        /* const GRAPH_DATA = {{ GRAPH_DATA_JSON }}; */
-        if (typeof GRAPH_DATA === 'undefined') {
-            window.GRAPH_DATA = { metadata: { title: "Sample Graph" }, nodes: [], edges: [], legend: { nodeTypes: [] } };
+        const GRAPH_DATA = null;
+
+        const { createApp, ref, onMounted, nextTick, reactive } = Vue;
+
+        class LayoutEngine {
+            static computeLayout(nodes, edges) {
+                const adj = {};
+                const degree = {};
+                nodes.forEach(n => { adj[n.id] = []; degree[n.id] = 0; });
+                edges.forEach(e => {
+                    if (adj[e.source] && adj[e.target]) {
+                        adj[e.source].push(e.target);
+                        if (!adj[e.target].includes(e.source)) adj[e.target].push(e.source);
+                        degree[e.source]++; degree[e.target]++;
+                    }
+                });
+                let centerNodeId = nodes[0]?.id;
+                let maxDeg = -1;
+                for (let id in degree) { if(degree[id] > maxDeg) { maxDeg = degree[id]; centerNodeId = id; } }
+                
+                const layers = {};
+                const q = [{id: centerNodeId, d: 0}];
+                const visited = new Set([centerNodeId]);
+                while(q.length) {
+                    const cur = q.shift();
+                    if(!layers[cur.d]) layers[cur.d] = [];
+                    layers[cur.d].push(cur.id);
+                    (adj[cur.id] || []).forEach(nId => {
+                        if(!visited.has(nId)) {
+                            visited.add(nId);
+                            q.push({id: nId, d: cur.d+1});
+                        }
+                    });
+                }
+                const pos = {};
+                const baseRad = 250;
+                Object.keys(layers).forEach(d => {
+                    const depth = parseInt(d);
+                    const levelNodes = layers[d];
+                    const radius = depth * baseRad;
+                    levelNodes.forEach((nid, i) => {
+                        const angle = (2 * Math.PI * i) / levelNodes.length;
+                        pos[nid] = { x: radius * Math.cos(angle), y: radius * Math.sin(angle) };
+                    });
+                });
+                nodes.forEach(n => {
+                    if(pos[n.id]) { n.x = pos[n.id].x; n.y = pos[n.id].y; }
+                    else { n.x = 0; n.y = 0; }
+                });
+            }
         }
 
-        const { createApp, ref, onMounted, reactive } = Vue;
+        const generateColor = (seed) => {
+            const hue = (seed * 137.508) % 360;
+            const saturation = 50 + (seed * 19) % 25; 
+            const lightness = 65 + (seed * 13) % 20; 
+            return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        };
 
         createApp({
             setup() {
                 const canvasEl = ref(null);
-                const theme = ref('dark');
+                const scrollRef = ref(null);
+                const openChat = ref(false);
                 const showLabels = ref(true);
-                const legend = ref(window.GRAPH_DATA.legend);
-                const messages = ref([{ id: 1, role: 'assistant', text: 'Hello! How can I help you analyze this sub-graph?' }]);
-                const userInput = ref('');
+                const query = ref('');
+                const geminiApiKey = ref('');
+                const isolatedNode = ref(null);
+                const selectedNode = ref(null);
                 
-                let ctx, transform = { x: 0, y: 0, k: 1 };
-                let isDragging = false, lastPos = { x: 0, y: 0 };
+                const raw = GRAPH_DATA || {
+                    metadata: { title: "No Data", nodeCount: 0, edgeCount: 0 },
+                    nodes: [], edges: [], legend: { nodeTypes: [], edgeTypes: [] }
+                };
 
-                const recenter = () => { transform = { x: 0, y: 0, k: 1 }; draw(); };
-                const toggleTheme = () => { theme.value = theme.value === 'dark' ? 'light' : 'dark'; document.documentElement.className = theme.value; draw(); };
-                const toggleLabels = () => { showLabels.value = !showLabels.value; draw(); };
-
-                const draw = () => {
-                    if (!ctx) return;
-                    const canvas = canvasEl.value;
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    
-                    ctx.save();
-                    ctx.translate(canvas.width/2 + transform.x, canvas.height/2 + transform.y);
-                    ctx.scale(transform.k, transform.k);
-
-                    // Draw Edges
-                    window.GRAPH_DATA.edges.forEach(edge => {
-                        const s = window.GRAPH_DATA.nodes.find(n => n.id === edge.source);
-                        const t = window.GRAPH_DATA.nodes.find(n => n.id === edge.target);
-                        if (!s || !t) return;
-                        ctx.beginPath();
-                        ctx.moveTo(s.x, s.y);
-                        ctx.lineTo(t.x, t.y);
-                        ctx.strokeStyle = theme.value === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)';
-                        ctx.lineWidth = 1/transform.k;
-                        ctx.stroke();
+                if (raw.nodes.length > 0 && raw.legend.nodeTypes.length === 0) {
+                    const types = new Set();
+                    raw.nodes.forEach(n => { if (n.label && !n.anchor) types.add(n.label); });
+                    let seed = 0;
+                    types.forEach(t => {
+                        raw.legend.nodeTypes.push({ label: t, color: generateColor(seed++) });
                     });
+                } else if (raw.legend.nodeTypes.length > 0) {
+                    // Ensure anchors are excluded from legend if pre-populated
+                    const anchorLabels = new Set(raw.nodes.filter(n => n.anchor).map(n => n.label));
+                    raw.legend.nodeTypes = raw.legend.nodeTypes.filter(t => !anchorLabels.has(t.label));
+                }
 
-                    // Draw Nodes
-                    window.GRAPH_DATA.nodes.forEach(node => {
+                // Auto-generate Edge Legend if missing
+                if (raw.edges.length > 0 && (!raw.legend.edgeTypes || raw.legend.edgeTypes.length === 0)) {
+                    if (!raw.legend.edgeTypes) raw.legend.edgeTypes = [];
+                    const eTypes = new Set();
+                    raw.edges.forEach(e => { if (e.label) eTypes.add(e.label); });
+                    let seed = 100; // Different seed for edges
+                    eTypes.forEach(t => {
+                        raw.legend.edgeTypes.push({ label: t, color: '#3b82f6' }); // Default blue for edges
+                    });
+                }
+
+                if (raw.nodes.length > 0) LayoutEngine.computeLayout(raw.nodes, raw.edges);
+
+                const metadata = ref(raw.metadata);
+                const legend = ref(raw.legend);
+                const chats = ref([{ id: 1, role: 'ai', text: "Hello! I'm your Pattern Analyst. I can help you understand the topological structure of this motif. Ask me anything!" }]);
+                
+                const contextMenu = reactive({ visible: false, x: 0, y: 0, node: null });
+
+                let ctx;
+                let cam = { x: 0, y: 0, k: 1 };
+                let isDragging = false;
+                let draggedNode = null;
+                let lastMouse = { x: 0, y: 0 };
+                let hoveredNode = null;
+
+                const getWorldPos = (ex, ey) => {
+                    const canvas = canvasEl.value;
+                    const wx = (ex - canvas.width/2 - cam.x) / cam.k;
+                    const wy = (ey - canvas.height/2 - cam.y) / cam.k;
+                    return { x: wx, y: wy };
+                };
+
+                const getNodeAt = (wx, wy) => {
+                    for (let i = raw.nodes.length - 1; i >= 0; i--) {
+                        const n = raw.nodes[i];
+                        const r = n.anchor ? 58 : 50;
+                        const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
+                        if (dist < r) return n;
+                    }
+                    return null;
+                };
+
+                const render = () => {
+                    const canvas = canvasEl.value;
+                    if (!canvas || !ctx) return;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.save();
+                    ctx.translate(canvas.width/2 + cam.x, canvas.height/2 + cam.y);
+                    ctx.scale(cam.k, cam.k);
+
+                    const iso = isolatedNode.value;
+
+                    // Edges
+                    raw.edges.forEach(e => {
+                        const s = raw.nodes.find(n => n.id === e.source);
+                        const t = raw.nodes.find(n => n.id === e.target);
+                        if (!s || !t) return;
+
+                        let isDimmed = false;
+                        if (iso) {
+                            const connected = (s.id === iso.id || t.id === iso.id);
+                            if (!connected) isDimmed = true;
+                        }
+
+                        ctx.globalAlpha = isDimmed ? 0.1 : 0.8;
+                        ctx.strokeStyle = isDimmed ? '#555' : '#3b82f6';
+                        ctx.lineWidth = 2.5; 
+
+                        const sr = s.anchor ? 58 : 50;
+                        const tr = t.anchor ? 58 : 50;
+                        
+                        const dx = t.x - s.x;
+                        const dy = t.y - s.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        
+                        if (dist === 0) return;
+
+                        // Calculate intersection points at node boundaries
+                        const ux = dx / dist;
+                        const uy = dy / dist;
+                        
+                        const sx = s.x + ux * sr;
+                        const sy = s.y + uy * sr;
+                        const tx = t.x - ux * tr;
+                        const ty = t.y - uy * tr;
+
                         ctx.beginPath();
-                        const r = node.anchor ? 15 : 10;
-                        if (node.anchor) ctx.rect(node.x-r, node.y-r, r*2, r*2);
-                        else ctx.arc(node.x, node.y, r, 0, Math.PI*2);
+                        ctx.moveTo(sx, sy);
+                        ctx.lineTo(tx, ty);
+                        ctx.stroke();
+
+                        if (e.directed) {
+                            const angle = Math.atan2(dy, dx);
+                            // Arrowhead at the exact boundary point (tx, ty)
+                            ctx.fillStyle = ctx.strokeStyle;
+                            ctx.beginPath();
+                            ctx.moveTo(tx, ty);
+                            ctx.lineTo(tx - 10*Math.cos(angle - 0.4), ty - 10*Math.sin(angle - 0.4));
+                            ctx.lineTo(tx - 10*Math.cos(angle + 0.4), ty - 10*Math.sin(angle + 0.4));
+                            ctx.closePath();
+                            ctx.fill();
+                        }
                         
-                        ctx.fillStyle = node.anchor ? '#ef4444' : (legend.value.nodeTypes.find(t => t.label === node.label)?.color || '#3b82f6');
-                        ctx.fill();
-                        
-                        if (showLabels.value) {
-                            ctx.fillStyle = theme.value === 'dark' ? '#cbd5e1' : '#475569';
-                            ctx.font = '10px sans-serif';
-                            ctx.textAlign = 'center';
-                            ctx.fillText(node.label || '', node.x, node.y + r + 12);
+                        if (showLabels.value && e.label && e.label !== 'default' && !isDimmed) {
+                            drawLabelBox(e.label, (s.x+t.x)/2, (s.y+t.y)/2, 10, false);
                         }
                     });
 
+                    // Nodes
+                    raw.nodes.forEach(n => {
+                        let isDimmed = false;
+                        if (iso) {
+                            const isNeighbor = raw.edges.some(e => 
+                                (e.source === iso.id && e.target === n.id) || 
+                                (e.target === iso.id && e.source === n.id)
+                            );
+                            if (n.id !== iso.id && !isNeighbor) isDimmed = true;
+                        }
+
+                        const isAnchor = n.anchor;
+                        const r = isAnchor ? 58 : 50; // Updated sizes
+                        
+                        ctx.save();
+                        ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
+                        
+                        // Stroke Logic: Only show blue border on Hover or Selection
+                        const isSelected = selectedNode.value && selectedNode.value.id === n.id;
+                        const isHovered = hoveredNode && hoveredNode.id === n.id;
+                        
+                        if (isSelected || isHovered) {
+                            ctx.strokeStyle = '#3b82f6';
+                            ctx.lineWidth = 3;
+                        } else {
+                            ctx.strokeStyle = 'transparent'; // No border by default
+                            ctx.lineWidth = 0;
+                        }
+                        
+                        const fill = isAnchor ? 'rgba(239, 68, 68, 0.9)' : 
+                                    (legend.value.nodeTypes.find(t => t.label === n.label)?.color || 'rgba(96, 165, 250, 0.8)');
+                        
+                        ctx.fillStyle = fill;
+                        ctx.beginPath();
+                        if (isAnchor) ctx.rect(n.x - r, n.y - r, r*2, r*2);
+                        else ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        if (isSelected || isHovered) {
+                            ctx.stroke();
+                        }
+                        
+                        ctx.restore();
+
+                        if (showLabels.value && !isDimmed) {
+                            drawLabelBox(`label: ${n.label || 'Node'}`, n.x, n.y, 12, true);
+                        }
+                    });
                     ctx.restore();
                 };
 
-                const onMouseDown = (e) => { isDragging = true; lastPos = { x: e.clientX, y: e.clientY }; };
-                const onMouseMove = (e) => {
-                    if (!isDragging) return;
-                    transform.x += (e.clientX - lastPos.x);
-                    transform.y += (e.clientY - lastPos.y);
-                    lastPos = { x: e.clientX, y: e.clientY };
-                    draw();
-                };
-                const onMouseUp = () => isDragging = false;
-                const onWheel = (e) => {
-                    const factor = e.deltaY > 0 ? 0.9 : 1.1;
-                    transform.k *= factor;
-                    draw();
-                };
-
-                const sendMessage = async () => {
-                    const text = userInput.value.trim();
-                    if (!text) return;
-
-                    messages.value.push({ id: Date.now(), role: 'user', text });
-                    userInput.value = '';
-
-                    try {
-                        const apiUrl = 'http://localhost:9002/chat';
-                        const response = await fetch(apiUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ message: text, graph_data: window.GRAPH_DATA })
-                        });
-                        const data = await response.json();
-                        messages.value.push({ id: Date.now(), role: 'assistant', text: data.response || "No response." });
-                    } catch (err) {
-                        console.error("Chat Error:", err);
-                        messages.value.push({ id: Date.now(), role: 'assistant', text: "Error connecting to AI Assistant." });
-                    }
+                const drawLabelBox = (text, x, y, fontSize, isNode) => {
+                    ctx.save();
+                    ctx.globalAlpha = 1.0; // Ensure opacity
+                    ctx.font = `${fontSize}px Inter, sans-serif`;
+                    const metrics = ctx.measureText(text);
+                    const w = metrics.width;
+                    const h = fontSize;
+                    const p = 4;
+                    
+                    // PURE WHITE BACKGROUND
+                    ctx.fillStyle = '#FFFFFF'; 
+                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.roundRect(x - w/2 - p, y - h/2 - p, w + p*2, h + p*2, 4);
+                    ctx.fill();
+                    ctx.stroke();
+                    
+                    // Black Text
+                    ctx.fillStyle = '#000000';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(text, x, y + 1);
+                    ctx.restore();
                 };
 
                 // Helper to draw light legend onto an export canvas (for PDF)
@@ -486,33 +1031,63 @@
                     chats.value.push({ id: Date.now(), role: 'user', text: t });
                     query.value = '';
                     nextTick(() => scrollRef.value.scrollTop = scrollRef.value.scrollHeight);
->>>>>>> ad5dea1 (fix: updated the position and size of the legend)
                     try {
-                        const apiUrl = 'http://localhost:9002/chat';
-                        const response = await fetch(apiUrl, {
+                        const res = await fetch(`http://localhost:${GRAPH_DATA?.CHAT_PORT || 9002}/chat`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ message: text, graph_data: window.GRAPH_DATA })
+                            body: JSON.stringify({ message: t, graph_data: raw, api_key: geminiApiKey.value })
                         });
-                        const data = await response.json();
-                        messages.value.push({ id: Date.now(), role: 'assistant', text: data.response || "No response." });
-                    } catch (err) {
-                        console.error("Chat Error:", err);
-                        messages.value.push({ id: Date.now(), role: 'assistant', text: "Error connecting to AI Assistant." });
+                        const data = await res.json();
+                        chats.value.push({ id: Date.now(), role: 'ai', text: data.response || "No response." });
+                    } catch (e) {
+                         chats.value.push({
+                            id: Date.now(),
+                            role: 'ai',
+                            text: "I apologize, but I encountered an error connecting to the analysis server. Please ensure the backend is running."
+                         });
                     }
+                    nextTick(() => scrollRef.value.scrollTop = scrollRef.value.scrollHeight);
                 };
 
-                const exportPDF = async () => {
-                    const { jsPDF } = window.jspdf;
-                    const doc = new jsPDF('l', 'px', [canvasEl.value.width, canvasEl.value.height]);
+                const savePDF = () => {
+                    const sourceCanvas = canvasEl.value;
+                    if (!sourceCanvas) return;
 
-                    // Simple capture of the current canvas state
-                    const dataUrl = canvasEl.value.toDataURL('image/png');
-                    doc.addImage(dataUrl, 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height);
-                    doc.save('graph-export.pdf');
+                    // Create a very high-resolution offscreen canvas for clarity
+                    const scale = 4;
+                    const exportCanvas = document.createElement('canvas');
+                    exportCanvas.width = sourceCanvas.width * scale;
+                    exportCanvas.height = sourceCanvas.height * scale;
+                    const exportCtx = exportCanvas.getContext('2d');
+
+                    // White background for PDF (full page)
+                    exportCtx.fillStyle = '#ffffff';
+                    exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+                    // Draw the main canvas scaled
+                    exportCtx.drawImage(
+                        sourceCanvas,
+                        0,
+                        0,
+                        sourceCanvas.width,
+                        sourceCanvas.height,
+                        0,
+                        0,
+                        exportCanvas.width,
+                        exportCanvas.height
+                    );
+
+                    // Draw legend in the top-right corner
+                    drawExportLegend(exportCtx, 'top-right', '#ffffff');
+
+                    const imgData = exportCanvas.toDataURL('image/png');
+                    const doc = new window.jspdf.jsPDF('l', 'px', [exportCanvas.width, exportCanvas.height]);
+                    doc.addImage(imgData, 'PNG', 0, 0, exportCanvas.width, exportCanvas.height);
+                    const suffix = Date.now();
+                    doc.save(`graph_visualization_${suffix}.pdf`);
                 };
 
-                const exportPNG = () => {
+                const savePNG = () => {
                     const sourceCanvas = canvasEl.value;
                     if (!sourceCanvas) return;
 
@@ -547,27 +1122,23 @@
                     link.href = exportCanvas.toDataURL('image/png');
                     link.click();
                 };
-
-                const openLink = (url) => window.open(url, '_blank');
+                const nav = (u) => window.open(u, '_blank');
 
                 onMounted(() => {
-                    const canvas = canvasEl.value;
-                    canvas.width = window.innerWidth;
-                    canvas.height = window.innerHeight;
-                    ctx = canvas.getContext('2d');
-                    window.addEventListener('resize', () => {
-                        canvas.width = window.innerWidth;
-                        canvas.height = window.innerHeight;
-                        draw();
-                    });
-                    recenter();
-                    draw();
+                    const c = canvasEl.value;
+                    c.width = window.innerWidth;
+                    c.height = window.innerHeight;
+                    ctx = c.getContext('2d');
+                    window.addEventListener('resize', () => { c.width = window.innerWidth; c.height = window.innerHeight; render(); });
+                    document.addEventListener('click', (e) => { if (!e.target.closest('#context-menu')) contextMenu.visible = false; });
+                    render();
                 });
 
-                return { 
-                    canvasEl, theme, showLabels, legend, messages, userInput, 
-                    recenter, toggleTheme, toggleLabels, onMouseDown, onMouseMove, 
-                    onMouseUp, onWheel, sendMessage, exportPDF, exportPNG, openLink 
+                return {
+                    canvasEl, scrollRef, openChat, showLabels, query, geminiApiKey, metadata, legend, chats,
+                    changeZoom, resetCamera, handleMouseDown, handleMouseMove, handleMouseUp, handleWheel, handleRightClick,
+                    contextMenu, isolateNode, cancelIsolation, copyLabel, isolatedNode,
+                    doChat, savePDF, savePNG, nav, render
                 };
             }
         }).mount('#app');
