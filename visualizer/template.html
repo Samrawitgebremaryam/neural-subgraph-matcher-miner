@@ -740,9 +740,8 @@
                 // Helper to draw light legend onto an export canvas (for PDF)
                 const drawExportLegend = (targetCtx, position, bgColor) => {
                     const canvas = targetCtx.canvas;
-                    // 4x bigger legend (double linear dimensions)
-                    const padding = 40;
-                    const lineHeight = 44;
+                    const padding = 80;
+                    const lineHeight = 88;
                     const boxWidth = 520;
                     let x, y;
 
@@ -761,7 +760,7 @@
                     }
 
                     targetCtx.save();
-                    targetCtx.font = '32px Inter, sans-serif';
+                    targetCtx.font = '40px Inter, sans-serif';
 
                     // Calculate height
                     let lines = 0;
@@ -855,15 +854,14 @@
                 // Helper to draw PNG legend (bottom-right), with white background
                 const drawExportLegendDark = (targetCtx) => {
                     const canvas = targetCtx.canvas;
-                    // 4x bigger legend (double linear dimensions)
-                    const padding = 40;
-                    const lineHeight = 40;
-                    const boxWidth = 480;
+                    const padding = 80;
+                    const lineHeight = 80;
+                    const boxWidth = 480; 
                     let x = canvas.width - boxWidth - padding;
                     let y = canvas.height - padding;
 
                     targetCtx.save();
-                    targetCtx.font = '28px Inter, sans-serif';
+                    targetCtx.font = '36px Inter, sans-serif';
 
                     // Calculate height
                     let lines = 0;
