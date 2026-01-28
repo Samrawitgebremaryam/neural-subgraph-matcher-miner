@@ -737,12 +737,12 @@
                     ctx.restore();
                 };
 
-                // Helper to draw legend onto an export canvas (for PNG/PDF)
+fix :                 // Helper to draw light legend onto an export canvas (for PDF)
                 const drawExportLegend = (targetCtx, position, bgColor) => {
                     const canvas = targetCtx.canvas;
-                    const padding = 16;
-                    const lineHeight = 16;
-                    const boxWidth = 200;
+                    const padding = 20;
+                    const lineHeight = 22;
+                    const boxWidth = 260;
                     let x, y;
 
                     if (position === 'top-right') {
@@ -751,13 +751,16 @@
                     } else if (position === 'bottom-left') {
                         x = padding;
                         y = canvas.height - padding;
+                    } else if (position === 'bottom-right') {
+                        x = canvas.width - boxWidth - padding;
+                        y = canvas.height - padding;
                     } else {
                         x = canvas.width - boxWidth - padding;
                         y = padding;
                     }
 
                     targetCtx.save();
-                    targetCtx.font = '12px Inter, sans-serif';
+                    targetCtx.font = '16px Inter, sans-serif';
 
                     // Calculate height
                     let lines = 0;
@@ -776,7 +779,7 @@
                     lines += 2; // "SPECIAL NODES" + anchor row
 
                     const boxHeight = padding + lines * lineHeight;
-                    if (position === 'bottom-left') {
+                    if (position === 'bottom-left' || position === 'bottom-right') {
                         y = y - boxHeight;
                     }
 
@@ -844,6 +847,101 @@
                     targetCtx.stroke();
                     targetCtx.fillStyle = '#111827';
                     targetCtx.fillText('Anchor Nodes', textX + 24, cursorY);
+
+                    targetCtx.restore();
+                };
+
+                // Helper to draw dark themed legend (for PNG bottom-right, matching on-screen card)
+                const drawExportLegendDark = (targetCtx) => {
+                    const canvas = targetCtx.canvas;
+                    const padding = 20;
+                    const lineHeight = 20;
+                    const boxWidth = 240;
+                    let x = canvas.width - boxWidth - padding;
+                    let y = canvas.height - padding;
+
+                    targetCtx.save();
+                    targetCtx.font = '14px Inter, sans-serif';
+
+                    // Calculate height
+                    let lines = 0;
+                    const nodeTypes = legend.value.nodeTypes || [];
+                    const edgeTypes = legend.value.edgeTypes || [];
+
+                    lines += 1; // "Legend"
+                    if (nodeTypes.length) {
+                        lines += 1; // header
+                        lines += nodeTypes.length;
+                    }
+                    if (edgeTypes.length) {
+                        lines += 1; // header
+                        lines += edgeTypes.length;
+                    }
+                    lines += 2; // "SPECIAL NODES" + anchor row
+
+                    const boxHeight = padding + lines * lineHeight;
+                    y = y - boxHeight;
+
+                    // Dark card background & subtle border
+                    targetCtx.fillStyle = 'rgba(15,23,42,0.96)';
+                    targetCtx.strokeStyle = 'rgba(148,163,184,0.6)';
+                    targetCtx.lineWidth = 1;
+                    targetCtx.beginPath();
+                    targetCtx.roundRect(x, y, boxWidth, boxHeight, 14);
+                    targetCtx.fill();
+                    targetCtx.stroke();
+
+                    // Text and swatches
+                    let cursorY = y + padding;
+                    const textX = x + 16;
+
+                    targetCtx.fillStyle = '#e5e7eb';
+                    targetCtx.fillText('Legend', textX, cursorY);
+                    cursorY += lineHeight;
+
+                    if (nodeTypes.length) {
+                        targetCtx.fillStyle = '#9ca3af';
+                        targetCtx.fillText('Node Types', textX, cursorY);
+                        cursorY += lineHeight;
+                        nodeTypes.forEach(t => {
+                            // swatch
+                            targetCtx.fillStyle = t.color || '#3b82f6';
+                            targetCtx.beginPath();
+                            targetCtx.roundRect(x + 16, cursorY - 11, 14, 14, 3);
+                            targetCtx.fill();
+
+                            // label
+                            targetCtx.fillStyle = '#e5e7eb';
+                            targetCtx.fillText(t.label, textX + 28, cursorY);
+                            cursorY += lineHeight;
+                        });
+                    }
+
+                    if (edgeTypes.length) {
+                        targetCtx.fillStyle = '#9ca3af';
+                        targetCtx.fillText('Edge Types', textX, cursorY);
+                        cursorY += lineHeight;
+                        edgeTypes.forEach(t => {
+                            // edge swatch (small bar)
+                            targetCtx.fillStyle = t.color || '#3b82f6';
+                            targetCtx.fillRect(x + 16, cursorY - 5, 26, 3);
+                            targetCtx.fillStyle = '#e5e7eb';
+                            targetCtx.fillText(t.label, textX + 32, cursorY);
+                            cursorY += lineHeight;
+                        });
+                    }
+
+                    targetCtx.fillStyle = '#9ca3af';
+                    targetCtx.fillText('Special Nodes', textX, cursorY);
+                    cursorY += lineHeight;
+
+                    // Anchor row
+                    targetCtx.fillStyle = 'rgba(248, 113, 113, 0.9)';
+                    targetCtx.beginPath();
+                    targetCtx.roundRect(x + 16, cursorY - 11, 14, 14, 3);
+                    targetCtx.fill();
+                    targetCtx.fillStyle = '#e5e7eb';
+                    targetCtx.fillText('Anchor Nodes', textX + 28, cursorY);
 
                     targetCtx.restore();
                 };
@@ -954,8 +1052,8 @@
                     const sourceCanvas = canvasEl.value;
                     if (!sourceCanvas) return;
 
-                    // Create a high-resolution offscreen canvas for clarity
-                    const scale = 3;
+                    // Create a very high-resolution offscreen canvas for clarity
+                    const scale = 4;
                     const exportCanvas = document.createElement('canvas');
                     exportCanvas.width = sourceCanvas.width * scale;
                     exportCanvas.height = sourceCanvas.height * scale;
@@ -993,12 +1091,12 @@
                     if (!sourceCanvas) return;
 
                     const exportCanvas = document.createElement('canvas');
-                    exportCanvas.width = sourceCanvas.width * 3;
-                    exportCanvas.height = sourceCanvas.height * 3;
+                    exportCanvas.width = sourceCanvas.width * 4;
+                    exportCanvas.height = sourceCanvas.height * 4;
                     const exportCtx = exportCanvas.getContext('2d');
 
-                    // White background for PNG to match PDF
-                    exportCtx.fillStyle = '#ffffff';
+                    // Dark background for PNG to match on-screen view
+                    exportCtx.fillStyle = '#020617';
                     exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
 
                     // Draw the main canvas scaled up for clarity
@@ -1014,8 +1112,8 @@
                         exportCanvas.height
                     );
 
-                    // Draw legend in the top-right corner (same as PDF)
-                    drawExportLegend(exportCtx, 'top-right', '#ffffff');
+                    // Draw dark legend in the bottom-right corner (matching on-screen card)
+                    drawExportLegendDark(exportCtx);
 
                     const link = document.createElement('a');
                     const suffix = Date.now();
