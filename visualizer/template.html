@@ -104,7 +104,7 @@
 
         /* Bottom Right Upper: Legend */
         .bottom-right-upper {
-            bottom: 240px; /* Increased spacing to prevent overlap */
+            bottom: 280px; /* Increased spacing to prevent overlap */
             right: 20px;
             width: 200px;
             max-height: 300px;
@@ -261,7 +261,7 @@
 
         .messages-area {
             flex: 1;
-            padding: 16px;
+            padding: 24px 16px 16px 16px;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
@@ -275,7 +275,7 @@
             max-width: 85%; 
         }
         .message-bubble.ai { 
-            background: #1f2937; 
+            background: rgba(255, 255, 255, 0.05); 
             border: 1px solid var(--border-light); 
             color: var(--text-primary); 
             align-self: flex-start; 
@@ -308,14 +308,14 @@
         .send-icon-btn {
             width: 38px;
             height: 38px;
-            background: #6366f1;
+            background: white;
             border: none;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            color: white;
+            color: black;
         }
 
         .fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.3s ease; }
@@ -435,7 +435,7 @@
                 <div class="chat-input-bar">
                     <input v-model="query" @keyup.enter="doChat" class="chat-field" placeholder="Ask about this pattern...">
                     <button class="send-icon-btn" @click="doChat">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                     </button>
                 </div>
             </div>
@@ -567,7 +567,7 @@
                 const getNodeAt = (wx, wy) => {
                     for (let i = raw.nodes.length - 1; i >= 0; i--) {
                         const n = raw.nodes[i];
-                        const r = n.anchor ? 65 : 55;
+                        const r = n.anchor ? 58 : 50;
                         const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
                         if (dist < r) return n;
                     }
@@ -598,10 +598,10 @@
 
                         ctx.globalAlpha = isDimmed ? 0.1 : 0.8;
                         ctx.strokeStyle = isDimmed ? '#555' : '#3b82f6';
-                        ctx.lineWidth = 3; 
+                        ctx.lineWidth = 2.5; 
 
-                        const sr = s.anchor ? 65 : 55;
-                        const tr = t.anchor ? 65 : 55;
+                        const sr = s.anchor ? 58 : 50;
+                        const tr = t.anchor ? 58 : 50;
                         
                         const dx = t.x - s.x;
                         const dy = t.y - s.y;
@@ -636,7 +636,7 @@
                         }
                         
                         if (showLabels.value && e.label && e.label !== 'default' && !isDimmed) {
-                            drawLabelBox(e.label, (s.x+t.x)/2, (s.y+t.y)/2, 8, false);
+                            drawLabelBox(e.label, (s.x+t.x)/2, (s.y+t.y)/2, 10, false);
                         }
                     });
 
@@ -652,7 +652,7 @@
                         }
 
                         const isAnchor = n.anchor;
-                        const r = isAnchor ? 65 : 55; // Updated sizes
+                        const r = isAnchor ? 58 : 50; // Updated sizes
                         
                         ctx.save();
                         ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
@@ -685,7 +685,7 @@
                         ctx.restore();
 
                         if (showLabels.value && !isDimmed) {
-                            drawLabelBox(`label: ${n.label || 'Node'}`, n.x, n.y, 10, true);
+                            drawLabelBox(`label: ${n.label || 'Node'}`, n.x, n.y, 12, true);
                         }
                     });
                     ctx.restore();
