@@ -173,10 +173,319 @@
                 const sendMessage = async () => {
                     const text = userInput.value.trim();
                     if (!text) return;
-                    
+
                     messages.value.push({ id: Date.now(), role: 'user', text });
                     userInput.value = '';
+
+                    try {
+                        const apiUrl = 'http://localhost:9002/chat';
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ message: text, graph_data: window.GRAPH_DATA })
+                        });
+                        const data = await response.json();
+                        messages.value.push({ id: Date.now(), role: 'assistant', text: data.response || "No response." });
+                    } catch (err) {
+                        console.error("Chat Error:", err);
+                        messages.value.push({ id: Date.now(), role: 'assistant', text: "Error connecting to AI Assistant." });
+                    }
+                };
+
+                // Helper to draw light legend onto an export canvas (for PDF)
+                const drawExportLegend = (targetCtx, position, bgColor) => {
+                    const canvas = targetCtx.canvas;
+                    const padding = 80;
+                    const lineHeight = 88;
+                    const boxWidth = 800;
+                    let x, y;
+
+                    if (position === 'top-right') {
+                        x = canvas.width - boxWidth - padding;
+                        y = padding;
+                    } else if (position === 'bottom-left') {
+                        x = padding;
+                        y = canvas.height - padding;
+                    } else if (position === 'bottom-right') {
+                        x = canvas.width - boxWidth - padding;
+                        y = canvas.height - padding;
+                    } else {
+                        x = canvas.width - boxWidth - padding;
+                        y = padding;
+                    }
+
+                    targetCtx.save();
+                    targetCtx.font = '56px Inter, sans-serif';
+
+                    // Calculate height
+                    let lines = 0;
+                    const nodeTypes = legend.value.nodeTypes || [];
+                    const edgeTypes = legend.value.edgeTypes || [];
+
+                    lines += 1; // "Legend"
+                    if (nodeTypes.length) {
+                        lines += 1; // header
+                        lines += nodeTypes.length;
+                    }
+                    if (edgeTypes.length) {
+                        lines += 1; // header
+                        lines += edgeTypes.length;
+                    }
+                    lines += 2; // "SPECIAL NODES" + anchor row
+
+                    const boxHeight = padding + lines * lineHeight;
+                    if (position === 'bottom-left' || position === 'bottom-right') {
+                        y = y - boxHeight;
+                    }
+
+                    // Background + border
+                    targetCtx.fillStyle = bgColor;
+                    targetCtx.strokeStyle = '#000000';
+                    targetCtx.lineWidth = 4;
+                    targetCtx.beginPath();
+                    targetCtx.roundRect(x, y, boxWidth, boxHeight, 8);
+                    targetCtx.fill();
+                    targetCtx.stroke();
+
+                    // Text and swatches
+                    let cursorY = y + padding;
+                    const textX = x + 12;
+
+                    targetCtx.fillStyle = '#111827';
+                    targetCtx.fillText('Legend', textX, cursorY);
+                    cursorY += lineHeight;
+
+                    if (nodeTypes.length) {
+                        targetCtx.fillStyle = '#6b7280';
+                        targetCtx.fillText('NODE TYPES', textX, cursorY);
+                        cursorY += lineHeight;
+                        nodeTypes.forEach(t => {
+                            // Larger swatch square for node type color
+                            targetCtx.fillStyle = t.color || '#3b82f6';
+                            targetCtx.strokeStyle = 'rgba(0,0,0,0.12)';
+                            targetCtx.beginPath();
+                            targetCtx.roundRect(x + 12, cursorY - 22, 32, 32, 6);
+                            targetCtx.fill();
+                            targetCtx.stroke();
+
+                            // label
+                            targetCtx.fillStyle = '#111827';
+                            targetCtx.fillText(t.label, textX + 24, cursorY);
+                            cursorY += lineHeight;
+                        });
+                    }
+
+                    if (edgeTypes.length) {
+                        targetCtx.fillStyle = '#6b7280';
+                        targetCtx.fillText('EDGE TYPES', textX, cursorY);
+                        cursorY += lineHeight;
+                        edgeTypes.forEach(t => {
+                            // Larger edge swatch bar
+                            targetCtx.fillStyle = t.color || '#3b82f6';
+                            targetCtx.fillRect(x + 12, cursorY - 10, 64, 8);
+                            targetCtx.fillStyle = '#111827';
+                            targetCtx.fillText(t.label, textX + 32, cursorY);
+                            cursorY += lineHeight;
+                        });
+                    }
+
+                    targetCtx.fillStyle = '#6b7280';
+                    targetCtx.fillText('SPECIAL NODES', textX, cursorY);
+                    cursorY += lineHeight;
+
+                    // Anchor row with larger swatch
+                    targetCtx.fillStyle = 'rgba(248, 113, 113, 0.9)';
+                    targetCtx.strokeStyle = 'rgba(0,0,0,0.12)';
+                    targetCtx.beginPath();
+                    targetCtx.roundRect(x + 12, cursorY - 22, 32, 32, 6);
+                    targetCtx.fill();
+                    targetCtx.stroke();
+                    targetCtx.fillStyle = '#111827';
+                    targetCtx.fillText('Anchor Nodes', textX + 24, cursorY);
+
+                    targetCtx.restore();
+                };
+
+                // Helper to draw PNG legend (bottom-right), layout similar to on-screen legend card, scaled up ~4x
+                const drawExportLegendDark = (targetCtx) => {
+                    const canvas = targetCtx.canvas;
+                    const padding = 80;
+                    const lineHeight = 80;
+                    const boxWidth = 800; 
+                    let x = canvas.width - boxWidth - padding;
+                    let y = canvas.height - padding;
+
+                    targetCtx.save();
+                    targetCtx.font = '56px Inter, sans-serif';
+
+                    // Calculate height
+                    let lines = 0;
+                    const nodeTypes = legend.value.nodeTypes || [];
+                    const edgeTypes = legend.value.edgeTypes || [];
+
+                    lines += 1; // "Legend"
+                    if (nodeTypes.length) {
+                        lines += 1; // header
+                        lines += nodeTypes.length;
+                    }
+                    if (edgeTypes.length) {
+                        lines += 1; // header
+                        lines += edgeTypes.length;
+                    }
+                    lines += 2; // "SPECIAL NODES" + anchor row
+
+                    const boxHeight = padding + lines * lineHeight;
+                    y = y - boxHeight;
+
+                    // Dark legend card background & subtle border, similar to UI
+                    targetCtx.fillStyle = '#111827';
+                    targetCtx.strokeStyle = '#4b5563';
+                    targetCtx.lineWidth = 1.5;
+                    targetCtx.beginPath();
+                    targetCtx.roundRect(x, y, boxWidth, boxHeight, 14);
+                    targetCtx.fill();
+                    targetCtx.stroke();
+
+                    // Text and swatches
+                    let cursorY = y + padding;
+                    const textX = x + 12;
+
+                    targetCtx.fillStyle = '#e5e7eb';
+                    targetCtx.fillText('Legend', textX, cursorY);
+                    cursorY += lineHeight;
+
+                    if (nodeTypes.length) {
+                        targetCtx.fillStyle = '#9ca3af';
+                        targetCtx.fillText('Node Types', textX, cursorY);
+                        cursorY += lineHeight;
+                        nodeTypes.forEach(t => {
+                            // Larger swatch square for node type color
+                            targetCtx.fillStyle = t.color || '#3b82f6';
+                            targetCtx.beginPath();
+                            targetCtx.roundRect(x + 16, cursorY - 22, 32, 32, 6);
+                            targetCtx.fill();
+
+                            // label
+                            targetCtx.fillStyle = '#e5e7eb';
+                            targetCtx.fillText(t.label, textX + 24, cursorY);
+                            cursorY += lineHeight;
+                        });
+                    }
+
+                    if (edgeTypes.length) {
+                        targetCtx.fillStyle = '#9ca3af';
+                        targetCtx.fillText('Edge Types', textX, cursorY);
+                        cursorY += lineHeight;
+                        edgeTypes.forEach(t => {
+                            // Larger edge swatch bar
+                            targetCtx.fillStyle = t.color || '#3b82f6';
+                            targetCtx.fillRect(x + 16, cursorY - 10, 64, 8);
+                            targetCtx.fillStyle = '#e5e7eb';
+                            targetCtx.fillText(t.label, textX + 32, cursorY);
+                            cursorY += lineHeight;
+                        });
+                    }
+
+                    targetCtx.fillStyle = '#9ca3af';
+                    targetCtx.fillText('Special Nodes', textX, cursorY);
+                    cursorY += lineHeight;
+
+                    // Anchor row with larger swatch
+                    targetCtx.fillStyle = 'rgba(248, 113, 113, 0.9)';
+                    targetCtx.beginPath();
+                    targetCtx.roundRect(x + 16, cursorY - 22, 32, 32, 6);
+                    targetCtx.fill();
+                    targetCtx.fillStyle = '#e5e7eb';
+                    targetCtx.fillText('Anchor Nodes', textX + 24, cursorY);
+
+                    targetCtx.restore();
+                };
+
+                // Mouse Event Handlers
+                const handleMouseDown = (e) => {
+                    if (e.button !== 0) return; // Only left click
+                    contextMenu.visible = false;
+                    const { x, y } = getWorldPos(e.clientX, e.clientY);
+                    const node = getNodeAt(x, y);
                     
+                    // Selection Logic
+                    selectedNode.value = node; // Set selected node (or null if bg clicked)
+                    
+                    if (node) draggedNode = node;
+                    else isDragging = true;
+                    lastMouse = { x: e.clientX, y: e.clientY };
+                    render();
+                };
+
+                const handleMouseMove = (e) => {
+                    const { x, y } = getWorldPos(e.clientX, e.clientY);
+                    if (draggedNode) {
+                        draggedNode.x = x;
+                        draggedNode.y = y;
+                        canvasEl.value.style.cursor = 'grabbing';
+                    } else if (isDragging) {
+                        cam.x += (e.clientX - lastMouse.x);
+                        cam.y += (e.clientY - lastMouse.y);
+                        canvasEl.value.style.cursor = 'grabbing';
+                    } else {
+                        const node = getNodeAt(x, y);
+                        hoveredNode = node;
+                        canvasEl.value.style.cursor = node ? 'pointer' : 'grab';
+                    }
+                    lastMouse = { x: e.clientX, y: e.clientY };
+                    render();
+                };
+
+                const handleMouseUp = () => { draggedNode = null; isDragging = false; render(); };
+                const handleWheel = (e) => {
+                    const f = e.deltaY > 0 ? 0.9 : 1.1;
+                    cam.k *= f;
+                    render();
+                };
+                
+                const handleRightClick = (e) => {
+                    const { x, y } = getWorldPos(e.clientX, e.clientY);
+                    const node = getNodeAt(x, y);
+                    if (node) {
+                        contextMenu.visible = true;
+                        contextMenu.x = e.clientX;
+                        contextMenu.y = e.clientY;
+                        contextMenu.node = node;
+                        // Right click also selects? Usually convenient.
+                        selectedNode.value = node;
+                        render();
+                    }
+                };
+
+                // Context Actions
+                const isolateNode = () => {
+                    isolatedNode.value = contextMenu.node;
+                    contextMenu.visible = false;
+                    render();
+                };
+                const cancelIsolation = () => {
+                    isolatedNode.value = null;
+                    contextMenu.visible = false;
+                    render();
+                };
+                const copyLabel = () => {
+                   if (contextMenu.node && contextMenu.node.label) {
+                       navigator.clipboard.writeText(contextMenu.node.label);
+                       alert("Label copied: " + contextMenu.node.label);
+                   }
+                   contextMenu.visible = false;
+                };
+
+                const changeZoom = (f) => { cam.k *= f; render(); };
+                const resetCamera = () => { cam = { x: 0, y: 0, k: 1 }; render(); };
+                
+                const doChat = async () => {
+                    const t = query.value.trim();
+                    if (!t) return;
+                    chats.value.push({ id: Date.now(), role: 'user', text: t });
+                    query.value = '';
+                    nextTick(() => scrollRef.value.scrollTop = scrollRef.value.scrollHeight);
+>>>>>>> ad5dea1 (fix: updated the position and size of the legend)
                     try {
                         const apiUrl = 'http://localhost:9002/chat';
                         const response = await fetch(apiUrl, {
