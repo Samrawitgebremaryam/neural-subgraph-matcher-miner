@@ -740,9 +740,10 @@
                 // Helper to draw light legend onto an export canvas (for PDF)
                 const drawExportLegend = (targetCtx, position, bgColor) => {
                     const canvas = targetCtx.canvas;
-                    const padding = 20;
-                    const lineHeight = 22;
-                    const boxWidth = 260;
+                    // 4x bigger legend (double linear dimensions)
+                    const padding = 40;
+                    const lineHeight = 44;
+                    const boxWidth = 520;
                     let x, y;
 
                     if (position === 'top-right') {
@@ -760,7 +761,7 @@
                     }
 
                     targetCtx.save();
-                    targetCtx.font = '16px Inter, sans-serif';
+                    targetCtx.font = '32px Inter, sans-serif';
 
                     // Calculate height
                     let lines = 0;
@@ -851,17 +852,18 @@
                     targetCtx.restore();
                 };
 
-                // Helper to draw dark themed legend (for PNG bottom-right, matching on-screen card)
+                // Helper to draw PNG legend (bottom-right), with white background
                 const drawExportLegendDark = (targetCtx) => {
                     const canvas = targetCtx.canvas;
-                    const padding = 20;
-                    const lineHeight = 20;
-                    const boxWidth = 240;
+                    // 4x bigger legend (double linear dimensions)
+                    const padding = 40;
+                    const lineHeight = 40;
+                    const boxWidth = 480;
                     let x = canvas.width - boxWidth - padding;
                     let y = canvas.height - padding;
 
                     targetCtx.save();
-                    targetCtx.font = '14px Inter, sans-serif';
+                    targetCtx.font = '28px Inter, sans-serif';
 
                     // Calculate height
                     let lines = 0;
@@ -882,10 +884,10 @@
                     const boxHeight = padding + lines * lineHeight;
                     y = y - boxHeight;
 
-                    // Dark card background & subtle border
-                    targetCtx.fillStyle = 'rgba(15,23,42,0.96)';
-                    targetCtx.strokeStyle = 'rgba(148,163,184,0.6)';
-                    targetCtx.lineWidth = 1;
+                    // White legend card background & black border for PNG
+                    targetCtx.fillStyle = '#ffffff';
+                    targetCtx.strokeStyle = '#000000';
+                    targetCtx.lineWidth = 1.5;
                     targetCtx.beginPath();
                     targetCtx.roundRect(x, y, boxWidth, boxHeight, 14);
                     targetCtx.fill();
@@ -893,14 +895,14 @@
 
                     // Text and swatches
                     let cursorY = y + padding;
-                    const textX = x + 16;
+                    const textX = x + 24;
 
-                    targetCtx.fillStyle = '#e5e7eb';
+                    targetCtx.fillStyle = '#111827';
                     targetCtx.fillText('Legend', textX, cursorY);
                     cursorY += lineHeight;
 
                     if (nodeTypes.length) {
-                        targetCtx.fillStyle = '#9ca3af';
+                        targetCtx.fillStyle = '#4b5563';
                         targetCtx.fillText('Node Types', textX, cursorY);
                         cursorY += lineHeight;
                         nodeTypes.forEach(t => {
@@ -911,27 +913,27 @@
                             targetCtx.fill();
 
                             // label
-                            targetCtx.fillStyle = '#e5e7eb';
+                            targetCtx.fillStyle = '#111827';
                             targetCtx.fillText(t.label, textX + 28, cursorY);
                             cursorY += lineHeight;
                         });
                     }
 
                     if (edgeTypes.length) {
-                        targetCtx.fillStyle = '#9ca3af';
+                        targetCtx.fillStyle = '#4b5563';
                         targetCtx.fillText('Edge Types', textX, cursorY);
                         cursorY += lineHeight;
                         edgeTypes.forEach(t => {
                             // edge swatch (small bar)
                             targetCtx.fillStyle = t.color || '#3b82f6';
                             targetCtx.fillRect(x + 16, cursorY - 5, 26, 3);
-                            targetCtx.fillStyle = '#e5e7eb';
+                            targetCtx.fillStyle = '#111827';
                             targetCtx.fillText(t.label, textX + 32, cursorY);
                             cursorY += lineHeight;
                         });
                     }
 
-                    targetCtx.fillStyle = '#9ca3af';
+                    targetCtx.fillStyle = '#4b5563';
                     targetCtx.fillText('Special Nodes', textX, cursorY);
                     cursorY += lineHeight;
 
@@ -940,7 +942,7 @@
                     targetCtx.beginPath();
                     targetCtx.roundRect(x + 16, cursorY - 11, 14, 14, 3);
                     targetCtx.fill();
-                    targetCtx.fillStyle = '#e5e7eb';
+                    targetCtx.fillStyle = '#111827';
                     targetCtx.fillText('Anchor Nodes', textX + 28, cursorY);
 
                     targetCtx.restore();
