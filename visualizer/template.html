@@ -106,7 +106,7 @@
         .bottom-right-upper {
             bottom: 240px; /* Increased spacing to prevent overlap */
             right: 20px;
-            width: 160px;
+            width: 200px;
             max-height: 300px;
             overflow-y: auto;
         }
@@ -115,7 +115,7 @@
         .bottom-right-lower {
             bottom: 20px;
             right: 20px;
-            width: 160px;
+            width: 180px;
         }
 
         .section-title {
@@ -567,7 +567,7 @@
                 const getNodeAt = (wx, wy) => {
                     for (let i = raw.nodes.length - 1; i >= 0; i--) {
                         const n = raw.nodes[i];
-                        const r = n.anchor ? 60 : 45;
+                        const r = n.anchor ? 65 : 55;
                         const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
                         if (dist < r) return n;
                     }
@@ -598,10 +598,10 @@
 
                         ctx.globalAlpha = isDimmed ? 0.1 : 0.8;
                         ctx.strokeStyle = isDimmed ? '#555' : '#3b82f6';
-                        ctx.lineWidth = 2; // Thinner edges as requested
+                        ctx.lineWidth = 3; 
 
-                        const sr = s.anchor ? 60 : 45;
-                        const tr = t.anchor ? 60 : 45;
+                        const sr = s.anchor ? 65 : 55;
+                        const tr = t.anchor ? 65 : 55;
                         
                         const dx = t.x - s.x;
                         const dy = t.y - s.y;
@@ -652,7 +652,7 @@
                         }
 
                         const isAnchor = n.anchor;
-                        const r = isAnchor ? 60 : 45; // Updated sizes
+                        const r = isAnchor ? 65 : 55; // Updated sizes
                         
                         ctx.save();
                         ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
