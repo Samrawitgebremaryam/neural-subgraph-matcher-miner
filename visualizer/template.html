@@ -742,7 +742,7 @@
                     const canvas = targetCtx.canvas;
                     const padding = 80;
                     const lineHeight = 88;
-                    const boxWidth = 520;
+                    const boxWidth = 800;
                     let x, y;
 
                     if (position === 'top-right') {
@@ -760,7 +760,7 @@
                     }
 
                     targetCtx.save();
-                    targetCtx.font = '40px Inter, sans-serif';
+                    targetCtx.font = '56px Inter, sans-serif';
 
                     // Calculate height
                     let lines = 0;
@@ -851,17 +851,17 @@
                     targetCtx.restore();
                 };
 
-                // Helper to draw PNG legend (bottom-right), with white background
+                // Helper to draw PNG legend (bottom-right), layout similar to on-screen legend card, scaled up ~4x
                 const drawExportLegendDark = (targetCtx) => {
                     const canvas = targetCtx.canvas;
                     const padding = 80;
                     const lineHeight = 80;
-                    const boxWidth = 480; 
+                    const boxWidth = 800; 
                     let x = canvas.width - boxWidth - padding;
                     let y = canvas.height - padding;
 
                     targetCtx.save();
-                    targetCtx.font = '36px Inter, sans-serif';
+                    targetCtx.font = '56px Inter, sans-serif';
 
                     // Calculate height
                     let lines = 0;
@@ -882,10 +882,10 @@
                     const boxHeight = padding + lines * lineHeight;
                     y = y - boxHeight;
 
-                    // White legend card background & black border for PNG
-                    targetCtx.fillStyle = '#ffffff';
-                    targetCtx.strokeStyle = '#000000';
-                    targetCtx.lineWidth = 1.5;
+                    // Dark legend card background & subtle border, similar to UI
+                    targetCtx.fillStyle = '#111827';
+                    targetCtx.strokeStyle = '#4b5563';
+                    targetCtx.lineWidth = 1;
                     targetCtx.beginPath();
                     targetCtx.roundRect(x, y, boxWidth, boxHeight, 14);
                     targetCtx.fill();
@@ -893,14 +893,14 @@
 
                     // Text and swatches
                     let cursorY = y + padding;
-                    const textX = x + 24;
+                    const textX = x + 12;
 
-                    targetCtx.fillStyle = '#111827';
+                    targetCtx.fillStyle = '#e5e7eb';
                     targetCtx.fillText('Legend', textX, cursorY);
                     cursorY += lineHeight;
 
                     if (nodeTypes.length) {
-                        targetCtx.fillStyle = '#4b5563';
+                        targetCtx.fillStyle = '#9ca3af';
                         targetCtx.fillText('Node Types', textX, cursorY);
                         cursorY += lineHeight;
                         nodeTypes.forEach(t => {
@@ -911,27 +911,27 @@
                             targetCtx.fill();
 
                             // label
-                            targetCtx.fillStyle = '#111827';
-                            targetCtx.fillText(t.label, textX + 28, cursorY);
+                            targetCtx.fillStyle = '#e5e7eb';
+                            targetCtx.fillText(t.label, textX + 24, cursorY);
                             cursorY += lineHeight;
                         });
                     }
 
                     if (edgeTypes.length) {
-                        targetCtx.fillStyle = '#4b5563';
+                        targetCtx.fillStyle = '#9ca3af';
                         targetCtx.fillText('Edge Types', textX, cursorY);
                         cursorY += lineHeight;
                         edgeTypes.forEach(t => {
                             // edge swatch (small bar)
                             targetCtx.fillStyle = t.color || '#3b82f6';
                             targetCtx.fillRect(x + 16, cursorY - 5, 26, 3);
-                            targetCtx.fillStyle = '#111827';
+                            targetCtx.fillStyle = '#e5e7eb';
                             targetCtx.fillText(t.label, textX + 32, cursorY);
                             cursorY += lineHeight;
                         });
                     }
 
-                    targetCtx.fillStyle = '#4b5563';
+                    targetCtx.fillStyle = '#9ca3af';
                     targetCtx.fillText('Special Nodes', textX, cursorY);
                     cursorY += lineHeight;
 
@@ -940,8 +940,8 @@
                     targetCtx.beginPath();
                     targetCtx.roundRect(x + 16, cursorY - 11, 14, 14, 3);
                     targetCtx.fill();
-                    targetCtx.fillStyle = '#111827';
-                    targetCtx.fillText('Anchor Nodes', textX + 28, cursorY);
+                    targetCtx.fillStyle = '#e5e7eb';
+                    targetCtx.fillText('Anchor Nodes', textX + 24, cursorY);
 
                     targetCtx.restore();
                 };
