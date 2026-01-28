@@ -106,7 +106,7 @@
         .bottom-right-upper {
             bottom: 240px; /* Increased spacing to prevent overlap */
             right: 20px;
-            width: 200px;
+            width: 160px;
             max-height: 300px;
             overflow-y: auto;
         }
@@ -115,7 +115,7 @@
         .bottom-right-lower {
             bottom: 20px;
             right: 20px;
-            width: 200px;
+            width: 160px;
         }
 
         .section-title {
@@ -525,6 +525,10 @@
                     types.forEach(t => {
                         raw.legend.nodeTypes.push({ label: t, color: generateColor(seed++) });
                     });
+                } else if (raw.legend.nodeTypes.length > 0) {
+                    // Ensure anchors are excluded from legend if pre-populated
+                    const anchorLabels = new Set(raw.nodes.filter(n => n.anchor).map(n => n.label));
+                    raw.legend.nodeTypes = raw.legend.nodeTypes.filter(t => !anchorLabels.has(t.label));
                 }
 
                 // Auto-generate Edge Legend if missing
@@ -563,7 +567,7 @@
                 const getNodeAt = (wx, wy) => {
                     for (let i = raw.nodes.length - 1; i >= 0; i--) {
                         const n = raw.nodes[i];
-                        const r = n.anchor ? 45 : 35;
+                        const r = n.anchor ? 60 : 45;
                         const dist = Math.sqrt((n.x - wx)**2 + (n.y - wy)**2);
                         if (dist < r) return n;
                     }
@@ -594,10 +598,10 @@
 
                         ctx.globalAlpha = isDimmed ? 0.1 : 0.8;
                         ctx.strokeStyle = isDimmed ? '#555' : '#3b82f6';
-                        ctx.lineWidth = 4; // Thicker edges as requested
+                        ctx.lineWidth = 2; // Thinner edges as requested
 
-                        const sr = s.anchor ? 45 : 35;
-                        const tr = t.anchor ? 45 : 35;
+                        const sr = s.anchor ? 60 : 45;
+                        const tr = t.anchor ? 60 : 45;
                         
                         const dx = t.x - s.x;
                         const dy = t.y - s.y;
@@ -648,7 +652,7 @@
                         }
 
                         const isAnchor = n.anchor;
-                        const r = isAnchor ? 45 : 35; // Updated sizes
+                        const r = isAnchor ? 60 : 45; // Updated sizes
                         
                         ctx.save();
                         ctx.globalAlpha = isDimmed ? 0.2 : 1.0;
