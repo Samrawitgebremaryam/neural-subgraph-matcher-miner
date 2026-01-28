@@ -740,7 +740,7 @@
                 // Helper to draw light legend onto an export canvas (for PDF)
                 const drawExportLegend = (targetCtx, position, bgColor) => {
                     const canvas = targetCtx.canvas;
-                    const padding = 80;
+                    const padding = 88;
                     const lineHeight = 88;
                     const boxWidth = 800;
                     let x, y;
@@ -783,10 +783,11 @@
                         y = y - boxHeight;
                     }
 
-                    // Background + border (match original thin black box)
+                    // Background + border
                     targetCtx.fillStyle = bgColor;
                     targetCtx.strokeStyle = '#000000';
-                    targetCtx.lineWidth = 1.2;
+                    // Make PDF legend border thick and clear
+                    targetCtx.lineWidth = 4;
                     targetCtx.beginPath();
                     targetCtx.roundRect(x, y, boxWidth, boxHeight, 8);
                     targetCtx.fill();
@@ -805,11 +806,11 @@
                         targetCtx.fillText('NODE TYPES', textX, cursorY);
                         cursorY += lineHeight;
                         nodeTypes.forEach(t => {
-                            // swatch
+                            // Larger swatch square for node type color
                             targetCtx.fillStyle = t.color || '#3b82f6';
                             targetCtx.strokeStyle = 'rgba(0,0,0,0.12)';
                             targetCtx.beginPath();
-                            targetCtx.roundRect(x + 12, cursorY - 11, 14, 14, 3);
+                            targetCtx.roundRect(x + 12, cursorY - 22, 32, 32, 6);
                             targetCtx.fill();
                             targetCtx.stroke();
 
@@ -825,9 +826,9 @@
                         targetCtx.fillText('EDGE TYPES', textX, cursorY);
                         cursorY += lineHeight;
                         edgeTypes.forEach(t => {
-                            // edge swatch (small bar)
+                            // Larger edge swatch bar
                             targetCtx.fillStyle = t.color || '#3b82f6';
-                            targetCtx.fillRect(x + 12, cursorY - 6, 24, 3);
+                            targetCtx.fillRect(x + 12, cursorY - 10, 64, 8);
                             targetCtx.fillStyle = '#111827';
                             targetCtx.fillText(t.label, textX + 32, cursorY);
                             cursorY += lineHeight;
@@ -838,11 +839,11 @@
                     targetCtx.fillText('SPECIAL NODES', textX, cursorY);
                     cursorY += lineHeight;
 
-                    // Anchor row
+                    // Anchor row with larger swatch
                     targetCtx.fillStyle = 'rgba(248, 113, 113, 0.9)';
                     targetCtx.strokeStyle = 'rgba(0,0,0,0.12)';
                     targetCtx.beginPath();
-                    targetCtx.roundRect(x + 12, cursorY - 11, 14, 14, 3);
+                    targetCtx.roundRect(x + 12, cursorY - 22, 32, 32, 6);
                     targetCtx.fill();
                     targetCtx.stroke();
                     targetCtx.fillStyle = '#111827';
@@ -854,8 +855,8 @@
                 // Helper to draw PNG legend (bottom-right), layout similar to on-screen legend card, scaled up ~4x
                 const drawExportLegendDark = (targetCtx) => {
                     const canvas = targetCtx.canvas;
-                    const padding = 80;
-                    const lineHeight = 80;
+                    const padding = 88;
+                    const lineHeight = 88;
                     const boxWidth = 800; 
                     let x = canvas.width - boxWidth - padding;
                     let y = canvas.height - padding;
@@ -885,7 +886,7 @@
                     // Dark legend card background & subtle border, similar to UI
                     targetCtx.fillStyle = '#111827';
                     targetCtx.strokeStyle = '#4b5563';
-                    targetCtx.lineWidth = 1;
+                    targetCtx.lineWidth = 1.5;
                     targetCtx.beginPath();
                     targetCtx.roundRect(x, y, boxWidth, boxHeight, 14);
                     targetCtx.fill();
@@ -904,10 +905,10 @@
                         targetCtx.fillText('Node Types', textX, cursorY);
                         cursorY += lineHeight;
                         nodeTypes.forEach(t => {
-                            // swatch
+                            // Larger swatch square for node type color
                             targetCtx.fillStyle = t.color || '#3b82f6';
                             targetCtx.beginPath();
-                            targetCtx.roundRect(x + 16, cursorY - 11, 14, 14, 3);
+                            targetCtx.roundRect(x + 16, cursorY - 22, 32, 32, 6);
                             targetCtx.fill();
 
                             // label
@@ -922,9 +923,9 @@
                         targetCtx.fillText('Edge Types', textX, cursorY);
                         cursorY += lineHeight;
                         edgeTypes.forEach(t => {
-                            // edge swatch (small bar)
+                            // Larger edge swatch bar
                             targetCtx.fillStyle = t.color || '#3b82f6';
-                            targetCtx.fillRect(x + 16, cursorY - 5, 26, 3);
+                            targetCtx.fillRect(x + 16, cursorY - 10, 64, 8);
                             targetCtx.fillStyle = '#e5e7eb';
                             targetCtx.fillText(t.label, textX + 32, cursorY);
                             cursorY += lineHeight;
@@ -935,10 +936,10 @@
                     targetCtx.fillText('Special Nodes', textX, cursorY);
                     cursorY += lineHeight;
 
-                    // Anchor row
+                    // Anchor row with larger swatch
                     targetCtx.fillStyle = 'rgba(248, 113, 113, 0.9)';
                     targetCtx.beginPath();
-                    targetCtx.roundRect(x + 16, cursorY - 11, 14, 14, 3);
+                    targetCtx.roundRect(x + 16, cursorY - 22, 32, 32, 6);
                     targetCtx.fill();
                     targetCtx.fillStyle = '#e5e7eb';
                     targetCtx.fillText('Anchor Nodes', textX + 24, cursorY);
@@ -1095,8 +1096,8 @@
                     exportCanvas.height = sourceCanvas.height * 4;
                     const exportCtx = exportCanvas.getContext('2d');
 
-                    // Dark background for PNG to match on-screen view
-                    exportCtx.fillStyle = '#020617';
+                    // White background for PNG as requested
+                    exportCtx.fillStyle = '#ffffff';
                     exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
 
                     // Draw the main canvas scaled up for clarity
