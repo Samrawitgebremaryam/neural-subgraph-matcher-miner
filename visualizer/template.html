@@ -41,6 +41,7 @@
             background: var(--bg-primary); 
             color: var(--text-primary); 
             overflow: hidden; 
+            -webkit-user-select: none; /* Safari / iOS support */
             user-select: none;
         }
 
@@ -63,6 +64,7 @@
             box-shadow: var(--card-shadow);
             z-index: 100;
             position: absolute;
+            -webkit-backdrop-filter: blur(10px); /* Safari / iOS support */
             backdrop-filter: blur(10px);
             padding: 12px;
             color: var(--text-primary);
@@ -104,7 +106,7 @@
 
         /* Bottom Right Upper: Legend */
         .bottom-right-upper {
-            bottom: 280px; /* Increased spacing to prevent overlap */
+            bottom: 240px; /* Slightly lower to add space from zoom controls */
             right: 20px;
             width: 200px;
             max-height: 300px;
@@ -236,7 +238,8 @@
         }
         .chat-main {
             flex: 1;
-            background: var(--bg-secondary);
+            /* Use a white background for the Pattern Analyser area for better readability */
+            background: #ffffff;
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -266,6 +269,7 @@
             display: flex;
             flex-direction: column;
             gap: 12px;
+            background: #ffffff;
         }
         .message-bubble { 
             padding: 10px 14px; 
@@ -275,9 +279,9 @@
             max-width: 85%; 
         }
         .message-bubble.ai { 
-            background: rgba(255, 255, 255, 0.05); 
-            border: 1px solid var(--border-light); 
-            color: var(--text-primary); 
+            background: #f3f4f6; 
+            border: 1px solid #e5e7eb; 
+            color: #111827; 
             align-self: flex-start; 
             border-bottom-left-radius: 2px;
         }
@@ -389,7 +393,11 @@
             <div class="toggle-row">
                 <label>Show Labels</label>
                 <label class="switch">
-                    <input type="checkbox" v-model="showLabels" @change="render">
+                    <input
+                        type="checkbox"
+                        v-model="showLabels"
+                        @change="render"
+                        aria-label="Toggle node labels">
                     <span class="slider"></span>
                 </label>
             </div>
@@ -424,7 +432,12 @@
                 </div>
                 <div class="chat-main">
                     <div class="api-key-box">
-                        <input type="password" v-model="geminiApiKey" class="api-input" placeholder="Enter Gemini API Key">
+                    <input
+                        type="password"
+                        v-model="geminiApiKey"
+                        class="api-input"
+                        placeholder="Enter Gemini API Key"
+                        aria-label="Gemini API key">
                     </div>
                     <div class="messages-area" ref="scrollRef">
                         <div v-for="m in chats" :key="m.id" :class="['message-bubble', m.role]">
@@ -433,8 +446,17 @@
                     </div>
                 </div>
                 <div class="chat-input-bar">
-                    <input v-model="query" @keyup.enter="doChat" class="chat-field" placeholder="Ask about this pattern...">
-                    <button class="send-icon-btn" @click="doChat">
+                    <input
+                        v-model="query"
+                        @keyup.enter="doChat"
+                        class="chat-field"
+                        placeholder="Ask about this pattern..."
+                        aria-label="Pattern Analyser message">
+                    <button
+                        class="send-icon-btn"
+                        @click="doChat"
+                        aria-label="Send message"
+                        title="Send message">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                     </button>
                 </div>
@@ -717,6 +739,117 @@
                     ctx.restore();
                 };
 
+                // Helper to draw legend onto an export canvas (for PNG/PDF)
+                const drawExportLegend = (targetCtx, position, bgColor) => {
+                    const canvas = targetCtx.canvas;
+                    const padding = 16;
+                    const lineHeight = 16;
+                    const boxWidth = 220;
+                    let x, y;
+
+                    if (position === 'top-right') {
+                        x = canvas.width - boxWidth - padding;
+                        y = padding;
+                    } else if (position === 'bottom-left') {
+                        x = padding;
+                        y = canvas.height - padding;
+                    } else {
+                        x = canvas.width - boxWidth - padding;
+                        y = padding;
+                    }
+
+                    targetCtx.save();
+                    targetCtx.font = '12px Inter, sans-serif';
+
+                    // Calculate height
+                    let lines = 0;
+                    const nodeTypes = legend.value.nodeTypes || [];
+                    const edgeTypes = legend.value.edgeTypes || [];
+
+                    lines += 1; // "Legend"
+                    if (nodeTypes.length) {
+                        lines += 1; // header
+                        lines += nodeTypes.length;
+                    }
+                    if (edgeTypes.length) {
+                        lines += 1; // header
+                        lines += edgeTypes.length;
+                    }
+                    lines += 2; // "SPECIAL NODES" + anchor row
+
+                    const boxHeight = padding + lines * lineHeight;
+                    if (position === 'bottom-left') {
+                        y = y - boxHeight;
+                    }
+
+                    // Background
+                    targetCtx.fillStyle = bgColor;
+                    targetCtx.strokeStyle = 'rgba(0,0,0,0.15)';
+                    targetCtx.lineWidth = 1;
+                    targetCtx.beginPath();
+                    targetCtx.roundRect(x, y, boxWidth, boxHeight, 8);
+                    targetCtx.fill();
+                    targetCtx.stroke();
+
+                    // Text and swatches
+                    let cursorY = y + padding;
+                    const textX = x + 12;
+
+                    targetCtx.fillStyle = '#111827';
+                    targetCtx.fillText('Legend', textX, cursorY);
+                    cursorY += lineHeight;
+
+                    if (nodeTypes.length) {
+                        targetCtx.fillStyle = '#6b7280';
+                        targetCtx.fillText('NODE TYPES', textX, cursorY);
+                        cursorY += lineHeight;
+                        nodeTypes.forEach(t => {
+                            // swatch
+                            targetCtx.fillStyle = t.color || '#3b82f6';
+                            targetCtx.strokeStyle = 'rgba(0,0,0,0.12)';
+                            targetCtx.beginPath();
+                            targetCtx.roundRect(x + 12, cursorY - 11, 14, 14, 3);
+                            targetCtx.fill();
+                            targetCtx.stroke();
+
+                            // label
+                            targetCtx.fillStyle = '#111827';
+                            targetCtx.fillText(t.label, textX + 24, cursorY);
+                            cursorY += lineHeight;
+                        });
+                    }
+
+                    if (edgeTypes.length) {
+                        targetCtx.fillStyle = '#6b7280';
+                        targetCtx.fillText('EDGE TYPES', textX, cursorY);
+                        cursorY += lineHeight;
+                        edgeTypes.forEach(t => {
+                            // edge swatch (small bar)
+                            targetCtx.fillStyle = t.color || '#3b82f6';
+                            targetCtx.fillRect(x + 12, cursorY - 6, 24, 3);
+                            targetCtx.fillStyle = '#111827';
+                            targetCtx.fillText(t.label, textX + 32, cursorY);
+                            cursorY += lineHeight;
+                        });
+                    }
+
+                    targetCtx.fillStyle = '#6b7280';
+                    targetCtx.fillText('SPECIAL NODES', textX, cursorY);
+                    cursorY += lineHeight;
+
+                    // Anchor row
+                    targetCtx.fillStyle = 'rgba(248, 113, 113, 0.9)';
+                    targetCtx.strokeStyle = 'rgba(0,0,0,0.12)';
+                    targetCtx.beginPath();
+                    targetCtx.roundRect(x + 12, cursorY - 11, 14, 14, 3);
+                    targetCtx.fill();
+                    targetCtx.stroke();
+                    targetCtx.fillStyle = '#111827';
+                    targetCtx.fillText('Anchor Nodes', textX + 24, cursorY);
+
+                    targetCtx.restore();
+                };
+
                 // Mouse Event Handlers
                 const handleMouseDown = (e) => {
                     if (e.button !== 0) return; // Only left click
@@ -810,13 +943,76 @@
                         const data = await res.json();
                         chats.value.push({ id: Date.now(), role: 'ai', text: data.response || "No response." });
                     } catch (e) {
-                         chats.value.push({ id: Date.now(), role: 'ai', text: "Error connecting to Pattern Analyst." });
+                         chats.value.push({
+                            id: Date.now(),
+                            role: 'ai',
+                            text: "I apologize, but I encountered an error connecting to the analysis server. Please ensure the backend is running."
+                         });
                     }
                     nextTick(() => scrollRef.value.scrollTop = scrollRef.value.scrollHeight);
                 };
 
-                const savePDF = () => { /* ... */ const doc = new window.jspdf.jsPDF('l', 'px', [canvasEl.value.width, canvasEl.value.height]); doc.addImage(canvasEl.value.toDataURL('image/png'), 'PNG', 0, 0, canvasEl.value.width, canvasEl.value.height); doc.save('graph.pdf'); };
-                const savePNG = () => { /* ... */ const l = document.createElement('a'); l.download='graph.png'; l.href=canvasEl.value.toDataURL(); l.click(); };
+                const savePDF = () => {
+                    const sourceCanvas = canvasEl.value;
+                    if (!sourceCanvas) return;
+
+                    // Create a high-resolution offscreen canvas for clarity
+                    const scale = 2;
+                    const exportCanvas = document.createElement('canvas');
+                    exportCanvas.width = sourceCanvas.width * scale;
+                    exportCanvas.height = sourceCanvas.height * scale;
+                    const exportCtx = exportCanvas.getContext('2d');
+
+                    // White background for PDF
+                    exportCtx.fillStyle = '#ffffff';
+                    exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+                    // Draw the main canvas scaled
+                    exportCtx.drawImage(
+                        sourceCanvas,
+                        0,
+                        0,
+                        sourceCanvas.width,
+                        sourceCanvas.height,
+                        0,
+                        0,
+                        exportCanvas.width,
+                        exportCanvas.height
+                    );
+
+                    // Draw legend in the top-right corner
+                    drawExportLegend(exportCtx, 'top-right', '#ffffff');
+
+                    const imgData = exportCanvas.toDataURL('image/png');
+                    const doc = new window.jspdf.jsPDF('l', 'px', [exportCanvas.width, exportCanvas.height]);
+                    doc.addImage(imgData, 'PNG', 0, 0, exportCanvas.width, exportCanvas.height);
+                    doc.save('graph_visualization.pdf');
+                };
+
+                const savePNG = () => {
+                    const sourceCanvas = canvasEl.value;
+                    if (!sourceCanvas) return;
+
+                    const exportCanvas = document.createElement('canvas');
+                    exportCanvas.width = sourceCanvas.width;
+                    exportCanvas.height = sourceCanvas.height;
+                    const exportCtx = exportCanvas.getContext('2d');
+
+                    // Keep a black background for PNG as requested
+                    exportCtx.fillStyle = '#000000';
+                    exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+                    // Draw the main canvas
+                    exportCtx.drawImage(sourceCanvas, 0, 0);
+
+                    // Draw legend in the bottom-left corner
+                    drawExportLegend(exportCtx, 'bottom-left', 'rgba(17,24,39,0.9)');
+
+                    const link = document.createElement('a');
+                    link.download = 'graph_visualization.png';
+                    link.href = exportCanvas.toDataURL('image/png');
+                    link.click();
+                };
                 const nav = (u) => window.open(u, '_blank');
 
                 onMounted(() => {
