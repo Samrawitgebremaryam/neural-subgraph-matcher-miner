@@ -80,8 +80,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
+from app.progress_events import emit_progress
 
 # Dataset class for parallel processing with on-the-fly sampling
 def extract_neighborhood(dataset_graph, seed, args, is_directed):
@@ -242,6 +241,7 @@ def generate_target_embeddings(dataset, model, args):
                           num_workers=w, pin_memory=pin_memory)
 
     dataloader = create_loader(num_workers, safe_batch_size)
+    total_batches = len(dataloader) if len(dataloader) > 0 else 1
 
     embs = []
     device = utils.get_device()
@@ -250,10 +250,11 @@ def generate_target_embeddings(dataset, model, args):
     logger.info(f"Generating embeddings for {len(selected_seeds)} targeted neighborhoods (Batch: {safe_batch_size}, Workers: {num_workers})...")
     
     try:
-        for batch in tqdm(dataloader):
+        for batch_idx, batch in enumerate(tqdm(dataloader), start=1):
             with torch.no_grad():
                 emb = model.emb_model(batch.to(device))
                 embs.append(emb.to(torch.device("cpu")))
+            emit_progress('embedding', batch_idx, total_batches)
     except RuntimeError as e:
         if "unable to write to file" in str(e) or "shared memory" in str(e).lower():
             logger.warning("Docker SHM Limit Hit! Falling back to 100% stable single-process mode...")
@@ -266,11 +267,13 @@ def generate_target_embeddings(dataset, model, args):
             # Fallback to single process
             num_workers = 0
             dataloader = create_loader(0, args.batch_size)
+            total_batches = len(dataloader) if len(dataloader) > 0 else 1
             embs = []
-            for batch in tqdm(dataloader, desc="Stable Fallback"):
+            for batch_idx, batch in enumerate(tqdm(dataloader, desc="Stable Fallback"), start=1):
                 with torch.no_grad():
                     emb = model.emb_model(batch.to(device))
                     embs.append(emb.to(torch.device("cpu")))
+                emit_progress('embedding', batch_idx, total_batches)
         else:
             raise e
     lazy_graphs = LazyNeighborhoodGraphList(dataset_graph, selected_seeds, args)
@@ -883,6 +886,10 @@ def save_and_visualize_all_instances(agent, args):
         total_instances = 0
         total_unique_instances = 0
         total_visualizations = 0
+        total_patterns = sum(min(len(agent.counts[sz]), args.out_batch_size) for sz in range(args.min_pattern_size, args.max_pattern_size + 1) if sz in agent.counts)
+        if total_patterns <= 0:
+            total_patterns = 1
+        done_patterns = 0
         
         for size in range(args.min_pattern_size, args.max_pattern_size + 1):
             if size not in agent.counts:
@@ -960,6 +967,9 @@ def save_and_visualize_all_instances(agent, args):
                     )
                 else:
                     logger.info(f"  {pattern_key}: {count} instances")
+                done_patterns += 1
+                if done_patterns % 5 == 0 or done_patterns == total_patterns:
+                    emit_progress('saving', done_patterns, total_patterns)
                 
                 if VISUALIZER_AVAILABLE:
                     try:

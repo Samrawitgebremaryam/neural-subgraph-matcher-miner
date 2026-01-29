@@ -23,6 +23,7 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
+from app.progress_events import emit_progress
 
 import matplotlib.pyplot as plt
 
@@ -142,8 +143,13 @@ class MCTSSearchAgent(SearchAgent):
 
         print("Size", self.max_size)
         print(len(self.visited_seed_nodes), "distinct seeds")
-        for simulation_n in tqdm(range(self.n_trials //
-            (self.max_pattern_size+1-self.min_pattern_size))):
+        total_steps = self.n_trials // (
+            self.max_pattern_size + 1 - self.min_pattern_size
+        )
+        for simulation_n in tqdm(
+            range(self.n_trials // (self.max_pattern_size + 1 - self.min_pattern_size))
+        ):
+            emit_progress("search_trials", simulation_n + 1, total_steps)
             # pick seed node
             best_graph_idx, best_start_node, best_score = None, None, -float("inf")
             for cand_graph_idx, cand_start_node in self.visited_seed_nodes:
@@ -387,17 +393,32 @@ class GreedySearchAgent(SearchAgent):
         self.n_trials = n_trials
 
         init_args = (self.model, self.dataset, self.embs, self.args)
-        
+
         args_for_pool = range(n_trials)
 
         if self.n_workers > 1:
             print(f"Starting {n_trials} search trials on {self.n_workers} cores...")
-            with mp.Pool(processes=self.n_workers, initializer=init_greedy_worker, initargs=init_args) as pool:
-                results = list(tqdm(pool.imap_unordered(run_greedy_trial, args_for_pool), total=n_trials))
+            with mp.Pool(
+                processes=self.n_workers,
+                initializer=init_greedy_worker,
+                initargs=init_args,
+            ) as pool:
+                results = []
+                for idx, r in enumerate(
+                    tqdm(
+                        pool.imap_unordered(run_greedy_trial, args_for_pool),
+                        total=n_trials,
+                    )
+                ):
+                    results.append(r)
+                    emit_progress("search_trials", idx + 1, n_trials)
         else:
             print(f"Starting {n_trials} search trials sequentially (n_workers={self.n_workers})...")
             init_greedy_worker(*init_args)
-            results = [run_greedy_trial(i) for i in tqdm(range(n_trials))]
+            results = []
+            for i in tqdm(range(n_trials)):
+                results.append(run_greedy_trial(i))
+                emit_progress("search_trials", i + 1, n_trials)
 
         print("Aggregating results from all worker processes...")
         for trial_patterns, trial_counts in results:
@@ -644,10 +665,13 @@ class MemoryEfficientMCTSAgent(MCTSSearchAgent):
 
         print("Size", self.max_size)
         print(len(self.visited_seed_nodes), "distinct seeds")
-        
-        for simulation_n in tqdm(range(self.n_trials // 
-            (self.max_pattern_size+1-self.min_pattern_size))):
-            
+        total_steps = self.n_trials // (
+            self.max_pattern_size + 1 - self.min_pattern_size
+        )
+        for simulation_n in tqdm(
+            range(self.n_trials // (self.max_pattern_size + 1 - self.min_pattern_size))
+        ):
+            emit_progress("search_trials", simulation_n + 1, total_steps)
             if simulation_n % 100 == 0 and torch.cuda.is_available():
                 torch.cuda.empty_cache()
             
@@ -661,7 +685,7 @@ class MemoryEfficientMCTSAgent(MCTSSearchAgent):
                     graph, start_node, max_nodes=self.min_pattern_size))
                 seed_scores.append((start_node, n_reachable))
             start_node = max(seed_scores, key=lambda x: x[1])[0]
-            
+
             neigh = [start_node]
             visited = {start_node}
             frontier = set()

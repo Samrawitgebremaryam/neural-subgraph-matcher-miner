@@ -100,22 +100,61 @@ class MiningService:
             current_chunk = 0
             
             progress_file = os.path.join(shared_job_dir, "progress.json")
-            
-            def update_progress(status, progress, message):
-                with open(progress_file, 'w') as f:
-                    json.dump({
-                        "status": status,
-                        "progress": min(progress, 99), # Never hit 100 until fully done
-                        "message": message
-                    }, f)
+
+            def update_progress(status, progress, message, extra=None):
+                payload = {
+                    "status": status,
+                    "progress": min(progress, 99),
+                    "message": message,
+                }
+                if extra:
+                    payload.update(extra)
+                with open(progress_file, "w") as f:
+                    json.dump(payload, f)
 
             # Initialize progress
             update_progress("starting", 0, "Initializing miner...")
+            phase_progress = {"embedding": 0, "search_trials": 0, "saving": 0}
 
             for line in process.stdout:
                 line_str = line.rstrip()
                 print(line_str, flush=True)
-                
+                if "[MINER_PROGRESS]" in line_str:
+                    try:
+                        payload_str = line_str.split("[MINER_PROGRESS]", 1)[1].strip()
+                        parts = dict(
+                            kv.split("=", 1) for kv in payload_str.split() if "=" in kv
+                        )
+                        phase = parts.get("phase", "unknown")
+                        phase_percent = int(parts.get("percent", 0))
+                        if phase in phase_progress:
+                            phase_progress[phase] = max(
+                                phase_progress[phase], phase_percent
+                            )
+                        emb_pct = phase_progress.get("embedding", 0)
+                        search_pct = phase_progress.get("search_trials", 0)
+                        save_pct = phase_progress.get("saving", 0)
+                        global_pct = int(
+                            0.3 * emb_pct + 0.6 * search_pct + 0.1 * save_pct
+                        )
+                        update_progress(
+                            "running",
+                            global_pct,
+                            "Phase: {} ({}%)".format(phase, phase_percent),
+                            extra={
+                                "phase": phase,
+                                "phase_progress": phase_percent,
+                                "embedding_progress": emb_pct,
+                                "search_progress": search_pct,
+                                "saving_progress": save_pct,
+                            },
+                        )
+                        continue
+                    except Exception as e:
+                        print(
+                            "Warning: Failed to parse MINER_PROGRESS: {}".format(e),
+                            flush=True,
+                        )
                 try:
                     # Robust parsing that ignores timestamp prefixes
                     # Example: "[10:00:00] Worker PID 123 finished chunk 1/4"
@@ -151,14 +190,24 @@ class MiningService:
                         update_progress("mining", completed_progress, f"Finished chunk {current_chunk} of {total_chunks}")
                         
                 except Exception as e:
-                    # Don't let parsing errors stop the stream
                     print(f"Warning: Failed to parse progress line: {e}", flush=True)
 
             process.wait()
             
             # Final completion update
-            update_progress("completed", 100, "Mining completed successfully!")
-            
+            update_progress(
+                "completed",
+                100,
+                "Mining completed successfully!",
+                extra={
+                    "phase": "completed",
+                    "phase_progress": 100,
+                    "embedding_progress": 100,
+                    "search_progress": 100,
+                    "saving_progress": 100,
+                },
+            )
+
             if process.returncode != 0:
                 raise Exception("Miner failed with exit code {}".format(process.returncode))
 
