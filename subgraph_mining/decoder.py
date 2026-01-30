@@ -80,7 +80,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-from app.progress_events import emit_progress
+
 
 # Dataset class for parallel processing with on-the-fly sampling
 def extract_neighborhood(dataset_graph, seed, args, is_directed):
@@ -206,7 +206,7 @@ def generate_target_embeddings(dataset, model, args):
     dataset_graph = dataset[0] 
     
     # select seeds from the FULL graph first to ensure we start exactly where intended.
-    all_nodes = sorted(list(dataset_graph.nodes()), key=str)
+    all_nodes = sorted(list(dataset_graph.nodes()))
     
     # Filter out "dead seeds" (isolated nodes) that cannot contain patterns
     # This prevents DeepSnap from crashing on 0-edge subgraphs
@@ -241,7 +241,6 @@ def generate_target_embeddings(dataset, model, args):
                           num_workers=w, pin_memory=pin_memory)
 
     dataloader = create_loader(num_workers, safe_batch_size)
-    total_batches = len(dataloader) if len(dataloader) > 0 else 1
 
     embs = []
     device = utils.get_device()
@@ -250,11 +249,10 @@ def generate_target_embeddings(dataset, model, args):
     logger.info(f"Generating embeddings for {len(selected_seeds)} targeted neighborhoods (Batch: {safe_batch_size}, Workers: {num_workers})...")
     
     try:
-        for batch_idx, batch in enumerate(tqdm(dataloader), start=1):
+        for batch in tqdm(dataloader):
             with torch.no_grad():
                 emb = model.emb_model(batch.to(device))
                 embs.append(emb.to(torch.device("cpu")))
-            emit_progress('embedding', batch_idx, total_batches)
     except RuntimeError as e:
         if "unable to write to file" in str(e) or "shared memory" in str(e).lower():
             logger.warning("Docker SHM Limit Hit! Falling back to 100% stable single-process mode...")
@@ -267,13 +265,11 @@ def generate_target_embeddings(dataset, model, args):
             # Fallback to single process
             num_workers = 0
             dataloader = create_loader(0, args.batch_size)
-            total_batches = len(dataloader) if len(dataloader) > 0 else 1
             embs = []
-            for batch_idx, batch in enumerate(tqdm(dataloader, desc="Stable Fallback"), start=1):
+            for batch in tqdm(dataloader, desc="Stable Fallback"):
                 with torch.no_grad():
                     emb = model.emb_model(batch.to(device))
                     embs.append(emb.to(torch.device("cpu")))
-                emit_progress('embedding', batch_idx, total_batches)
         else:
             raise e
     lazy_graphs = LazyNeighborhoodGraphList(dataset_graph, selected_seeds, args)
@@ -886,12 +882,9 @@ def save_and_visualize_all_instances(agent, args):
         total_instances = 0
         total_unique_instances = 0
         total_visualizations = 0
-        total_patterns = sum(min(len(agent.counts[sz]), args.out_batch_size) for sz in range(args.min_pattern_size, args.max_pattern_size + 1) if sz in agent.counts)
-        if total_patterns <= 0:
-            total_patterns = 1
-        done_patterns = 0
+        total_sizes = args.max_pattern_size - args.min_pattern_size + 1
         
-        for size in range(args.min_pattern_size, args.max_pattern_size + 1):
+        for size_idx, size in enumerate(range(args.min_pattern_size, args.max_pattern_size + 1)):
             if size not in agent.counts:
                 logger.debug(f"No patterns found for size {size}")
                 continue
@@ -967,9 +960,6 @@ def save_and_visualize_all_instances(agent, args):
                     )
                 else:
                     logger.info(f"  {pattern_key}: {count} instances")
-                done_patterns += 1
-                if done_patterns % 5 == 0 or done_patterns == total_patterns:
-                    emit_progress('saving', done_patterns, total_patterns)
                 
                 if VISUALIZER_AVAILABLE:
                     try:
@@ -1016,6 +1006,10 @@ def save_and_visualize_all_instances(agent, args):
                         traceback.print_exc()
                 else:
                     logger.warning(f"    ⚠ Skipping visualization (visualizer not available)")
+            # Progress: saving instances + creating HTML visualizations (plots/cluster/)
+            current_done = size_idx + 1
+            pct = int(current_done / total_sizes * 100)
+            print(f"[MINER_PROGRESS] phase=saving current={current_done} total={total_sizes} percent={pct}", flush=True)
         
         ensure_directories()
         
@@ -1167,7 +1161,8 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
         
         elif args.sample_method == "tree":
             start_time_sample = time.time()
-            for j in tqdm(range(args.n_neighborhoods)):
+            n_n = args.n_neighborhoods
+            for j in tqdm(range(n_n)):
                 graph, neigh = utils.sample_neigh(graphs,
                     random.randint(args.min_neighborhood_size,
                         args.max_neighborhood_size), args.graph_type)
@@ -1177,6 +1172,8 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
                 neighs.append(neigh)
                 if args.node_anchored:
                     anchors.append(0)
+                pct = int((j + 1) / n_n * 100) if n_n else 0
+                print(f"[MINER_PROGRESS] phase=sampling current={j+1} total={n_n} percent={pct}", flush=True)
 
     #  Use precomputed embeddings if available
     if precomputed_data:

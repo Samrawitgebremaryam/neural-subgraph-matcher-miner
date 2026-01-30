@@ -3,7 +3,20 @@ import json
 import uuid
 import subprocess
 import shutil
+import re
+import time
+import threading
 from ..config.settings import Config
+
+PHASE_WEIGHTS = {"sampling": (0, 20), "search_trials": (20, 95), "saving": (95, 100)}
+
+# Human-readable labels for each phase
+PHASE_MESSAGES = {
+    "sampling": "Sampling neighborhoods",
+    "search_trials": "Search trials",
+    "saving": "Saving results & visualizations",
+}
+
 
 class MiningService:
     @staticmethod
@@ -70,8 +83,8 @@ class MiningService:
                     
                 if config.get('sample_method'):
                     cmd.append("--sample_method={}".format(config['sample_method']))
-                    
-                if config.get('out_batch_size'):
+                
+                if config.get('out_batch_size') is not None:
                     cmd.append("--out_batch_size={}".format(config['out_batch_size']))
                     
                 # Default to true as it seems common
@@ -103,83 +116,133 @@ class MiningService:
             current_chunk = 0
             
             progress_file = os.path.join(shared_job_dir, "progress.json")
+            # sampling, search_trials, saving (percent, current, total per phase)
+            phase_state = {
+                "sampling": {"percent": 0, "current": 0, "total": 1},
+                "search_trials": {"percent": 0, "current": 0, "total": 1},
+                "saving": {"percent": 0, "current": 0, "total": 1},
+            }
+            #  never decrease (avoids 70% -> 12% when switching phases or out-of-order updates)
+            max_overall_seen = [0]
+            last_written_overall = [-1]
+            last_write_time = [0.0]
+            last_message = [None]
+            running_flag = [True]
+            completed_written = [False]
 
-            def update_progress(status, progress, message, extra=None):
+            def compute_overall(phase, phase_percent):
+                lo, hi = PHASE_WEIGHTS.get(phase, (0, 100))
+                return min(99, int(lo + (hi - lo) * phase_percent / 100))
+
+            def update_progress(status, progress, message, phase=None, phase_percent=None, phase_current=None, phase_total=None, phases=None):
+                if phase and phase in phase_state:
+                    phase_state[phase]["percent"] = phase_percent if phase_percent is not None else phase_state[phase]["percent"]
+                    if phase_current is not None:
+                        phase_state[phase]["current"] = phase_current
+                    if phase_total is not None:
+                        phase_state[phase]["total"] = phase_total
+                progress = min(progress, 100 if status == "completed" else 99)
                 payload = {
                     "status": status,
-                    "progress": min(progress, 99),
+                    "progress": progress,
                     "message": message,
+                    "phase": phase or (list(phase_state.keys())[-1] if phase_state else None),
+                    "phase_percent": phase_percent,
+                    "phases": phases if phases is not None else dict(phase_state),
                 }
-                if extra:
-                    payload.update(extra)
-                with open(progress_file, "w") as f:
-                    json.dump(payload, f)
+                with open(progress_file, 'w') as f:
+                    json.dump(payload, f, indent=0)
+                last_written_overall[0] = progress
+                last_write_time[0] = time.time()
+
+            def heartbeat_loop():
+                """Re-write progress every 1.5s with 'still running' so UI shows activity when decoder is between updates."""
+                while running_flag[0]:
+                    time.sleep(1.5)
+                    if not running_flag[0]:
+                        break
+                    if time.time() - last_write_time[0] < 1.0:
+                        continue
+                    try:
+                        progress = last_written_overall[0]
+                        msg = (last_message[0] or "Running") + " — still running"
+                        payload = {
+                            "status": "mining",
+                            "progress": progress,
+                            "message": msg,
+                            "phase": list(phase_state.keys())[-1] if phase_state else None,
+                            "phase_percent": phase_state.get("search_trials", {}).get("percent", 0) if "search_trials" in phase_state else 0,
+                            "phases": dict(phase_state),
+                        }
+                        with open(progress_file, 'w') as f:
+                            json.dump(payload, f, indent=0)
+                        last_write_time[0] = time.time()
+                    except Exception:
+                        pass
+
+            heartbeat = threading.Thread(target=heartbeat_loop, daemon=True)
+            heartbeat.start()
+
+            # Only ever increase: ignore out-of-order/stale lines (multiprocessing causes buffered interleaved stdout)
+            def maybe_update_from_miner_progress(phase, current, total, percent):
+                if completed_written[0]:
+                    return
+                if phase not in phase_state:
+                    phase_state[phase] = {"percent": 0, "current": 0, "total": 1}
+                prev_current = phase_state[phase]["current"]
+                prev_percent = phase_state[phase]["percent"]
+                if current < prev_current or percent < prev_percent:
+                    return
+                phase_state[phase]["current"] = current
+                phase_state[phase]["total"] = total
+                phase_state[phase]["percent"] = percent
+
+                now = time.time()
+                overall = compute_overall(phase, percent)
+                overall = max(max_overall_seen[0], overall)
+                max_overall_seen[0] = overall
+
+                # When decoder reports saving at 100%, mark completed immediately so UI shows 100% before process exits
+                if phase == "saving" and percent >= 100:
+                    completed_written[0] = True
+                    update_progress("completed", 100, "Saving results & visualizations (100%)", phase=phase, phase_percent=100, phase_current=current, phase_total=total)
+                    return
+                # Write when overall increased or at least every 0.12s for real-time feel
+                if overall > last_written_overall[0] or (now - last_write_time[0]) >= 0.12:
+                    label = PHASE_MESSAGES.get(phase, phase)
+                    message = "{} ({}%)".format(label, percent)
+                    update_progress(
+                        "mining",
+                        overall,
+                        message,
+                        phase=phase,
+                        phase_percent=percent,
+                        phase_current=current,
+                        phase_total=total,
+                    )
 
             # Initialize progress
             update_progress("starting", 0, "Initializing miner...")
-            phase_progress = {"embedding": 0, "search_trials": 0, "saving": 0}
+
+            # Regex for [MINER_PROGRESS] phase=search_trials current=1714 total=2000 percent=85
+            miner_progress_re = re.compile(
+                r"\[MINER_PROGRESS\]\s+phase=(\S+)\s+current=(\d+)\s+total=(\d+)\s+percent=(\d+)"
+            )
 
             for line in process.stdout:
                 line_str = line.rstrip()
                 print(line_str, flush=True)
-                if "[MINER_PROGRESS]" in line_str:
-                    try:
-                        payload_str = line_str.split("[MINER_PROGRESS]", 1)[1].strip()
-                        parts = dict(
-                            kv.split("=", 1) for kv in payload_str.split() if "=" in kv
-                        )
-                        phase = parts.get("phase", "unknown")
-                        phase_percent = int(parts.get("percent", 0))
-                        if phase in phase_progress:
-                            phase_progress[phase] = max(
-                                phase_progress[phase], phase_percent
-                            )
-                        emb_pct = phase_progress.get("embedding", 0)
-                        search_pct = phase_progress.get("search_trials", 0)
-                        save_pct = phase_progress.get("saving", 0)
-                        global_pct = int(
-                            0.3 * emb_pct + 0.6 * search_pct + 0.1 * save_pct
-                        )
-                        update_progress(
-                            "running",
-                            global_pct,
-                            "Phase: {} ({}%)".format(phase, phase_percent),
-                            extra={
-                                "phase": phase,
-                                "phase_progress": phase_percent,
-                                "embedding_progress": emb_pct,
-                                "search_progress": search_pct,
-                                "saving_progress": save_pct,
-                            },
-                        )
-                        continue
-                    except Exception as e:
-                        print(
-                            "Warning: Failed to parse MINER_PROGRESS: {}".format(e),
-                            flush=True,
-                        )
-                try:
-                    # Robust parsing that ignores timestamp prefixes
-                    # Example: "[10:00:00] Worker PID 123 finished chunk 1/4"
-                    
-                    if "%|" in line_str:
-                        # Standard tqdm/percentage line: " 25%|██▍       | 123/500"
-                        percentage_str = line_str.split("%")[0].strip()
-                        if "|" in percentage_str: # Handle case where | might be before %
-                            percentage_str = percentage_str.split("|")[-1].strip()
-                        
-                        try:
-                            percentage = int(percentage_str)
-                            if "it/s" in line_str and "/500" in line_str: # Sampling Phase
-                                total_progress = int((percentage / 100) * 30)
-                                update_progress("mining", total_progress, f"Sampling neighborhoods ({percentage}%)...")
-                            elif "it/s" in line_str and "/100" in line_str: # Search Phase
-                                total_progress = 30 + int((percentage / 100) * 60)
-                                update_progress("mining", total_progress, f"Mining patterns ({percentage}%)...")
-                        except:
-                            pass
 
-                    elif "started chunk" in line_str:
+                try:
+                    # Real-time progress from decoder: [MINER_PROGRESS] phase=X current=Y total=Z percent=W
+                    match = miner_progress_re.search(line_str)
+                    if match:
+                        phase_name, current, total, percent = match.group(1), int(match.group(2)), int(match.group(3)), int(match.group(4))
+                        maybe_update_from_miner_progress(phase_name, current, total, percent)
+                        continue
+
+                    # Legacy chunk-based progress (if no MINER_PROGRESS in decoder)
+                    if "started chunk" in line_str:
                          # "... started chunk 1/4"
                         parts = line_str.split("started chunk")[1].strip().split(" ")[0] # "1/4"
                         current, total = map(int, parts.split("/"))
@@ -210,24 +273,15 @@ class MiningService:
                         update_progress("mining", completed_progress, f"Finished chunk {current_chunk} of {total_chunks}")
                         
                 except Exception as e:
+                    # Don't let parsing errors stop the stream
                     print(f"Warning: Failed to parse progress line: {e}", flush=True)
 
+            running_flag[0] = False
             process.wait()
             
             # Final completion update
-            update_progress(
-                "completed",
-                100,
-                "Mining completed successfully!",
-                extra={
-                    "phase": "completed",
-                    "phase_progress": 100,
-                    "embedding_progress": 100,
-                    "search_progress": 100,
-                    "saving_progress": 100,
-                },
-            )
-
+            update_progress("completed", 100, "Mining completed successfully!")
+            
             if process.returncode != 0:
                 raise Exception("Miner failed with exit code {}".format(process.returncode))
 
