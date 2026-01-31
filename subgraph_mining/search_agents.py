@@ -322,9 +322,7 @@ def run_greedy_trial(trial_idx):
             cand_embs = worker_model.emb_model(utils.batch_nx_graphs(
                 cand_neighs, anchors=anchors if worker_args.node_anchored else None))
 
-        best_score = float("inf")
-        best_node = None
-
+        scored = []
         for cand_node, cand_emb in zip(frontier, cand_embs):
             score = 0
             for emb_batch in worker_embs:
@@ -335,13 +333,22 @@ def run_greedy_trial(trial_idx):
                     elif worker_args.method_type == "mlp":
                         pred = worker_model(emb_batch.to(utils.get_device()), cand_emb.unsqueeze(0).expand(len(emb_batch), -1))
                         score += torch.sum(pred[:,0]).item()
+            scored.append((score, cand_node))
 
-            if score < best_score:
-                best_score = score
-                best_node = cand_node
-
-        if best_node is None:
+        if not scored:
             break
+        scored.sort(key=lambda x: x[0])
+        
+        out_bs = max(1, getattr(worker_args, 'out_batch_size', 3))
+        n_cand = len(scored)
+        top_k = max(2, min(5, out_bs)) if out_bs >= 2 else 1  # at least 2 when user asked for 2+
+        top_k = min(top_k, n_cand)
+        if n_cand == 1:
+            best_score, best_node = scored[0]
+        elif random.random() < 0.25 and n_cand > 1:
+            best_score, best_node = random.choice(scored)
+        else:
+            best_score, best_node = random.choice(scored[:top_k])
 
         if worker_args.graph_type == "undirected":
             frontier = list(((set(frontier) | set(graph.neighbors(best_node))) - visited) - {best_node})

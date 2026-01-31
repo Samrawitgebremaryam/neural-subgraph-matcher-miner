@@ -80,7 +80,18 @@ class MiningService:
                 add_arg('radius')
                 add_arg('search_strategy')
                 add_arg('sample_method')
-                add_arg('out_batch_size')
+                # Always pass out_batch_size explicitly so decoder gets user value (never skip)
+                out_bs = config.get('out_batch_size', 3)
+                if out_bs is None:
+                    out_bs = 3
+                try:
+                    out_bs = int(out_bs)
+                except (TypeError, ValueError):
+                    out_bs = 3
+                out_bs = max(1, out_bs)
+                cmd.append("--out_batch_size={}".format(out_bs))
+                print("DEBUG out_batch_size passed to decoder: {}".format(out_bs), flush=True)
+                # Do not add_arg('out_batch_size') — we already appended it above
 
                 cmd.append("--node_anchored")
 

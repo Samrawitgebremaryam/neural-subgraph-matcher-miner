@@ -898,6 +898,10 @@ def save_and_visualize_all_instances(agent, args):
         total_visualizations = 0
         total_sizes = args.max_pattern_size - args.min_pattern_size + 1
         
+        # Use out_batch_size from args; ensure at least 1 so we always take up to N per size
+        out_batch_size = max(1, getattr(args, 'out_batch_size', 3))
+        logger.info("save_and_visualize: using out_batch_size=%s (up to %s patterns per size)", out_batch_size, out_batch_size)
+
         for size_idx, size in enumerate(range(args.min_pattern_size, args.max_pattern_size + 1)):
             if size not in agent.counts:
                 logger.debug(f"No patterns found for size {size}")
@@ -909,9 +913,9 @@ def save_and_visualize_all_instances(agent, args):
                 reverse=True
             )
             
-            logger.info(f"Size {size}: {len(sorted_patterns)} unique pattern types")
+            logger.info(f"Size {size}: {len(sorted_patterns)} unique pattern types (taking up to {out_batch_size})")
             
-            for rank, (wl_hash, instances) in enumerate(sorted_patterns[:args.out_batch_size], 1):
+            for rank, (wl_hash, instances) in enumerate(sorted_patterns[:out_batch_size], 1):
                 pattern_key = f"size_{size}_rank_{rank}"
                 original_count = len(instances)
                 
@@ -1247,12 +1251,20 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
             analyze=args.analyze, model_type=args.method_type,
             out_batch_size=args.out_batch_size, beam_width=args.beam_width)
     
+    # Ensure all agents have args (workers need it for out_batch_size / diversity)
+    if not hasattr(agent, 'args') or agent.args is None:
+        agent.args = args
+    
     # Run search
-    logger.info(f"Running search with {args.n_trials} trials...")
+    logger.info(f"Running search with {args.n_trials} trials... (out_batch_size={args.out_batch_size})")
     out_graphs = agent.run_search(args.n_trials)
     
     elapsed = time.time() - start_time
     logger.info(f"Total time: {elapsed:.2f}s ({int(elapsed)//60}m {int(elapsed)%60}s)")
+    if hasattr(agent, 'counts') and agent.counts:
+        for sz in range(args.min_pattern_size, args.max_pattern_size + 1):
+            n_types = len(agent.counts.get(sz, {}))
+            logger.info("Size %s: %s unique pattern types (requested up to %s)", sz, n_types, args.out_batch_size)
 
     if hasattr(agent, 'counts') and agent.counts:
         logger.info("\nSaving all pattern instances...")
