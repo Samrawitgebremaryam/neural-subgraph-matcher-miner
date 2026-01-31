@@ -35,22 +35,28 @@ def generate_balanced_bio_graph(num_motifs=100, nodes_per_type=500, num_noise_ed
             type_map[label_id].append(node_id)
             node_id += 1
 
-    # 2. Plant the golden motifs (5-node chain per motif)
+    # Edge types for biological flow (for visualization / checking)
+    EDGE_TYPES = ["regulates", "transcribes", "translates", "catalyzes"]  # TF→Gene, Gene→mRNA, mRNA→Enzyme, Enzyme→Metabolite
+
+    # 2. Plant the golden motifs (5-node chain per motif) with edge types
     for i in range(num_motifs):
         tf = type_map[0][i]
         gene = type_map[1][i]
         mrna = type_map[2][i]
         enzyme = type_map[3][i]
         metabolite = type_map[4][i]
-        G.add_edges_from([(tf, gene), (gene, mrna), (mrna, enzyme), (enzyme, metabolite)])
+        G.add_edge(tf, gene, type=EDGE_TYPES[0])
+        G.add_edge(gene, mrna, type=EDGE_TYPES[1])
+        G.add_edge(mrna, enzyme, type=EDGE_TYPES[2])
+        G.add_edge(enzyme, metabolite, type=EDGE_TYPES[3])
 
-    # 3. Balanced noise: edges that follow biological order (t -> t+1) only
+    # 3. Balanced noise: edges that follow biological order (t -> t+1) with same edge types
     for _ in range(num_noise_edges):
         t1 = random.randint(0, 3)
         t2 = t1 + 1
         u = random.choice(type_map[t1])
         v = random.choice(type_map[t2])
-        G.add_edge(u, v)
+        G.add_edge(u, v, type=EDGE_TYPES[t1])
 
     return G
 
@@ -73,14 +79,15 @@ def write_graph_csv_txt(G, nodes_path, edges_txt_path, edges_csv_path=None):
         for u, v in G.edges():
             f.write(f"{u}\t{v}\n")
 
-    # Edges CSV (optional)
+    # Edges CSV (optional): source, target, type
     if edges_csv_path is None:
         edges_csv_path = parent / "bio_edges.csv"
     with open(edges_csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["source", "target"])
+        w.writerow(["source", "target", "type"])
         for u, v in G.edges():
-            w.writerow([u, v])
+            etype = G.edges[u, v].get("type", "")
+            w.writerow([u, v, etype])
 
     return nodes_path, edges_txt_path, edges_csv_path
 

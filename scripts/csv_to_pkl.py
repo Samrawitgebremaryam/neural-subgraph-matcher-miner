@@ -40,16 +40,17 @@ def load_graph_from_csv_txt(nodes_path, edges_path, directed=True):
             G.add_node(nid, label=type_name, label_id=label_id, type_name=type_name)
             row = next(reader, None)
 
-    # Load edges (TXT: "source\ttarget" or CSV: source,target)
+    # Load edges (TXT: "source\ttarget" or CSV: source,target[,type])
     edges_path = Path(edges_path)
     with open(edges_path, "r") as f:
         if edges_path.suffix.lower() == ".csv":
             reader = csv.reader(f)
-            next(reader, None)  # skip header if present
+            header = next(reader, None)
             for row in reader:
                 if len(row) >= 2:
                     u, v = int(row[0]), int(row[1])
-                    G.add_edge(u, v)
+                    attrs = {"type": row[2].strip()} if len(row) >= 3 and row[2].strip() else {}
+                    G.add_edge(u, v, **attrs)
         else:
             for line in f:
                 line = line.strip()
@@ -58,7 +59,8 @@ def load_graph_from_csv_txt(nodes_path, edges_path, directed=True):
                 parts = line.replace(",", "\t").split()
                 if len(parts) >= 2:
                     u, v = int(parts[0]), int(parts[1])
-                    G.add_edge(u, v)
+                    attrs = {"type": parts[2].strip()} if len(parts) >= 3 and parts[2].strip() else {}
+                    G.add_edge(u, v, **attrs)
 
     return G
 
