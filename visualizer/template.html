@@ -103,6 +103,8 @@
             transition: all 0.2s;
         }
         .zoom-btn:hover { background: var(--button-hover); }
+        .theme-toggle-btn .theme-icon { display: block; }
+        .theme-toggle-btn .theme-icon-moon { stroke: #f59e0b; }
 
         /* Bottom Right Upper: Legend */
         .bottom-right-upper {
@@ -227,7 +229,7 @@
             background: var(--bg-secondary);
         }
         .chat-header {
-            background: #8b5cf6;
+            background: linear-gradient(to right, #5b21b6 0%, #7c3aed 40%, #a78bfa 100%);
             color: white;
             padding: 16px;
             font-weight: 600;
@@ -355,11 +357,15 @@
             <p>{{ metadata.nodeCount }} nodes ({{ legend.nodeTypes.length }} types), {{ metadata.edgeCount }} edges ({{ legend.edgeTypes ? legend.edgeTypes.length : (raw && raw.edges ? 1 : 0) }} types)</p>
         </div>
 
-        <!-- Zoom Controls -->
+        <!-- Zoom Controls + Dark/Light Toggle -->
         <div class="ui-card top-right">
-            <button class="zoom-btn" @click="changeZoom(1.1)">+</button>
-            <button class="zoom-btn" @click="changeZoom(0.9)">-</button>
-            <button class="zoom-btn" @click="resetCamera">⌂</button>
+            <button class="zoom-btn" @click="changeZoom(1.1)" aria-label="Zoom in" title="Zoom in">+</button>
+            <button class="zoom-btn" @click="changeZoom(0.9)" aria-label="Zoom out" title="Zoom out">−</button>
+            <button class="zoom-btn" @click="resetCamera" aria-label="Center view" title="Center view">⌂</button>
+            <button class="zoom-btn theme-toggle-btn" @click="toggleTheme" aria-label="Toggle dark or light mode" title="Toggle dark or light mode">
+                <svg v-if="isDark" class="theme-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                <svg v-else class="theme-icon theme-icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            </button>
         </div>
 
         <!-- Legend Card (Fixed Bottom Right Upper) -->
@@ -528,6 +534,7 @@
                 const scrollRef = ref(null);
                 const openChat = ref(false);
                 const showLabels = ref(true);
+                const isDark = ref(true);
                 const query = ref('');
                 const geminiApiKey = ref('');
                 const isolatedNode = ref(null);
@@ -1024,6 +1031,11 @@
 
                 const changeZoom = (f) => { cam.k *= f; render(); };
                 const resetCamera = () => { cam = { x: 0, y: 0, k: 1 }; render(); };
+                const toggleTheme = () => {
+                    isDark.value = !isDark.value;
+                    document.documentElement.className = isDark.value ? 'dark' : '';
+                    render();
+                };
                 
                 const doChat = async () => {
                     const t = query.value.trim();
@@ -1125,6 +1137,7 @@
                 const nav = (u) => window.open(u, '_blank');
 
                 onMounted(() => {
+                    document.documentElement.className = isDark.value ? 'dark' : '';
                     const c = canvasEl.value;
                     c.width = window.innerWidth;
                     c.height = window.innerHeight;
@@ -1136,7 +1149,7 @@
 
                 return {
                     canvasEl, scrollRef, openChat, showLabels, query, geminiApiKey, metadata, legend, chats,
-                    changeZoom, resetCamera, handleMouseDown, handleMouseMove, handleMouseUp, handleWheel, handleRightClick,
+                    isDark, toggleTheme, changeZoom, resetCamera, handleMouseDown, handleMouseMove, handleMouseUp, handleWheel, handleRightClick,
                     contextMenu, isolateNode, cancelIsolation, copyLabel, isolatedNode,
                     doChat, savePDF, savePNG, nav, render
                 };
