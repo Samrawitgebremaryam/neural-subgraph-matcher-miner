@@ -2,9 +2,9 @@ name: Run Decoder
 
 on:
   push:
-    branches: [main , test/balanced-bio-graph]
+    branches: [main , test/balanced-bio-dataset]
   pull_request:
-    branches: [main , test/balanced-bio-graph]
+    branches: [main , test/balanced-bio-dataset]
   workflow_dispatch:
 
 jobs:
