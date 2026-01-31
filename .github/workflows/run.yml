@@ -68,7 +68,7 @@ jobs:
               set -e
               echo 'Starting decoder run on bio graph (Bio-Logic config)...'
               python -m subgraph_mining.decoder \
-                --dataset data/bio_data.pkl \
+                --dataset directed.pkl \
                 --graph_type directed \
                 --radius 5 \
                 --max_neighborhood_size 5 \
