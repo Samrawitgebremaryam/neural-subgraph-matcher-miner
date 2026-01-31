@@ -54,43 +54,39 @@ class MiningService:
             ]
 
             if config:
-                if config.get('n_trials'):
-                    cmd.append("--n_trials={}".format(config['n_trials']))
-                
-                if config.get('min_pattern_size'):
-                    cmd.append("--min_pattern_size={}".format(config['min_pattern_size']))
-                    
-                if config.get('max_pattern_size'):
-                    cmd.append("--max_pattern_size={}".format(config['max_pattern_size']))
+                # Log received config so we can verify user values are passed through
+                print("Mining config received: {}".format(config), flush=True)
 
-                if config.get('min_neighborhood_size'):
-                    cmd.append("--min_neighborhood_size={}".format(config['min_neighborhood_size']))
-                    
-                if config.get('max_neighborhood_size'):
-                    cmd.append("--max_neighborhood_size={}".format(config['max_neighborhood_size']))
-                    
-                if config.get('n_neighborhoods'):
-                    cmd.append("--n_neighborhoods={}".format(config['n_neighborhoods']))
-                
-                if config.get('graph_type'):
-                    cmd.append("--graph_type={}".format(config['graph_type']))
-                    
-                if config.get('radius'):
-                    cmd.append("--radius={}".format(config['radius']))
-                    
-                if config.get('search_strategy'):
-                    cmd.append("--search_strategy={}".format(config['search_strategy']))
-                    
-                if config.get('sample_method'):
-                    cmd.append("--sample_method={}".format(config['sample_method']))
-                
-                if config.get('out_batch_size') is not None:
-                    cmd.append("--out_batch_size={}".format(config['out_batch_size']))
-                    
-                # Default to true as it seems common
+                # Pass every config key to decoder; use explicit presence checks so we never
+                # skip user values (e.g. 0 or small numbers) and never fall back to decoder defaults
+                def add_arg(key, opt_name=None):
+                    if key not in config or config[key] is None:
+                        return
+                    opt = opt_name or key
+                    val = config[key]
+                    if isinstance(val, bool):
+                        if val:
+                            cmd.append("--{}".format(opt))
+                    else:
+                        cmd.append("--{}={}".format(opt, val))
+
+                add_arg('n_trials')
+                add_arg('min_pattern_size')
+                add_arg('max_pattern_size')
+                add_arg('min_neighborhood_size')
+                add_arg('max_neighborhood_size')
+                add_arg('n_neighborhoods')
+                add_arg('graph_type')
+                add_arg('radius')
+                add_arg('search_strategy')
+                add_arg('sample_method')
+                add_arg('out_batch_size')
+
                 cmd.append("--node_anchored")
-                    
-                if config.get('visualize_instances', False):
+
+                # visualize_instances: accept bool or string "true"/"false" from form
+                vi = config.get('visualize_instances', False)
+                if vi is True or (isinstance(vi, str) and vi.lower() == 'true'):
                     cmd.append("--visualize_instances")
             
             print("Running command: {}".format(' '.join(cmd)), flush=True)
@@ -303,48 +299,51 @@ class MiningService:
             os.makedirs(persistent_results_dir, exist_ok=True)
             os.makedirs(persistent_plots_dir, exist_ok=True)
 
-            # 1. Handle Basic Pattern Results
-            if os.path.exists(out_path):
-                # Copy to shared results for download
-                shutil.copy(out_path, os.path.join(shared_results_dir, "patterns.pkl"))
-                # Copy to persistent results for latest job context (fixed name)
-                shutil.copy(out_path, os.path.join(persistent_results_dir, "patterns.pkl"))
+            # Representative vs Instance: copy ONLY the output type the user chose (no mixing)
+            vi = config.get('visualize_instances', False) if config else False
+            vi = vi is True or (isinstance(vi, str) and str(vi).lower() == 'true')
 
-            if os.path.exists(json_path):
-                # Copy to shared results for download
-                shutil.copy(json_path, os.path.join(shared_results_dir, "patterns.json"))
+            # Clear shared results and plots so previous run's output does not remain
+            for d in [shared_results_dir, os.path.join(shared_plots_dir, "cluster")]:
+                if os.path.exists(d):
+                    try:
+                        shutil.rmtree(d)
+                    except Exception as e:
+                        print("Warning: could not clear {}: {}".format(d, e), flush=True)
+            os.makedirs(shared_results_dir, exist_ok=True)
+            shared_cluster_dir = os.path.join(shared_plots_dir, "cluster")
+            os.makedirs(shared_cluster_dir, exist_ok=True)
 
-            # 2. Handle Instance Files (when visualize_instances=True)
-            if os.path.exists(instance_pkl_path):
-                # Copy to shared results for download
-                shutil.copy(instance_pkl_path, os.path.join(shared_results_dir, "patterns_all_instances.pkl"))
-                print(f"Copied instance PKL file to shared results", flush=True)
+            # 1. Representative results — only when user chose "Representative"
+            if not vi:
+                print("Copying representative output only (no instance files)", flush=True)
+                if os.path.exists(out_path):
+                    shutil.copy(out_path, os.path.join(shared_results_dir, "patterns.pkl"))
+                    shutil.copy(out_path, os.path.join(persistent_results_dir, "patterns.pkl"))
+                if os.path.exists(json_path):
+                    shutil.copy(json_path, os.path.join(shared_results_dir, "patterns.json"))
 
-            if os.path.exists(instance_json_path):
-                # Copy to shared results for download
-                shutil.copy(instance_json_path, os.path.join(shared_results_dir, "patterns_all_instances.json"))
-                print(f"Copied instance JSON file to shared results", flush=True)
+            # 2. Instance results — only when user chose "Instance"
+            if vi:
+                print("Copying instance output only (no representative files)", flush=True)
+                if os.path.exists(instance_pkl_path):
+                    shutil.copy(instance_pkl_path, os.path.join(shared_results_dir, "patterns_all_instances.pkl"))
+                if os.path.exists(instance_json_path):
+                    shutil.copy(instance_json_path, os.path.join(shared_results_dir, "patterns_all_instances.json"))
 
-            # 3. Handle Plot Files and Directories
+            # 3. Plots: representative = flat HTML files only; instance = pattern dirs only (never both)
             plots_cluster_dir = "/app/plots/cluster"
             if os.path.exists(plots_cluster_dir):
-                # Create cluster subdirectory in shared plots
-                shared_cluster_dir = os.path.join(shared_plots_dir, "cluster")
-                os.makedirs(shared_cluster_dir, exist_ok=True)
-
                 for filename in os.listdir(plots_cluster_dir):
                     src_path = os.path.join(plots_cluster_dir, filename)
                     dst_path = os.path.join(shared_cluster_dir, filename)
-
                     if os.path.isfile(src_path):
-                        # Copy individual files (representative mode PNG/PDF)
-                        shutil.copy(src_path, dst_path)
+                        if not vi:
+                            shutil.copy(src_path, dst_path)
                     elif os.path.isdir(src_path):
-                        # Copy directories (instance mode HTML folders)
-                        if os.path.exists(dst_path):
-                            shutil.rmtree(dst_path)
-                        shutil.copytree(src_path, dst_path)
-                        print(f"Copied instance plot directory: {filename}", flush=True)
+                        if vi:
+                            shutil.copytree(src_path, dst_path)
+                            print("Copied instance plot dir: {}".format(filename), flush=True)
             
             print("Results saved to shared volume: {}".format(shared_job_dir), flush=True)
             

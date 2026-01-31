@@ -824,6 +824,20 @@ def update_run_index(json_path, args):
         json.dump(index, f, indent=2)
 def save_and_visualize_all_instances(agent, args):
     try:
+        # Clear plots/cluster so only this run's output is present (no leftover from previous run)
+        output_dir = os.path.join("plots", "cluster")
+        if os.path.exists(output_dir):
+            import shutil
+            try:
+                for item in os.listdir(output_dir):
+                    item_path = os.path.join(output_dir, item)
+                    if os.path.isfile(item_path):
+                        os.remove(item_path)
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+            except Exception as e:
+                logger.warning("Could not clear plots/cluster: %s", e)
+
         logger.info("="*70)
         logger.info("SAVING AND VISUALIZING ALL PATTERN INSTANCES")
         logger.info("="*70)
@@ -1327,6 +1341,21 @@ def main():
         
         args = parser.parse_args()
 
+        # Ensure user config is respected: clamp so max >= min and out_batch_size >= 1
+        min_ps = getattr(args, 'min_pattern_size', 3)
+        max_ps = getattr(args, 'max_pattern_size', 5)
+        out_bs = getattr(args, 'out_batch_size', 3)
+        if max_ps < min_ps:
+            max_ps = min_ps
+            args.max_pattern_size = max_ps
+        if out_bs < 1:
+            out_bs = 1
+            args.out_batch_size = out_bs
+
+        logger.info(
+            "Decoder config: min_pattern_size=%s max_pattern_size=%s out_batch_size=%s (pattern sizes %s..%s inclusive, up to %s per size)",
+            min_ps, max_ps, out_bs, min_ps, max_ps, out_bs,
+        )
         logger.info(f"Using dataset: {args.dataset}")
         logger.info(f"Graph type: {args.graph_type}")
 
