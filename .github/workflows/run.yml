@@ -2,9 +2,9 @@ name: Run Decoder
 
 on:
   push:
-    branches: [main , test/visualizer-refactor]
+    branches: [main , test/balanced-bio-graph]
   pull_request:
-    branches: [main , test/visualizer-refactor]
+    branches: [main , test/balanced-bio-graph]
   workflow_dispatch:
 
 jobs:
@@ -60,18 +60,29 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
+            -w /app \
             -e PYTHONUNBUFFERED=1 \
+            -e PYTHONPATH=/app \
             decoder-image:latest \
             bash -c "
               set -e
-              echo 'Starting decoder run...'
+              echo 'Starting decoder run on bio graph (Bio-Logic config)...'
               python -m subgraph_mining.decoder \
-                --dataset=metta.pkl \
-                --n_trials=200 \
+                --dataset data/bio_data.pkl \
+                --graph_type directed \
+                --radius 5 \
+                --max_neighborhood_size 15 \
+                --min_pattern_size 3 \
+                --max_pattern_size 5 \
+                --min_neighborhood_size 2 \
+                --n_neighborhoods 500 \
+                --n_trials 200 \
+                --search_strategy greedy \
+                --out_batch_size 5 \
+                --sample_method tree \
                 --node_anchored \
-                --out_path=/app/results/patterns.pkl \
-                
-
+                --model_path ckpt/model.pt \
+                --out_path results/patterns.pkl
 
               echo 'Checking output directories...'
               ls -la /app/plots/cluster
@@ -81,18 +92,20 @@ jobs:
       #   run: |
       #     docker run --rm \
       #       -v ${{ github.workspace }}:/app \
+      #       -w /app \
       #       -e PYTHONUNBUFFERED=1 \
+      #       -e PYTHONPATH=/app \
       #       decoder-image:latest \
       #       bash -c "
       #         set -e
-      #         export PYTHONPATH=/app
-      #         echo 'Running pattern counter...'
+      #         echo 'Running pattern counter on bio graph...'
       #         python -m analyze.count_patterns \
-      #           --dataset=metta.pkl \
-      #           --queries_path=results/patterns.pkl \
-      #           --out_path=results/ \
+      #           --dataset data/bio_data.pkl \
+      #           --queries_path results/patterns.pkl \
+      #           --out_path results/ \
       #           --node_anchored \
-
+      #           --graph_type directed
+      #
       #         echo 'Counting completed.'
       #         ls -la /app/results
       #       "

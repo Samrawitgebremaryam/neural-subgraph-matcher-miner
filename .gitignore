@@ -6,7 +6,6 @@ log-*/
 *.p
 *.png
 plots/
-data/
 runs/
 results/
 *.sw?
