@@ -82,7 +82,8 @@ jobs:
                 --sample_method tree \
                 --node_anchored \
                 --model_path ckpt/model.pt \
-                --out_path results/patterns.pkl
+                --out_path results/patterns.pkl \
+                --visualize_instances
 
               echo 'Checking output directories...'
               ls -la /app/plots/cluster
