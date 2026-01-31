@@ -17,13 +17,13 @@ import warnings
 from common import feature_preprocess
 
 
-def sample_neigh(graphs, size, graph_type):
+def sample_neigh(graphs, size, graph_type, max_tries=10000):
     ps = np.array([len(g) for g in graphs], dtype=float)
     ps /= np.sum(ps)
     dist = stats.rv_discrete(values=(np.arange(len(graphs)), ps))
-    while True:
+    best_neigh, best_graph = None, None
+    for _ in range(max_tries):
         idx = dist.rvs()
-        #graph = random.choice(graphs)
         graph = graphs[idx]
         start_node = random.choice(list(graph.nodes))
         neigh = [start_node]
@@ -34,7 +34,6 @@ def sample_neigh(graphs, size, graph_type):
         visited = set([start_node])
         while len(neigh) < size and frontier:
             new_node = random.choice(list(frontier))
-            #new_node = max(sorted(frontier))
             assert new_node not in neigh
             neigh.append(new_node)
             visited.add(new_node)
@@ -45,6 +44,14 @@ def sample_neigh(graphs, size, graph_type):
             frontier = [x for x in frontier if x not in visited]
         if len(neigh) == size:
             return graph, neigh
+        if best_neigh is None or len(neigh) > len(best_neigh):
+            best_neigh, best_graph = neigh, graph
+    if best_neigh and best_graph:
+        return best_graph, best_neigh
+    raise RuntimeError(
+        f"sample_neigh: could not get neighborhood of size {size} in {max_tries} tries. "
+        "Try lowering max_neighborhood_size (e.g. 5 for directed chains)."
+    )
 
 cached_masks = None
 def vec_hash(v):
