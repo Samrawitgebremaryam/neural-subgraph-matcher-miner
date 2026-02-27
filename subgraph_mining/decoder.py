@@ -183,6 +183,77 @@ class LazyNeighborhoodGraphList:
         return neigh_graph
 
 
+class GlobalMap:
+    """
+    Lightweight graph wrapper (adjacency dict) for hybrid global search.
+    Exposes the same interface as NetworkX so search agents need no changes.
+    Picklable for multiprocessing.
+    """
+    def __init__(self, G):
+        if not isinstance(G, (nx.Graph, nx.DiGraph)):
+            raise TypeError("GlobalMap requires a NetworkX Graph or DiGraph")
+        self._is_directed = G.is_directed()
+        if self._is_directed:
+            self.succ = {n: list(G.successors(n)) for n in G.nodes()}
+            self.adj = self.succ
+        else:
+            self.adj = {n: list(G.neighbors(n)) for n in G.nodes()}
+            self.succ = self.adj
+        self._nodes = list(self.adj.keys())
+
+    def nodes(self):
+        return self.adj.keys()
+
+    def __len__(self):
+        return len(self.adj)
+
+    def number_of_nodes(self):
+        return len(self.adj)
+
+    def number_of_edges(self):
+        if self._is_directed:
+            return sum(len(self.succ[n]) for n in self.succ)
+        return sum(len(self.adj[n]) for n in self.adj) // 2
+
+    def neighbors(self, node):
+        return self.adj.get(node, [])
+
+    def successors(self, node):
+        return self.succ.get(node, [])
+
+    def is_directed(self):
+        return self._is_directed
+
+    def subgraph(self, nodes):
+        nodes = set(nodes)
+        H = nx.DiGraph() if self._is_directed else nx.Graph()
+        H.add_nodes_from(nodes)
+        for u in nodes:
+            for v in self.succ.get(u, []):
+                if v in nodes:
+                    H.add_edge(u, v)
+        return H
+
+    def nodes_within_radius(self, node, radius):
+        """BFS; return set of nodes within `radius` hops. For BeamSearchAgent compatibility."""
+        if radius <= 0:
+            return {node}
+        visited = {node}
+        queue = collections.deque([(node, 0)])
+        while queue:
+            u, d = queue.popleft()
+            if d >= radius:
+                continue
+            for v in self.succ.get(u, []):
+                if v not in visited:
+                    visited.add(v)
+                    queue.append((v, d + 1))
+        return visited
+
+    def random_node(self):
+        return random.choice(self._nodes)
+
+
 def collate_fn(ds_graphs):
     """Batching logic for DeepSnap models."""
     from common import feature_preprocess
@@ -232,7 +303,11 @@ def generate_target_embeddings(dataset, model, args):
     targeted_dataset = TargetedDataset(dataset_graph, selected_seeds, args)
     
     num_workers = args.streaming_workers
-    safe_batch_size = min(args.batch_size, 64) if num_workers > 0 else args.batch_size
+    # With workers: cap batch size to avoid DataLoader SHM issues. Use larger batches on GPU to keep it busy.
+    if num_workers > 0:
+        safe_batch_size = min(args.batch_size, 256 if torch.cuda.is_available() else 64)
+    else:
+        safe_batch_size = args.batch_size
     pin_memory = torch.cuda.is_available()
     
     def create_loader(w, b):
@@ -371,8 +446,15 @@ def pattern_growth_streaming(dataset, task, args):
     # Batched embedding generation
     global_embs, seed_graphs = generate_target_embeddings(dataset, model, args)
     
-    # Release the massive main graph from memory before search
-    logger.info("CRITICAL: Cleaning up main graph from RAM to optimize Search Phase...")
+    # Keep full graph for discovery when we have a single NX graph (global hybrid search)
+    full_graph = None
+    if isinstance(dataset, list) and len(dataset) == 1:
+        g0 = dataset[0]
+        if isinstance(g0, (nx.Graph, nx.DiGraph)):
+            full_graph = g0
+    
+    # Release dataset container and GPU cache; main graph freed after GlobalMap build when used
+    logger.info("Cleaning up dataset reference and GPU cache (main graph freed after GlobalMap build)...")
     if isinstance(dataset, list):
         dataset.clear()
     del dataset
@@ -381,12 +463,31 @@ def pattern_growth_streaming(dataset, task, args):
         torch.cuda.empty_cache()
         logger.info("GPU cache cleared.")
     
-    # Parallel search
-    logger.info("Search phase starting with precomputed embeddings...")
-    # Force use_whole_graphs=True because the input 'seed_graphs' are already the extracted neighborhoods
+    if full_graph is not None:
+        global_map = GlobalMap(full_graph)
+        del full_graph
+        gc.collect()
+        search_input = [global_map]
+        # Cap frontier for very large graphs so each step stays tractable
+        if global_map.number_of_nodes() > 500000:
+            args.frontier_cap = getattr(args, 'frontier_cap', None)
+            if args.frontier_cap is None:
+                args.frontier_cap = 20000
+                logger.info("Large graph detected (%s nodes): frontier capped at %s for speed.", global_map.number_of_nodes(), args.frontier_cap)
+            elif args.frontier_cap <= 0:
+                args.frontier_cap = None
+                logger.info("Large graph (%s nodes): frontier cap disabled (--frontier_cap 0).", global_map.number_of_nodes())
+        else:
+            args.frontier_cap = getattr(args, 'frontier_cap', None)
+        logger.info("Search phase starting with full graph (global search)...")
+    else:
+        search_input = seed_graphs
+        args.frontier_cap = getattr(args, 'frontier_cap', None)
+        logger.info("Search phase starting with precomputed embeddings...")
+    
     original_use_whole = args.use_whole_graphs
     args.use_whole_graphs = True
-    found_patterns = pattern_growth(seed_graphs, task, args, precomputed_data=global_embs, preloaded_model=model)
+    found_patterns = pattern_growth(search_input, task, args, precomputed_data=global_embs, preloaded_model=model)
     args.use_whole_graphs = original_use_whole
     
     # Global Frequency Validation (Accuracy validator for batch processing)
@@ -1124,6 +1225,9 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
         if task == "graph-truncate" and i >= 1000:
             break
         
+        if isinstance(graph, GlobalMap):
+            graphs.append(graph)
+            continue
         if not type(graph) == nx.Graph and not type(graph) == nx.DiGraph:
             graph = pyg_utils.to_networkx(graph).to_undirected()
             for node in graph.nodes():
@@ -1147,7 +1251,8 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
         if args.sample_method == "radial":
             for i, graph in enumerate(graphs):
                 logger.info(f"Processing graph {i}")
-                for j, node in enumerate(graph.nodes):
+                nodes_iter = graph.nodes() if callable(getattr(graph, 'nodes', None)) else graph.nodes
+                for j, node in enumerate(nodes_iter):
                     if len(dataset) <= 10 and j % 100 == 0:
                         logger.debug(f"Graph {i}, node {j}")
                     
@@ -1375,6 +1480,7 @@ def main():
             "Decoder config: min_pattern_size=%s max_pattern_size=%s out_batch_size=%s (pattern sizes %s..%s inclusive, up to %s per size)",
             min_ps, max_ps, out_bs, min_ps, max_ps, out_bs,
         )
+        logger.info("CUDA available: %s; device: %s (if False/cpu, decoder will not use GPU)", torch.cuda.is_available(), utils.get_device())
         logger.info(f"Using dataset: {args.dataset}")
         logger.info(f"Graph type: {args.graph_type}")
 
@@ -1468,28 +1574,39 @@ def main():
         else:
             num_nodes = 0
 
-        logger.info("\nStarting pattern mining (batch processing)...")
-        # Tune workers by graph size for stability
-        total_nodes = num_nodes
-        original_workers = args.streaming_workers
-        if total_nodes > 3500000:
-            args.streaming_workers = 0
-            reason = "Maximum Stability (Sequential)"
-        elif total_nodes > 500000:
-            args.streaming_workers = min(original_workers, 2)
-            reason = "Balanced Performance (2 workers)"
+        pipeline = (getattr(args, 'search_pipeline', None) or '').strip().lower()
+        if pipeline == 'standard':
+            logger.info("\nStarting pattern mining (standard pipeline)...")
+            if not hasattr(args, 'n_workers'):
+                args.n_workers = 1
+            pattern_growth(dataset, task, args)
         else:
-            args.streaming_workers = original_workers
-            reason = "Maximum Speed ({} workers)".format(args.streaming_workers)
+            logger.info("\nStarting pattern mining (batch processing)...")
+            total_nodes = num_nodes
+            original_workers = args.streaming_workers
+            if total_nodes > 3500000:
+                args.streaming_workers = 0
+                reason = "Maximum Stability (Sequential)"
+            elif total_nodes > 500000:
+                args.streaming_workers = min(original_workers, 2)
+                reason = "Balanced Performance (2 workers)"
+            else:
+                args.streaming_workers = original_workers
+                reason = "Maximum Speed ({} workers)".format(args.streaming_workers)
 
-        if args.streaming_workers != original_workers:
-            logger.info("Worker scaling: %s nodes -> streaming_workers %s -> %s (%s).",
-                total_nodes, original_workers, args.streaming_workers, reason)
-        args.n_workers = args.streaming_workers
-        if args.n_workers <= 0:
-            logger.info("Sequential search (n_workers=0)")
+            if args.streaming_workers != original_workers:
+                logger.info("Worker scaling: %s nodes -> streaming_workers %s -> %s (%s).",
+                    total_nodes, original_workers, args.streaming_workers, reason)
+            args.n_workers = args.streaming_workers
+            if args.n_workers <= 0:
+                logger.info("Sequential search (n_workers=0)")
 
-        pattern_growth_streaming(dataset, task, args)
+            chunk = getattr(args, 'search_chunk_size', 500)
+            cap = getattr(args, 'frontier_cap', None)
+            logger.info("Search settings: n_workers=%s, search_chunk_size=%s, frontier_cap=%s",
+                args.n_workers, chunk, cap if cap is not None else "auto")
+
+            pattern_growth_streaming(dataset, task, args)
         if isinstance(dataset, list):
             dataset.clear()
         dataset = None

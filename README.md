@@ -189,6 +189,23 @@ docker run -p 5000:5000 neural-miner
 # Access API at http://localhost:5000
 ```
 
+**Why isn't the decoder using the GPU?**  
+The default image (`Dockerfile`) installs **CPU-only** PyTorch (`torch==1.4.0+cpu`), so `torch.cuda.is_available()` is always `False` inside the container. The decoder logs `CUDA available: False; device: cpu` at startup when that is the case.
+
+**To use the GPU** (e.g. RTX 3090, any CUDA 11.x GPU):
+
+```bash
+# Build GPU image (PyTorch + CUDA 11.3)
+docker build -f Dockerfile.gpu -t neural-miner-gpu .
+
+# Run decoder with GPU (mount your data and pass decoder args)
+docker run --gpus all -v /path/to/graph.pkl:/app/graph.pkl -v $(pwd)/results:/app/results -w /app \
+  neural-miner-gpu \
+  python -m subgraph_mining.decoder --dataset graph.pkl --out_path results/patterns.p
+```
+
+Ensure the host has [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) so `--gpus all` works.
+
 ---
 
 ##  Usage Guide

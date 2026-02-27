@@ -34,6 +34,12 @@ def parse_decoder(parser):
         help='number of search trials to run')
     dec_parser.add_argument('--out_batch_size', type=int,
         help='number of motifs to output per graph size')
+    dec_parser.add_argument('--frontier_cap', type=int, default=None,
+        help='Cap frontier size for large graphs (default: auto 20000 when graph has >500K nodes). Set 0 to disable.')
+    dec_parser.add_argument('--search_chunk_size', type=int, default=500,
+        help='Chunk size for greedy frontier batching (candidates per GPU batch). Larger = fewer batches, more GPU memory. Default 500.')
+    dec_parser.add_argument('--search_pipeline', type=str, default=None,
+        help='Force "standard" or "streaming" pipeline. If unset, uses streaming for large graphs.')
     
     # Memory efficiency parameters
     dec_parser.add_argument('--memory_efficient', action='store_true',
@@ -61,7 +67,7 @@ def parse_decoder(parser):
 
     # Batch processing parameters
     dec_parser.add_argument('--streaming_workers', type=int, default=4,
-        help='Number of workers for streaming. (Auto-scaled down for large graphs to prevent OOM)')
+        help='Number of parallel search workers. More workers = faster if CPU is the bottleneck; fewer = lower RAM/GPU pressure. Auto-scaled by graph size (>500K nodes -> 2, >3.5M -> 0).')
 
     # Set default values
     parser.set_defaults(

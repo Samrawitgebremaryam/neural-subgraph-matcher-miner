@@ -1,0 +1,82 @@
+# GPU-enabled decoder image (PyTorch with CUDA 11.3 for RTX 30xx and similar).
+# Build: docker build -f Dockerfile.gpu -t neural-miner-gpu .
+# Run:  docker run --gpus all ... neural-miner-gpu ...
+# Uses Python 3.7 + PyTorch 1.10 with CUDA 11.3 to stay compatible with deepsnap/PyG.
+
+FROM python:3.7-slim
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PIP_DEFAULT_TIMEOUT=300
+ENV PIP_NO_BUILD_ISOLATION=1
+
+# Install system build dependencies
+RUN apt-get update && apt-get install -y \
+  build-essential \
+  libigraph-dev python3-igraph \
+  pkg-config \
+  git \
+  libfreetype6-dev \
+  libpng-dev \
+  libqhull-dev \
+  gfortran \
+  libopenblas-dev \
+  liblapack-dev \
+  libatlas-base-dev \
+  python3-scipy \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir igraph
+RUN pip install --no-cache-dir numpy==1.21.6
+RUN pip install --no-cache-dir \
+  matplotlib==2.1.1 \
+  scikit-learn==1.0.2 \
+  seaborn==0.9.0
+
+# PyTorch with CUDA 11.3 (same Python 3.7 as CPU image)
+RUN pip install --no-cache-dir torch==1.10.2+cu113 torchvision==0.11.3+cu113 \
+  --extra-index-url https://download.pytorch.org/whl/cu113
+
+# CUDA runtime libs required by torch-sparse (libcusparse.so.11)
+RUN pip install --no-cache-dir nvidia-cusparse-cu11
+
+# So loader finds libcusparse.so.11 from nvidia-cusparse-cu11
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.7/site-packages/nvidia/cusparse/lib
+
+# PyG stack for torch 1.10 + cu113 (pin versions so pip does not pull PyTorch-2.x torch-sparse from PyPI)
+RUN pip install --no-cache-dir \
+  torch-scatter==2.0.9 \
+  torch-sparse==0.6.12 \
+  torch-cluster==1.5.9 \
+  torch-spline-conv==1.2.1 \
+  -f https://data.pyg.org/whl/torch-1.10.0+cu113.html
+
+RUN pip install --no-cache-dir \
+  torch-geometric==1.7.2
+
+RUN pip install --no-cache-dir \
+  deepsnap==0.1.2 \
+  networkx==2.4 \
+  test-tube==0.7.5 \
+  tqdm==4.43.0 \
+  requests
+
+# DeepSnap 0.1.2 uses torch._six.container_abcs removed in PyTorch 1.10+
+RUN sed -i 's/from torch._six import container_abcs/import collections.abc as container_abcs/' \
+  /usr/local/lib/python3.7/site-packages/deepsnap/hetero_gnn.py
+
+RUN pip install --no-cache-dir \
+  fastapi \
+  uvicorn \
+  python-multipart
+
+COPY . .
+
+EXPOSE 5000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
