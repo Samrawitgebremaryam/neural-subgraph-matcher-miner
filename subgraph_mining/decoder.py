@@ -183,6 +183,77 @@ class LazyNeighborhoodGraphList:
         return neigh_graph
 
 
+class GlobalMap:
+    """
+    Lightweight graph wrapper (adjacency dict) for hybrid global search.
+    Exposes the same interface as NetworkX so search agents need no changes.
+    Picklable for multiprocessing.
+    """
+    def __init__(self, G):
+        if not isinstance(G, (nx.Graph, nx.DiGraph)):
+            raise TypeError("GlobalMap requires a NetworkX Graph or DiGraph")
+        self._is_directed = G.is_directed()
+        if self._is_directed:
+            self.succ = {n: list(G.successors(n)) for n in G.nodes()}
+            self.adj = self.succ
+        else:
+            self.adj = {n: list(G.neighbors(n)) for n in G.nodes()}
+            self.succ = self.adj
+        self._nodes = list(self.adj.keys())
+
+    def nodes(self):
+        return self.adj.keys()
+
+    def __len__(self):
+        return len(self.adj)
+
+    def number_of_nodes(self):
+        return len(self.adj)
+
+    def number_of_edges(self):
+        if self._is_directed:
+            return sum(len(self.succ[n]) for n in self.succ)
+        return sum(len(self.adj[n]) for n in self.adj) // 2
+
+    def neighbors(self, node):
+        return self.adj.get(node, [])
+
+    def successors(self, node):
+        return self.succ.get(node, [])
+
+    def is_directed(self):
+        return self._is_directed
+
+    def subgraph(self, nodes):
+        nodes = set(nodes)
+        H = nx.DiGraph() if self._is_directed else nx.Graph()
+        H.add_nodes_from(nodes)
+        for u in nodes:
+            for v in self.succ.get(u, []):
+                if v in nodes:
+                    H.add_edge(u, v)
+        return H
+
+    def nodes_within_radius(self, node, radius):
+        """BFS; return set of nodes within `radius` hops. For BeamSearchAgent compatibility."""
+        if radius <= 0:
+            return {node}
+        visited = {node}
+        queue = collections.deque([(node, 0)])
+        while queue:
+            u, d = queue.popleft()
+            if d >= radius:
+                continue
+            for v in self.succ.get(u, []):
+                if v not in visited:
+                    visited.add(v)
+                    queue.append((v, d + 1))
+        return visited
+
+    def random_node(self):
+        return random.choice(self._nodes)
+
+
 def collate_fn(ds_graphs):
     """Batching logic for DeepSnap models."""
     from common import feature_preprocess
@@ -370,9 +441,16 @@ def pattern_growth_streaming(dataset, task, args):
     
     # Batched embedding generation
     global_embs, seed_graphs = generate_target_embeddings(dataset, model, args)
-    
-    # Release the massive main graph from memory before search
-    logger.info("CRITICAL: Cleaning up main graph from RAM to optimize Search Phase...")
+
+    # keep full graph for discovery when we have a single NX graph
+    full_graph = None
+    if isinstance(dataset, list) and len(dataset) == 1:
+        g0 = dataset[0]
+        if isinstance(g0, (nx.Graph, nx.DiGraph)):
+            full_graph = g0
+
+    # Release dataset container and GPU cache; main graph still held in full_graph until GlobalMap is built
+    logger.info("Cleaning up dataset reference and GPU cache (main graph freed after GlobalMap build)...")
     if isinstance(dataset, list):
         dataset.clear()
     del dataset
@@ -380,13 +458,32 @@ def pattern_growth_streaming(dataset, task, args):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         logger.info("GPU cache cleared.")
-    
+
     # Parallel search
-    logger.info("Search phase starting with precomputed embeddings...")
-    # Force use_whole_graphs=True because the input 'seed_graphs' are already the extracted neighborhoods
+    if full_graph is not None:
+        global_map = GlobalMap(full_graph)
+        del full_graph  
+        gc.collect()
+        search_input = [global_map]
+        # Cap frontier for very large graphs so each growth step stays tractable (~10–15 min total)
+        if global_map.number_of_nodes() > 500000:
+            args.frontier_cap = getattr(args, 'frontier_cap', None)
+            if args.frontier_cap is None:
+                args.frontier_cap = 20000
+                logger.info("Large graph detected (%s nodes): frontier capped at %s for speed.", global_map.number_of_nodes(), args.frontier_cap)
+            elif args.frontier_cap <= 0:
+                args.frontier_cap = None
+                logger.info("Large graph (%s nodes): frontier cap disabled (--frontier_cap 0).", global_map.number_of_nodes())
+        else:
+            args.frontier_cap = getattr(args, 'frontier_cap', None)
+        logger.info("Search phase starting with full graph (global search)...")
+    else:
+        search_input = seed_graphs
+        args.frontier_cap = getattr(args, 'frontier_cap', None)
+        logger.info("Search phase starting with precomputed embeddings...")
     original_use_whole = args.use_whole_graphs
     args.use_whole_graphs = True
-    found_patterns = pattern_growth(seed_graphs, task, args, precomputed_data=global_embs, preloaded_model=model)
+    found_patterns = pattern_growth(search_input, task, args, precomputed_data=global_embs, preloaded_model=model)
     args.use_whole_graphs = original_use_whole
     
     # Global Frequency Validation (Accuracy validator for batch processing)
@@ -1123,7 +1220,10 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
             continue
         if task == "graph-truncate" and i >= 1000:
             break
-        
+
+        if isinstance(graph, GlobalMap):
+            graphs.append(graph)
+            continue
         if not type(graph) == nx.Graph and not type(graph) == nx.DiGraph:
             graph = pyg_utils.to_networkx(graph).to_undirected()
             for node in graph.nodes():
@@ -1147,7 +1247,8 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
         if args.sample_method == "radial":
             for i, graph in enumerate(graphs):
                 logger.info(f"Processing graph {i}")
-                for j, node in enumerate(graph.nodes):
+                nodes_iter = graph.nodes() if callable(getattr(graph, 'nodes', None)) else graph.nodes
+                for j, node in enumerate(nodes_iter):
                     if len(dataset) <= 10 and j % 100 == 0:
                         logger.debug(f"Graph {i}, node {j}")
                     

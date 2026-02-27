@@ -34,6 +34,8 @@ def parse_decoder(parser):
         help='number of search trials to run')
     dec_parser.add_argument('--out_batch_size', type=int,
         help='number of motifs to output per graph size')
+    dec_parser.add_argument('--frontier_cap', type=int, default=None,
+        help='Cap frontier size for large graphs (default: auto 20000 when graph has >500K nodes). Set 0 to disable.')
     
     # Memory efficiency parameters
     dec_parser.add_argument('--memory_efficient', action='store_true',

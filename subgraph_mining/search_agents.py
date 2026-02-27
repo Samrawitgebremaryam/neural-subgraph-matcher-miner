@@ -42,6 +42,16 @@ mp.set_start_method('spawn', force=True)
 from sklearn.decomposition import PCA
 from functools import lru_cache
 import torch.nn as nn
+
+CHUNK_SIZE = 250
+
+def _random_node(graph):
+    """Random node without materializing full node list when graph has random_node (e.g. GlobalMap)."""
+    if hasattr(graph, 'random_node'):
+        return graph.random_node()
+    return random.choice(list(graph.nodes()))
+
+
 class SearchAgent:
     """ Class for search strategies to identify frequent subgraphs in embedding space.
 
@@ -161,14 +171,14 @@ class MCTSSearchAgent(SearchAgent):
             # if existing seed beats choosing a new seed
             if best_score >= self.c_uct * np.sqrt(np.log(simulation_n or 1)):
                 graph_idx, start_node = best_graph_idx, best_start_node
-                assert best_start_node in self.dataset[graph_idx].nodes
+                assert best_start_node in self.dataset[graph_idx].nodes()
                 graph = self.dataset[graph_idx]
             else:
                 found = False
                 while not found:
                     graph_idx = np.arange(len(self.dataset))[graph_dist.rvs()]
                     graph = self.dataset[graph_idx]
-                    start_node = random.choice(list(graph.nodes))
+                    start_node = _random_node(graph)
                     # don't pick isolated nodes or small islands
                     if self.has_min_reachable_nodes(graph, start_node,
                         self.min_pattern_size):
@@ -295,7 +305,7 @@ def run_greedy_trial(trial_idx):
 
     graph_idx = np.arange(len(worker_graphs))[graph_dist.rvs()]
     graph = worker_graphs[graph_idx]
-    start_node = random.choice(list(graph.nodes))
+    start_node = _random_node(graph)
 
     neigh = [start_node]
     if worker_args.graph_type == "undirected":
@@ -308,32 +318,38 @@ def run_greedy_trial(trial_idx):
     trial_counts = defaultdict(default_dd_list)
 
     while len(neigh) < worker_args.max_pattern_size and frontier:
-        cand_neighs, anchors = [], []
-        for cand_node in frontier:
-            cand_neigh = graph.subgraph(neigh + [cand_node])
-            cand_neighs.append(cand_neigh)
-            if worker_args.node_anchored:
-                anchors.append(neigh[0])
-
-        if not cand_neighs:
-            break
-
-        with torch.no_grad():
-            cand_embs = worker_model.emb_model(utils.batch_nx_graphs(
-                cand_neighs, anchors=anchors if worker_args.node_anchored else None))
-
+        # For very large graphs, cap frontier so each step stays fast (optional, set in decoder)
+        frontier_cap = getattr(worker_args, 'frontier_cap', None)
+        if frontier_cap is not None and frontier_cap > 0 and len(frontier) > frontier_cap:
+            frontier = list(random.sample(frontier, frontier_cap))
         scored = []
-        for cand_node, cand_emb in zip(frontier, cand_embs):
-            score = 0
-            for emb_batch in worker_embs:
-                with torch.no_grad():
-                    if worker_args.method_type == "order":
-                        pred = worker_model.predict((emb_batch.to(utils.get_device()), cand_emb)).unsqueeze(1)
-                        score -= torch.sum(torch.argmax(worker_model.clf_model(pred), axis=1)).item()
-                    elif worker_args.method_type == "mlp":
-                        pred = worker_model(emb_batch.to(utils.get_device()), cand_emb.unsqueeze(0).expand(len(emb_batch), -1))
-                        score += torch.sum(pred[:,0]).item()
-            scored.append((score, cand_node))
+        for chunk_start in range(0, len(frontier), CHUNK_SIZE):
+            chunk = frontier[chunk_start:chunk_start + CHUNK_SIZE]
+            cand_neighs, anchors = [], []
+            for cand_node in chunk:
+                cand_neigh = graph.subgraph(neigh + [cand_node])
+                cand_neighs.append(cand_neigh)
+                if worker_args.node_anchored:
+                    anchors.append(neigh[0])
+
+            if not cand_neighs:
+                continue
+
+            with torch.no_grad():
+                cand_embs = worker_model.emb_model(utils.batch_nx_graphs(
+                    cand_neighs, anchors=anchors if worker_args.node_anchored else None))
+
+            for cand_node, cand_emb in zip(chunk, cand_embs):
+                score = 0
+                for emb_batch in worker_embs:
+                    with torch.no_grad():
+                        if worker_args.method_type == "order":
+                            pred = worker_model.predict((emb_batch.to(utils.get_device()), cand_emb)).unsqueeze(1)
+                            score -= torch.sum(torch.argmax(worker_model.clf_model(pred), axis=1)).item()
+                        elif worker_args.method_type == "mlp":
+                            pred = worker_model(emb_batch.to(utils.get_device()), cand_emb.unsqueeze(0).expand(len(emb_batch), -1))
+                            score += torch.sum(pred[:,0]).item()
+                scored.append((score, cand_node))
 
         if not scored:
             break
@@ -410,8 +426,20 @@ class GreedySearchAgent(SearchAgent):
                 results = list(tqdm(with_miner_progress(raw, n_trials), total=n_trials))
         else:
             print(f"Starting {n_trials} search trials sequentially (n_workers={self.n_workers})...")
-            init_greedy_worker(*init_args)
-            results = [run_greedy_trial(i) for i in tqdm(with_miner_progress(range(n_trials), n_trials))]
+            _prev_threads = 1
+            try:
+                _prev_threads = torch.get_num_threads()
+                torch.set_num_threads(min(2, _prev_threads))
+            except Exception:
+                pass
+            try:
+                init_greedy_worker(*init_args)
+                results = [run_greedy_trial(i) for i in tqdm(with_miner_progress(range(n_trials), n_trials))]
+            finally:
+                try:
+                    torch.set_num_threads(_prev_threads)
+                except Exception:
+                    pass
 
         print("Aggregating results from all worker processes...")
         for trial_patterns, trial_counts in results:
@@ -670,7 +698,7 @@ class MemoryEfficientMCTSAgent(MCTSSearchAgent):
             
             seed_scores = []
             for _ in range(min(10, graph.number_of_nodes())):
-                start_node = random.choice(list(graph.nodes))
+                start_node = _random_node(graph)
                 n_reachable = sum(1 for _ in self._stream_neighborhood(
                     graph, start_node, max_nodes=self.min_pattern_size))
                 seed_scores.append((start_node, n_reachable))
@@ -819,14 +847,18 @@ class BeamSearchAgent(SearchAgent):
         # Sample node with enough neighbors
         candidates = []
         for _ in range(min(10, graph.number_of_nodes())):
-            node = random.choice(list(graph.nodes))
-            subgraph = graph.subgraph(list(nx.ego_graph(graph, node, radius=2)))
+            node = _random_node(graph)
+            if hasattr(graph, 'nodes_within_radius'):
+                nodes = graph.nodes_within_radius(node, 2)
+                subgraph = graph.subgraph(nodes)
+            else:
+                subgraph = graph.subgraph(list(nx.ego_graph(graph, node, radius=2)))
             if subgraph.number_of_nodes() >= self.min_pattern_size:
                 candidates.append((node, subgraph.number_of_nodes()))
         
         if not candidates:
             # Fallback to random node
-            return graph_idx, random.choice(list(graph.nodes))
+            return graph_idx, _random_node(graph)
         
         # Choose node with largest 2-hop neighborhood
         node = max(candidates, key=lambda x: x[1])[0]

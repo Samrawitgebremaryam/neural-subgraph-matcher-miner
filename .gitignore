@@ -1,6 +1,8 @@
 __pycache__/
 env/
 .env
+.venv/
+docs/
 log/
 log-*/
 *.p
@@ -13,3 +15,8 @@ results/
 orca/
 core
 deepsnap-experimental/
+*.pkl
+*.txt
+run_logs/
+
+
