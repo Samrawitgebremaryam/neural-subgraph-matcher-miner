@@ -12,3 +12,4 @@ fastapi
 uvicorn
 python-multipart
 requests
+sentence-transformers>=2.2.0
