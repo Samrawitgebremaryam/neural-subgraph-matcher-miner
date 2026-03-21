@@ -7,6 +7,8 @@ from deepsnap.batch import Batch
 from deepsnap.batch import Batch as DSBatch
 from deepsnap.dataset import GraphDataset
 import networkx as nx
+import rustworkx as rx
+from rustworkx.visit import BFSVisitor, PruneSearch
 import numpy as np
 import torch
 from torch.utils.data import DataLoader as TorchDataLoader
@@ -102,9 +104,51 @@ def sample_subgraph(g_obj, anchors=None, radius=2, hard_neg_idxs=None):
 
     return g_obj, DSGraph(subgraph)
 
+def _nx_to_rx(nx_graph):
+    """Build a rustworkx PyGraph from a NetworkX graph for fast traversal.
+
+    Returns the rx graph, a node->index mapping, and an index->node mapping.
+    """
+    rx_graph = rx.PyGraph()
+    node_to_idx = {}
+    for node in nx_graph.nodes:
+        idx = rx_graph.add_node(node)
+        node_to_idx[node] = idx
+    idx_to_node = {v: k for k, v in node_to_idx.items()}
+    for u, v in nx_graph.edges:
+        rx_graph.add_edge(node_to_idx[u], node_to_idx[v], None)
+    return rx_graph, node_to_idx, idx_to_node
+
+
+class _DepthLimitedBFS(BFSVisitor):
+    """rustworkx BFS visitor that collects nodes up to a given depth cutoff."""
+    def __init__(self, start_idx, cutoff):
+        self.cutoff = cutoff
+        self.depth = {start_idx: 0}
+        self.visited = [start_idx]
+
+    def tree_edge(self, edge):
+        src, tgt, _ = edge
+        d = self.depth.get(src, 0) + 1
+        self.depth[tgt] = d
+        if d <= self.cutoff:
+            self.visited.append(tgt)
+        else:
+            raise PruneSearch
+
+
+def _rx_khop_nodes(rx_graph, start_idx, cutoff):
+    """Return node indices within cutoff hops of start_idx using compiled BFS."""
+    vis = _DepthLimitedBFS(start_idx, cutoff)
+    rx.graph_bfs_search(rx_graph, [start_idx], vis)
+    return vis.visited
+
+
 class DataSource:
     def gen_batch(batch_target, batch_neg_target, batch_neg_query, train):
         raise NotImplementedError
+
+
 class CustomGraphDataset:
     def __init__(self, graph_pkl_path, node_anchored=False, num_queries=32, subgraph_hops=1, min_size=5, max_size=29):
         self.graph_pkl_path = graph_pkl_path
@@ -122,6 +166,7 @@ class CustomGraphDataset:
             self.raw_data = self._load_graph()
             self.full_graph = self._build_graph()
             self.graph = self.full_graph.G
+        self.rx_graph, self.node_to_idx, self.idx_to_node = _nx_to_rx(self.graph)
 
     def _load_graph(self):
         with open(self.graph_pkl_path, 'rb') as f:
@@ -149,25 +194,35 @@ class CustomGraphDataset:
 
     def _bfs_sample_subgraph(self, graph, size, max_tries=10):
         """
-        Sample a connected subgraph of given size using BFS .
+        Sample a connected subgraph of given size using BFS.
+        Uses rustworkx compiled traversal when sampling from the full graph,
+        falls back to NetworkX for small extracted subgraphs.
         """
+        use_rx = (graph is self.graph)
+
         for _ in range(max_tries):
-            start_node = random.choice(list(graph.nodes))
-            visited = {start_node}
-            queue = [start_node]
-            while queue and len(visited) < size:
-                current = queue.pop(0)
-                neighbors = list(set(graph.neighbors(current)) - visited)
-                random.shuffle(neighbors)
-                for neighbor in neighbors:
-                    if len(visited) >= size:
-                        break
-                    visited.add(neighbor)
-                    queue.append(neighbor)
+            if use_rx:
+                start_idx = random.choice(self.rx_graph.node_indices())
+                node_indices = _rx_khop_nodes(self.rx_graph, start_idx, cutoff=size)
+                visited = {self.idx_to_node[i] for i in node_indices[:size]}
+            else:
+                start_node = random.choice(list(graph.nodes))
+                visited = {start_node}
+                queue = [start_node]
+                while queue and len(visited) < size:
+                    current = queue.pop(0)
+                    neighbors = list(set(graph.neighbors(current)) - visited)
+                    random.shuffle(neighbors)
+                    for neighbor in neighbors:
+                        if len(visited) >= size:
+                            break
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+
             subg = graph.subgraph(visited).copy()
-           
             if subg.number_of_edges() > 0 and nx.is_connected(subg):
                 return subg
+
         # fallback: largest connected component
         if subg.number_of_edges() == 0 and subg.number_of_nodes() > 1:
             components = list(nx.connected_components(subg))

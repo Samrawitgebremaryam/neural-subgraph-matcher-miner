@@ -64,6 +64,9 @@ RUN pip install --no-cache-dir \
     tqdm==4.43.0 \
     requests
 
+# High-performance graph library (Rust-backed, NetworkX replacement)
+RUN pip install --no-cache-dir rustworkx
+
 # Install FastAPI and related packages
 RUN pip install --no-cache-dir \
     fastapi \
