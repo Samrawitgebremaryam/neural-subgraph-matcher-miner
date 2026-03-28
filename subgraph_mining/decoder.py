@@ -32,6 +32,7 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
+from common import rx_utils as rxu
 import datetime  
 import uuid 
 
@@ -83,7 +84,7 @@ logger = logging.getLogger(__name__)
 
 
 # Dataset class for parallel processing with on-the-fly sampling
-def extract_neighborhood(dataset_graph, seed, args, is_directed):
+def extract_neighborhood(dataset_graph, seed, args, is_directed, neighbor_cache=None):
     """
     Unified neighborhood extraction logic to ensure consistency across all datasets.
     """
@@ -94,9 +95,12 @@ def extract_neighborhood(dataset_graph, seed, args, is_directed):
     while queue and len(nodes_in_bubble) < args.max_neighborhood_size:
         curr, dist = queue.popleft()
         nodes_in_bubble.append(curr)
+        if len(nodes_in_bubble) >= args.max_neighborhood_size:
+            break
 
         if dist < args.radius:
-            neighbors = dataset_graph.successors(curr) if is_directed else dataset_graph.neighbors(curr)
+            # Reuse precomputed adjacency when available to reduce per-seed overhead.
+            neighbors = neighbor_cache.get(curr, ()) if neighbor_cache is not None else rxu.neighbors(dataset_graph, curr)
             for neighbor in neighbors:
                 if neighbor not in visited:
                     visited.add(neighbor)
@@ -130,13 +134,24 @@ class TargetedDataset(Dataset):
         self.args = args
         self.is_directed = (args.graph_type == "directed")
         self.radius = args.radius
+        # Build adjacency once for all sampled seeds in this dataset.
+        self.neighbor_cache = {
+            node: tuple(rxu.neighbors(self.dataset_graph, node))
+            for node in self.dataset_graph.nodes()
+        }
 
     def __len__(self):
         return len(self.selected_seeds)
 
     def __getitem__(self, idx):
         seed = self.selected_seeds[idx]
-        neigh_graph, new_anchor_id = extract_neighborhood(self.dataset_graph, seed, self.args, self.is_directed)
+        neigh_graph, new_anchor_id = extract_neighborhood(
+            self.dataset_graph,
+            seed,
+            self.args,
+            self.is_directed,
+            neighbor_cache=self.neighbor_cache,
+        )
         std_g = utils.standardize_graph(neigh_graph, anchor=new_anchor_id)
         return DSGraph(std_g)
 
@@ -293,7 +308,7 @@ def bfs_chunk(graph, start_node, max_size):
     queue = [start_node]
     while queue and len(visited) < max_size:
         node = queue.pop(0)
-        for neighbor in graph.neighbors(node):
+        for neighbor in rxu.neighbors(graph, node):
             if neighbor not in visited:
                 visited.add(neighbor)
                 queue.append(neighbor)
@@ -1132,6 +1147,30 @@ def pattern_growth(dataset, task, args, precomputed_data=None, preloaded_model=N
                 if 'id' not in graph.nodes[node]:
                     graph.nodes[node]['id'] = str(node)
         graphs.append(graph)
+
+    # If rustworkx is available, attempt to pre-convert the small neighborhood graphs
+    try:
+        converted = 0
+        if hasattr(rxu, 'convert_graphs'):
+            converted = rxu.convert_graphs(graphs)
+        if converted:
+            logger.info(f"rx_utils: pre-converted {converted} neighborhood graphs to rustworkx cache")
+        else:
+            if hasattr(rxu, 'RX_AVAILABLE') and getattr(rxu, 'RX_AVAILABLE'):
+                logger.info("rx_utils: rustworkx available but no neighborhood graphs were pre-converted (check graph types)")
+    except Exception:
+        logger.debug("rx_utils: pre-conversion attempt failed", exc_info=True)
+
+    # Build compact adjacency-only wrappers and attach to args so worker
+    # processes receive small picklable objects instead of full NetworkX graphs.
+    try:
+        if hasattr(rxu, 'build_compact_graphs'):
+            compact_graphs = rxu.build_compact_graphs(graphs)
+            # attach to args for worker initializer to consume
+            setattr(args, 'compact_graphs', compact_graphs)
+            logger.info(f"rx_utils: built {len(compact_graphs)} compact_graphs for worker distribution")
+    except Exception:
+        logger.debug("rx_utils: compact_graphs build failed", exc_info=True)
 
     # After this point we only use `graphs` and `embs`; the agent never needs the full graph.
     if isinstance(dataset, LazyNeighborhoodGraphList):

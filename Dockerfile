@@ -69,6 +69,8 @@ RUN pip install --no-cache-dir \
     fastapi \
     uvicorn \
     python-multipart
+# Install RustworkX 
+RUN pip install rustworkx==0.13.2
 
 # Copy the project
 COPY . .
