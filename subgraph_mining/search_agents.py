@@ -23,6 +23,8 @@ from common import utils
 from common import combined_syn
 from subgraph_mining.config import parse_decoder
 from subgraph_matching.config import parse_encoder
+from common import rx_utils as rxu
+import rustworkx as rx
 
 import matplotlib.pyplot as plt
 
@@ -128,9 +130,21 @@ class MCTSSearchAgent(SearchAgent):
         return self.max_size == self.max_pattern_size + 1
 
     def has_min_reachable_nodes(self, graph, start_node, n):
-        for depth_limit in range(n+1):
-            edges = nx.bfs_edges(graph, start_node, depth_limit=depth_limit)
-            nodes = set([v for u, v in edges])
+        for depth_limit in range(n + 1):
+            # Perform BFS with depth limit
+            bfs_result = rx.bfs_search(
+                graph,
+                start_node,
+                lambda parent, child, edge: (parent, child),
+                depth_limit=depth_limit
+            )
+            
+            # Extract visited nodes (excluding the start node)
+            nodes = set()
+            for edge in bfs_result:
+                if edge is not None:
+                    _, v = edge
+                    nodes.add(v)
             if len(nodes) + 1 >= n:
                 return True
         return False
@@ -273,9 +287,28 @@ def init_greedy_worker(model, graphs, embs, args):
     global worker_model, worker_graphs, worker_embs, worker_args
     print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} initializing...", flush=True)
     worker_model = model
-    worker_graphs = graphs
+    # Prefer compact adjacency graphs if provided in args (smaller, picklable)
+    if hasattr(args, 'compact_graphs') and args.compact_graphs:
+        worker_graphs = args.compact_graphs
+        print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} using compact_graphs (adjacency-only).", flush=True)
+    else:
+        worker_graphs = graphs
     worker_embs = embs
     worker_args = args
+    # Attempt to pre-convert NetworkX graphs to rustworkx-backed cache (one-time).
+    try:
+        # If we still have NetworkX graphs, attempt conversion; if using compact_graphs
+        # the conversion was likely done in the main process already.
+        if not(hasattr(args, 'compact_graphs') and args.compact_graphs):
+            n_converted = rxu.convert_graphs(worker_graphs)
+            if n_converted > 0:
+                print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} converted {n_converted} graphs to rustworkx cache.", flush=True)
+            else:
+                if hasattr(rxu, 'RX_AVAILABLE') and getattr(rxu, 'RX_AVAILABLE'):
+                    print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} rustworkx available but no graphs converted (check graph types).", flush=True)
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} rx conversion error: {e}", flush=True)
+
     print(f"[{time.strftime('%H:%M:%S')}] Worker PID {os.getpid()} initialization complete.", flush=True)
 
 
@@ -299,9 +332,10 @@ def run_greedy_trial(trial_idx):
 
     neigh = [start_node]
     if worker_args.graph_type == "undirected":
-        frontier = list(set(graph.neighbors(start_node)) - set(neigh))
+        frontier = list(set(rxu.neighbors(graph, start_node)) - set(neigh))
     elif worker_args.graph_type == "directed":
-        frontier = list(set(graph.successors(start_node)) - set(neigh))
+        # use same neighbor wrapper for directed graphs; wrapper can be extended
+        frontier = list(set(rxu.neighbors(graph, start_node)) - set(neigh))
     visited = {start_node}
 
     trial_patterns = defaultdict(list)
@@ -351,9 +385,9 @@ def run_greedy_trial(trial_idx):
             best_score, best_node = random.choice(scored[:top_k])
 
         if worker_args.graph_type == "undirected":
-            frontier = list(((set(frontier) | set(graph.neighbors(best_node))) - visited) - {best_node})
+            frontier = list(((set(frontier) | set(rxu.neighbors(graph, best_node))) - visited) - {best_node})
         elif worker_args.graph_type == "directed":
-            frontier = list(((set(frontier) | set(graph.successors(best_node))) - visited) - {best_node})      
+            frontier = list(((set(frontier) | set(rxu.neighbors(graph, best_node))) - visited) - {best_node})      
               
         visited.add(best_node)
         neigh.append(best_node)
@@ -480,7 +514,7 @@ class MemoryEfficientGreedyAgent(GreedySearchAgent):
     def _grow_pattern(self, graph, start_node):
         neigh = [start_node]
         visited = {start_node}
-        frontier = set(graph.neighbors(start_node))
+        frontier = set(rxu.neighbors(graph, start_node))
     
         while frontier and len(neigh) < self.max_pattern_size:
             best_score = float('inf')
@@ -530,7 +564,7 @@ class MemoryEfficientGreedyAgent(GreedySearchAgent):
             
             neigh.append(best_node)
             visited.add(best_node)
-            frontier = set((frontier | set(graph.neighbors(best_node))) - 
+            frontier = set((frontier | set(rxu.neighbors(graph, best_node))) - 
                      visited - {best_node})
             
         if len(neigh) >= self.min_pattern_size:
