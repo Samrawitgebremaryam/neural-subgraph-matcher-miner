@@ -6,7 +6,7 @@ COUNTS=results/
 all: matcher miner counter analyze
 
 matcher:
-	python -m subgraph_matching.train --node_anchored
+	python -m subgraph_matching.train --node_anchored --graph_backend ig
 
 miner:
 	python -m subgraph_mining.decoder --dataset=$(DATASET) --node_anchored

@@ -3,6 +3,7 @@ env/
 .env
 log/
 log-*/
+*.log
 *.p
 *.png
 plots/
@@ -13,3 +14,11 @@ results/
 orca/
 core
 deepsnap-experimental/
+
+# Local large graph data dumps used for experiments
+hetionet-*.sif
+hetionet-*.tsv
+
+# Generated checkpoints from smoke/real-data validation runs
+ckpt/model_smoke*.pt
+ckpt/model_real_*.pt

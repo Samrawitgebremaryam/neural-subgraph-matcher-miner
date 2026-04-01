@@ -32,12 +32,27 @@ import torch_geometric.nn as pyg_nn
 from common import data
 from common import models
 from common import utils
+from common import utils_ig
 if HYPERPARAM_SEARCH:
     from test_tube import HyperOptArgumentParser
     from subgraph_matching.hyp_search import parse_encoder
 else:
     from subgraph_matching.config import parse_encoder
 from subgraph_matching.test import validation
+
+
+def configure_graph_backend(backend):
+    """Configure graph utility backend across train/test/data modules."""
+    global utils
+    selected_utils = utils_ig if backend == "ig" else utils
+
+    # Rebind module-level utils references used by train/data/validation.
+    utils = selected_utils
+    data.utils = selected_utils
+
+    # validation() in subgraph_matching.test reads its own module-level utils.
+    import subgraph_matching.test as test_module
+    test_module.utils = selected_utils
 
 def build_model(args):
     # build model
@@ -217,7 +232,12 @@ def main(force_test=False):
 
     utils.parse_optimizer(parser)
     parse_encoder(parser)
+    parser.add_argument('--graph_backend', type=str, default='ig',
+        choices=['nx', 'ig'],
+        help='Graph utility backend: ig (default) or nx')
     args = parser.parse_args()
+
+    configure_graph_backend(args.graph_backend)
 
     if force_test:
         args.test = True
