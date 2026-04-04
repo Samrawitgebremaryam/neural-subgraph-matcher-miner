@@ -36,12 +36,33 @@ from itertools import permutations
 from queue import PriorityQueue
 import matplotlib.colors as mcolors
 import networkx as nx
+import rustworkx as rx
+from rustworkx.visit import BFSVisitor, PruneSearch
 import pickle
 import torch.multiprocessing as mp
 mp.set_start_method('spawn', force=True)
 from sklearn.decomposition import PCA
 from functools import lru_cache
 import torch.nn as nn
+
+
+class _DepthLimitedBFS(BFSVisitor):
+    """Collects node indices reachable within cutoff hops using compiled BFS."""
+    def __init__(self, start_idx, cutoff):
+        self.cutoff = cutoff
+        self.depth = {start_idx: 0}
+        self.visited = [start_idx]
+
+    def tree_edge(self, edge):
+        src, tgt, _ = edge
+        d = self.depth.get(src, 0) + 1
+        self.depth[tgt] = d
+        if d <= self.cutoff:
+            self.visited.append(tgt)
+        else:
+            raise PruneSearch
+
+
 class SearchAgent:
     """ Class for search strategies to identify frequent subgraphs in embedding space.
 
@@ -128,12 +149,12 @@ class MCTSSearchAgent(SearchAgent):
         return self.max_size == self.max_pattern_size + 1
 
     def has_min_reachable_nodes(self, graph, start_node, n):
-        for depth_limit in range(n+1):
-            edges = nx.bfs_edges(graph, start_node, depth_limit=depth_limit)
-            nodes = set([v for u, v in edges])
-            if len(nodes) + 1 >= n:
+        count = 0
+        for _ in nx.bfs_edges(graph, start_node):
+            count += 1
+            if count >= n:
                 return True
-        return False
+        return count + 1 >= n  # +1 for start_node itself
 
     def step(self):
         ps = np.array([len(g) for g in self.dataset], dtype=float)
@@ -181,6 +202,8 @@ class MCTSSearchAgent(SearchAgent):
             neigh_g.add_node(start_node, anchor=1)
             cur_state = graph_idx, start_node
             state_list = [cur_state]
+            all_embs = torch.cat([b.to(utils.get_device()) for b in self.embs], dim=0)
+            n_embs = len(all_embs)
             while frontier and len(neigh) < self.max_size:
                 cand_neighs, anchors = [], []
                 for cand_node in frontier:
@@ -192,16 +215,9 @@ class MCTSSearchAgent(SearchAgent):
                     cand_neighs, anchors=anchors if self.node_anchored else None))
                 best_v_score, best_node_score, best_node = 0, -float("inf"), None
                 for cand_node, cand_emb in zip(frontier, cand_embs):
-                    score, n_embs = 0, 0
-                    for emb_batch in self.embs:
-                        score += torch.sum(self.model.predict((
-                            emb_batch.to(utils.get_device()), cand_emb))).item()
-                        n_embs += len(emb_batch)
-                    EPS = 1e-10  
-                    if n_embs > 0:
-                        v_score = -np.log(score/n_embs + 1) + 1
-                    else:
-                        v_score = 0  
+                    with torch.no_grad():
+                        score = torch.sum(self.model.predict((all_embs, cand_emb))).item()
+                    v_score = -np.log(score / n_embs + 1) + 1 if n_embs > 0 else 0
                     neigh_g = graph.subgraph(neigh + [cand_node]).copy()
                     neigh_g.remove_edges_from(nx.selfloop_edges(neigh_g))
                     for v in neigh_g.nodes:
@@ -301,12 +317,13 @@ def run_greedy_trial(trial_idx):
     if worker_args.graph_type == "undirected":
         frontier = list(set(graph.neighbors(start_node)) - set(neigh))
     elif worker_args.graph_type == "directed":
-        frontier = list(set(graph.successors(start_node)) - set(neigh))
+        frontier = list((set(graph.successors(start_node)) | set(graph.predecessors(start_node))) - set(neigh))
     visited = {start_node}
 
     trial_patterns = defaultdict(list)
     trial_counts = defaultdict(default_dd_list)
 
+    all_embs = torch.cat(worker_embs, dim=0).to(utils.get_device())
     while len(neigh) < worker_args.max_pattern_size and frontier:
         cand_neighs, anchors = [], []
         for cand_node in frontier:
@@ -322,18 +339,19 @@ def run_greedy_trial(trial_idx):
             cand_embs = worker_model.emb_model(utils.batch_nx_graphs(
                 cand_neighs, anchors=anchors if worker_args.node_anchored else None))
 
-        scored = []
-        for cand_node, cand_emb in zip(frontier, cand_embs):
-            score = 0
-            for emb_batch in worker_embs:
-                with torch.no_grad():
-                    if worker_args.method_type == "order":
-                        pred = worker_model.predict((emb_batch.to(utils.get_device()), cand_emb)).unsqueeze(1)
-                        score -= torch.sum(torch.argmax(worker_model.clf_model(pred), axis=1)).item()
-                    elif worker_args.method_type == "mlp":
-                        pred = worker_model(emb_batch.to(utils.get_device()), cand_emb.unsqueeze(0).expand(len(emb_batch), -1))
-                        score += torch.sum(pred[:,0]).item()
-            scored.append((score, cand_node))
+        # Vectorized scoring: concatenate all emb batches once, score all candidates together
+        with torch.no_grad():
+            scored = []
+            for cand_node, cand_emb in zip(frontier, cand_embs):
+                if worker_args.method_type == "order":
+                    pred = worker_model.predict((all_embs, cand_emb)).unsqueeze(1)
+                    score = -torch.sum(torch.argmax(worker_model.clf_model(pred), axis=1)).item()
+                elif worker_args.method_type == "mlp":
+                    pred = worker_model(all_embs, cand_emb.unsqueeze(0).expand(len(all_embs), -1))
+                    score = torch.sum(pred[:, 0]).item()
+                else:
+                    score = 0
+                scored.append((score, cand_node))
 
         if not scored:
             break
@@ -353,14 +371,14 @@ def run_greedy_trial(trial_idx):
         if worker_args.graph_type == "undirected":
             frontier = list(((set(frontier) | set(graph.neighbors(best_node))) - visited) - {best_node})
         elif worker_args.graph_type == "directed":
-            frontier = list(((set(frontier) | set(graph.successors(best_node))) - visited) - {best_node})      
+            frontier = list(((set(frontier) | set(graph.successors(best_node)) | set(graph.predecessors(best_node))) - visited) - {best_node})
               
         visited.add(best_node)
         neigh.append(best_node)
 
         if len(neigh) >= worker_args.min_pattern_size:
             neigh_g = graph.subgraph(neigh).copy()
-            neigh_g.remove_edges_from(nx.selfloop_edges(neigh_g))
+            neigh_g.remove_edges_from(list(nx.selfloop_edges(neigh_g)))
             for v_idx, v in enumerate(neigh_g.nodes):
                 neigh_g.nodes[v]["anchor"] = 1 if worker_args.node_anchored and v == neigh[0] else 0
 
@@ -482,6 +500,9 @@ class MemoryEfficientGreedyAgent(GreedySearchAgent):
         visited = {start_node}
         frontier = set(graph.neighbors(start_node))
     
+        all_embs = torch.cat([b.to(utils.get_device()) for b in self.embs], dim=0)
+        if self.use_fp16:
+            all_embs = self._half_tensor(all_embs)
         while frontier and len(neigh) < self.max_pattern_size:
             best_score = float('inf')
             best_node = None
@@ -497,29 +518,17 @@ class MemoryEfficientGreedyAgent(GreedySearchAgent):
                 
                     if self.use_fp16:
                         cand_embs = self._half_tensor(cand_embs)
-                
                     for node, emb in zip(batch_nodes, cand_embs):
-                        score = 0
-                        for emb_batch in self.embs:
+                        if self.model_type == "order":
+                            pred = self.model.predict((all_embs, emb)).unsqueeze(1)
                             if self.use_fp16:
-                                emb_batch = self._half_tensor(emb_batch)
-                            
-                            if self.model_type == "order":
-                                pred = self.model.predict((
-                                    emb_batch.to(utils.get_device()),
-                                    emb)).unsqueeze(1)
-                                if self.use_fp16:
-                                    pred = pred.float()
-                                score -= torch.sum(torch.argmax(
-                                    self.model.clf_model(pred), axis=1)).item()
-                            elif self.model_type == "mlp":
-                                pred = self.model(
-                                    emb_batch.to(utils.get_device()),
-                                    emb.unsqueeze(0).expand(len(emb_batch), -1)
-                                    )
-                                if self.use_fp16:
-                                    pred = pred.float()
-                                score += torch.sum(pred[:,0]).item()
+                                pred = pred.float()
+                            score = -torch.sum(torch.argmax(self.model.clf_model(pred), axis=1)).item()
+                        elif self.model_type == "mlp":
+                            pred = self.model(all_embs, emb.unsqueeze(0).expand(len(all_embs), -1))
+                            if self.use_fp16:
+                                pred = pred.float()
+                            score = torch.sum(pred[:, 0]).item()
                                 
                         if score < best_score:
                             best_score = score
@@ -679,7 +688,9 @@ class MemoryEfficientMCTSAgent(MCTSSearchAgent):
             neigh = [start_node]
             visited = {start_node}
             frontier = set()
-            
+            all_embs = torch.cat([b.to(utils.get_device()) for b in self.embs], dim=0)
+            if self.use_fp16:
+                all_embs = self._half_tensor(all_embs)
             for next_node in self._stream_neighborhood(graph, start_node):
                 if len(neigh) >= self.max_size:
                     break
@@ -692,18 +703,13 @@ class MemoryEfficientMCTSAgent(MCTSSearchAgent):
                 if cand_neigh.number_of_edges() > 0:
                     try:
                         cand_emb = next(self._batch_embeddings([cand_neigh]))
-        
-                        score = 0
-                        n_embs = 0
-                        for emb_batch in self.embs:
-                            if self.use_fp16:
-                                emb_batch = self._half_tensor(emb_batch)
-                            pred = self.model.predict((
-                                emb_batch.to(utils.get_device()), cand_emb))
-                            if self.use_fp16:
-                                pred = pred.float()
-                            score += torch.sum(pred).item()
-                            n_embs += len(emb_batch)
+                        if self.use_fp16:
+                            cand_emb = self._half_tensor(cand_emb)
+                        pred = self.model.predict((all_embs, cand_emb))
+                        if self.use_fp16:
+                            pred = pred.float()
+                        score = torch.sum(pred).item()
+                        n_embs = len(all_embs)
             
                         if n_embs > 0 and score/n_embs > 0.5:  
                             neigh.append(next_node)
@@ -751,6 +757,8 @@ class BeamSearchAgent(SearchAgent):
         self.beam_width = beam_width
         self.batch_size = batch_size
         self.use_fp16 = torch.cuda.is_available()
+        self._beam_rx_cache = {}
+        self._all_embs = None  # cached once on first score call
     
     def _half_tensor(self, tensor):
         """Convert tensor to half precision if CUDA is available."""
@@ -781,29 +789,25 @@ class BeamSearchAgent(SearchAgent):
             
             if self.use_fp16:
                 emb = self._half_tensor(emb)
-                
-            score = 0
-            n_embs = 0
-            
-            for emb_batch in self.embs:
-                n_embs += len(emb_batch)
+
+            if self._all_embs is None:
+                self._all_embs = torch.cat([b.to(utils.get_device()) for b in self.embs], dim=0)
                 if self.use_fp16:
-                    emb_batch = self._half_tensor(emb_batch)
-                    
-                if self.model_type == "order":
-                    pred = self.model.predict((emb_batch.to(utils.get_device()), emb)).unsqueeze(1)
-                    if self.use_fp16:
-                        pred = pred.float()
-                    score -= torch.sum(torch.argmax(self.model.clf_model(pred), axis=1)).item()
-                elif self.model_type == "mlp":
-                    pred = self.model(
-                        emb_batch.to(utils.get_device()),
-                        emb.unsqueeze(0).expand(len(emb_batch), -1))
-                    if self.use_fp16:
-                        pred = pred.float()
-                    score += torch.sum(pred[:,0]).item()
-            
-            return score / max(1, n_embs)  # Normalize by number of embeddings
+                    self._all_embs = self._half_tensor(self._all_embs)
+            all_embs = self._all_embs
+            if self.model_type == "order":
+                pred = self.model.predict((all_embs, emb)).unsqueeze(1)
+                if self.use_fp16:
+                    pred = pred.float()
+                score = -torch.sum(torch.argmax(self.model.clf_model(pred), axis=1)).item()
+            elif self.model_type == "mlp":
+                pred = self.model(all_embs, emb.unsqueeze(0).expand(len(all_embs), -1))
+                if self.use_fp16:
+                    pred = pred.float()
+                score = torch.sum(pred[:, 0]).item()
+            else:
+                score = 0
+            return score / max(1, len(all_embs))
     
     def _sample_seed_node(self):
         """Sample a seed node from the dataset."""
@@ -820,9 +824,19 @@ class BeamSearchAgent(SearchAgent):
         candidates = []
         for _ in range(min(10, graph.number_of_nodes())):
             node = random.choice(list(graph.nodes))
-            subgraph = graph.subgraph(list(nx.ego_graph(graph, node, radius=2)))
-            if subgraph.number_of_nodes() >= self.min_pattern_size:
-                candidates.append((node, subgraph.number_of_nodes()))
+            key = id(graph)
+            if key not in self._beam_rx_cache:
+                g = rx.PyGraph()
+                n2i = {nd: g.add_node(nd) for nd in graph.nodes}
+                for u, v in graph.edges:
+                    g.add_edge(n2i[u], n2i[v], None)
+                self._beam_rx_cache[key] = (g, n2i)
+            rx_g, n2i = self._beam_rx_cache[key]
+            vis = _DepthLimitedBFS(n2i[node], cutoff=2)
+            rx.graph_bfs_search(rx_g, [n2i[node]], vis)
+            subgraph_size = len(vis.visited)
+            if subgraph_size >= self.min_pattern_size:
+                candidates.append((node, subgraph_size))
         
         if not candidates:
             # Fallback to random node

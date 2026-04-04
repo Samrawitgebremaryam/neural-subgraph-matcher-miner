@@ -69,6 +69,8 @@ from itertools import permutations
 from queue import PriorityQueue
 import matplotlib.colors as mcolors
 import networkx as nx
+import rustworkx as rx
+from rustworkx.visit import BFSVisitor, PruneSearch
 from sklearn.decomposition import PCA
 import json 
 import logging
@@ -83,24 +85,64 @@ logger = logging.getLogger(__name__)
 
 
 # Dataset class for parallel processing with on-the-fly sampling
+# Module-level cache for the rustworkx graph built from the dataset graph.
+# Avoids rebuilding on every worker call during DataLoader iteration.
+_rx_graph_cache = {}
+
+
+def _get_rx_graph(dataset_graph):
+    """Return a cached rustworkx graph for dataset_graph, building it once."""
+    key = id(dataset_graph)
+    if key not in _rx_graph_cache:
+        g = rx.PyDiGraph() if dataset_graph.is_directed() else rx.PyGraph()
+        node_to_idx = {}
+        for node in dataset_graph.nodes:
+            node_to_idx[node] = g.add_node(node)
+        for u, v in dataset_graph.edges:
+            g.add_edge(node_to_idx[u], node_to_idx[v], None)
+        idx_to_node = {v: k for k, v in node_to_idx.items()}
+        _rx_graph_cache[key] = (g, node_to_idx, idx_to_node)
+    return _rx_graph_cache[key]
+
+
+class _DepthLimitedBFS(BFSVisitor):
+    """Collects node indices up to a given depth cutoff using compiled BFS."""
+    def __init__(self, start_idx, cutoff, max_size):
+        self.cutoff = cutoff
+        self.max_size = max_size
+        self.depth = {start_idx: 0}
+        self.visited = [start_idx]
+
+    def tree_edge(self, edge):
+        src, tgt, _ = edge
+        d = self.depth.get(src, 0) + 1
+        self.depth[tgt] = d
+        if d <= self.cutoff:
+            self.visited.append(tgt)
+            if len(self.visited) >= self.max_size:
+                raise StopIteration
+        else:
+            raise PruneSearch
+
+
 def extract_neighborhood(dataset_graph, seed, args, is_directed):
     """
     Unified neighborhood extraction logic to ensure consistency across all datasets.
+    Uses rustworkx compiled BFS for fast traversal on large graphs.
     """
-    nodes_in_bubble = []
-    queue = collections.deque([(seed, 0)]) 
-    visited = {seed}
-    
-    while queue and len(nodes_in_bubble) < args.max_neighborhood_size:
-        curr, dist = queue.popleft()
-        nodes_in_bubble.append(curr)
+    rx_graph, node_to_idx, idx_to_node = _get_rx_graph(dataset_graph)
+    start_idx = node_to_idx[seed]
 
-        if dist < args.radius:
-            neighbors = dataset_graph.successors(curr) if is_directed else dataset_graph.neighbors(curr)
-            for neighbor in neighbors:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append((neighbor, dist + 1))
+    vis = _DepthLimitedBFS(start_idx, args.radius, args.max_neighborhood_size)
+    try:
+        if is_directed:
+            rx.digraph_bfs_search(rx_graph, [start_idx], vis)
+        else:
+            rx.graph_bfs_search(rx_graph, [start_idx], vis)
+    except StopIteration:
+        pass
+
+    nodes_in_bubble = [idx_to_node[i] for i in vis.visited]
     
     # Induce subgraph
     neigh_graph = dataset_graph.subgraph(nodes_in_bubble).copy()
@@ -212,7 +254,7 @@ def generate_target_embeddings(dataset, model, args):
     # This prevents DeepSnap from crashing on 0-edge subgraphs
     is_directed = (args.graph_type == "directed")
     if is_directed:
-        all_nodes = [n for n in all_nodes if dataset_graph.out_degree(n) > 0]
+        all_nodes = [n for n in all_nodes if dataset_graph.out_degree(n) > 0 or dataset_graph.in_degree(n) > 0]
     else:
         all_nodes = [n for n in all_nodes if dataset_graph.degree(n) > 0]
         
@@ -289,16 +331,17 @@ def ensure_directories():
 
 
 def bfs_chunk(graph, start_node, max_size):
-    visited = set([start_node])
-    queue = [start_node]
-    while queue and len(visited) < max_size:
-        node = queue.pop(0)
-        for neighbor in graph.neighbors(node):
-            if neighbor not in visited:
-                visited.add(neighbor)
-                queue.append(neighbor)
-                if len(visited) >= max_size:
-                    break
+    rx_graph, node_to_idx, idx_to_node = _get_rx_graph(graph)
+    start_idx = node_to_idx[start_node]
+    vis = _DepthLimitedBFS(start_idx, cutoff=999999, max_size=max_size)
+    try:
+        if graph.is_directed():
+            rx.digraph_bfs_search(rx_graph, [start_idx], vis)
+        else:
+            rx.graph_bfs_search(rx_graph, [start_idx], vis)
+    except StopIteration:
+        pass
+    visited = {idx_to_node[i] for i in vis.visited}
     return graph.subgraph(visited).copy()
 
 
