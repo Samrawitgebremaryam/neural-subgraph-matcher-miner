@@ -1,6 +1,4 @@
-"""Build an alignment matrix for matching a query subgraph in a target graph.
-Subgraph matching model needs to have been trained with the node-anchored option
-(default)."""
+"""igraph version of alignment.py - Subgraph matching alignment using igraph graphs."""
 
 import argparse
 from itertools import permutations
@@ -11,7 +9,7 @@ import random
 import time
 
 from deepsnap.batch import Batch
-import networkx as nx
+import igraph as ig
 import numpy as np
 from sklearn.manifold import TSNE
 import torch
@@ -24,22 +22,14 @@ from torch_geometric.data import DataLoader
 from torch_geometric.datasets import TUDataset
 import torch_geometric.utils as pyg_utils
 import torch_geometric.nn as pyg_nn
+import matplotlib.pyplot as plt
 
 from common import data
 from common import models
-from common import utils
-from common import utils_ig
+from common import utils_ig as utils
 from subgraph_matching.config import parse_encoder
 from subgraph_matching.test import validation
 from subgraph_matching.train import build_model
-
-
-def configure_graph_backend(backend):
-    """Configure graph utility backend for alignment flow."""
-    global utils
-    selected_utils = utils_ig if backend == "ig" else utils
-    utils = selected_utils
-    data.utils = selected_utils
 
 def gen_alignment_matrix(model, query, target, method_type="order"):
     """Generate subgraph matching alignment matrix for a given query and
@@ -50,23 +40,19 @@ def gen_alignment_matrix(model, query, target, method_type="order"):
     Args:
         model: the subgraph matching model. Must have been trained with
             node anchored setting (--node_anchored, default)
-        query: the query graph (networkx Graph)
-        target: the target graph (networkx Graph)
+        query: the query graph (igraph.Graph)
+        target: the target graph (igraph.Graph)
         method_type: the method used for the model.
             "order" for order embedding or "mlp" for MLP model
     """
 
-    if hasattr(query, "vs") and hasattr(target, "vs"):
-        query_nodes = list(range(len(query.vs)))
-        target_nodes = list(range(len(target.vs)))
-    else:
-        query_nodes = list(query.nodes)
-        target_nodes = list(target.nodes)
-
-    mat = np.zeros((len(query_nodes), len(target_nodes)))
-    for i, u in enumerate(query_nodes):
-        for j, v in enumerate(target_nodes):
-            batch = utils.batch_nx_graphs([query, target], anchors=[u, v])
+    mat = np.zeros((len(query.vs), len(target.vs)))
+    for i, u in enumerate(query.vs):
+        for j, v in enumerate(target.vs):
+            # Use igraph vertex objects, convert to indices for anchors
+            u_idx = u.index
+            v_idx = v.index
+            batch = utils.batch_nx_graphs([query, target], anchors=[u_idx, v_idx])
             embs = model.emb_model(batch)
             pred = model(embs[1].unsqueeze(0), embs[0].unsqueeze(0))
             raw_pred = model.predict(pred)
@@ -90,30 +76,22 @@ def main():
         default="")
     parser.add_argument('--target_path', type=str, help='path of target graph',
         default="")
-    parser.add_argument('--graph_backend', type=str, default='ig',
-        choices=['nx', 'ig'],
-        help='Graph utility backend: ig (default) or nx')
     args = parser.parse_args()
-    configure_graph_backend(args.graph_backend)
     args.test = True
+    
     if args.query_path:
         with open(args.query_path, "rb") as f:
             query = pickle.load(f)
     else:
-        if args.graph_backend == 'ig':
-            import igraph as ig
-            query = ig.Graph.Erdos_Renyi(8, 0.25)
-        else:
-            query = nx.gnp_random_graph(8, 0.25)
+        # Generate random igraph instead of NetworkX
+        query = ig.Graph.Erdos_Renyi(8, 0.25)
+    
     if args.target_path:
         with open(args.target_path, "rb") as f:
             target = pickle.load(f)
     else:
-        if args.graph_backend == 'ig':
-            import igraph as ig
-            target = ig.Graph.Erdos_Renyi(16, 0.25)
-        else:
-            target = nx.gnp_random_graph(16, 0.25)
+        # Generate random igraph instead of NetworkX
+        target = ig.Graph.Erdos_Renyi(16, 0.25)
 
     model = build_model(args)
     mat = gen_alignment_matrix(model, query, target,
@@ -127,6 +105,4 @@ def main():
     print("Saved alignment matrix plot in plots/alignment.png")
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
     main()
-
