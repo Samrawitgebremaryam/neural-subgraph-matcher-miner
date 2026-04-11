@@ -16,28 +16,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Fetch typed Amazon dataset from GitHub Release
+      - name: Fetch Amazon dataset from GitHub Release
         run: |
-          echo "Downloading typed Amazon dataset from GitHub Releases..."
-          wget -O amazon0302_typed_directed_clean_py37.pkl https://github.com/Samrawitgebremaryam/neural-subgraph-matcher-miner/releases/download/v1.0/amazon0302_typed_directed_clean_py37.pkl
+          echo "Downloading Amazon dataset from GitHub Releases..."
+          wget -O amazon0302.pkl https://github.com/Samrawitgebremaryam/neural-subgraph-matcher-miner/releases/download/v1.0/amazon0302.pkl
 
           echo "Verifying downloaded file..."
-          file amazon0302_typed_directed_clean_py37.pkl
+          file amazon0302.pkl
 
-          FILE_SIZE=$(stat -c%s amazon0302_typed_directed_clean_py37.pkl)
+          FILE_SIZE=$(stat -c%s amazon0302.pkl)
           echo "File size: $FILE_SIZE bytes"
 
           if [ $FILE_SIZE -lt 100000 ]; then
-            echo "ERROR: typed Amazon dataset is too small. Likely not downloaded correctly."
+            echo "ERROR: Amazon dataset is too small. Likely not downloaded correctly."
             exit 1
           fi
 
-          if file amazon0302_typed_directed_clean_py37.pkl | grep -Eq "HTML|ASCII|Unicode"; then
-            echo "ERROR: typed Amazon dataset is not a valid binary file."
+          if file amazon0302.pkl | grep -Eq "HTML|ASCII|Unicode"; then
+            echo "ERROR: Amazon dataset is not a valid binary file."
             exit 1
           fi
 
-          echo "typed Amazon dataset verified as binary."
+          echo "Amazon dataset verified as binary."
 
       - name: Pull prebuilt Docker image
         run: |
@@ -82,14 +82,14 @@ jobs:
               set -euo pipefail
               echo 'Preparing semantic label cache for Amazon dataset...'
               python scripts/precompute_label_cache.py \
-                --graph_pkl=amazon0302_typed_directed_clean_py37.pkl \
+                --graph_pkl=amazon0302.pkl \
                 --cache_dir=/app/artifacts/label_encoder_cache_minilm_universal \
                 --backend=hashing \
                 --batch_size=256
 
               echo 'Starting semantic decoder run on Amazon dataset...'
               python -m subgraph_mining.decoder \
-                --dataset=amazon0302_typed_directed_clean_py37.pkl \
+                --dataset=amazon0302.pkl \
                 --model_path=ckpt/universal/model_universal_hybrid_minilm_rgcn.pt \
                 --vocab_dir=/app/artifacts/vocab_amazon_universal_semantic_ci \
                 --n_neighborhoods=10000 \
