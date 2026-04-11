@@ -2,42 +2,50 @@ name: Run Decoder
 
 on:
   push:
-    branches: [main, feature/node-labelling-R-GCN]
+    branches: [main, test/node_labeling_on_amazon]
   pull_request:
-    branches: [main, feature/node-labelling-R-GCN]
+    branches: [main, test/node_labeling_on_amazon]
   workflow_dispatch:
 
 jobs:
   run-decoder:
     runs-on: ubuntu-latest
+    timeout-minutes: 50000
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Cache Docker layers
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-      - name: Build Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          load: true
-          tags: decoder-image:latest
-          cache-from: |
-            type=local,src=/tmp/.buildx-cache
-          cache-to: |
-            type=local,dest=/tmp/.buildx-cache-new,mode=max
-      - name: Move cache
+      - name: Fetch typed Amazon dataset from GitHub Release
         run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          echo "Downloading typed Amazon dataset from GitHub Releases..."
+          wget -O amazon0302_typed_directed_clean_py37.pkl https://github.com/Samrawitgebremaryam/neural-subgraph-matcher-miner/releases/download/v1.0/amazon0302_typed_directed_clean_py37.pkl
+
+          echo "Verifying downloaded file..."
+          file amazon0302_typed_directed_clean_py37.pkl
+
+          FILE_SIZE=$(stat -c%s amazon0302_typed_directed_clean_py37.pkl)
+          echo "File size: $FILE_SIZE bytes"
+
+          if [ $FILE_SIZE -lt 100000 ]; then
+            echo "ERROR: typed Amazon dataset is too small. Likely not downloaded correctly."
+            exit 1
+          fi
+
+          if file amazon0302_typed_directed_clean_py37.pkl | grep -Eq "HTML|ASCII|Unicode"; then
+            echo "ERROR: typed Amazon dataset is not a valid binary file."
+            exit 1
+          fi
+
+          echo "typed Amazon dataset verified as binary."
+
+      - name: Pull prebuilt Docker image
+        run: |
+          echo "Logging into Docker Hub..."
+          docker login -u samribahta -p ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          echo "Pulling latest decoder image..."
+          docker pull samribahta/decoder-image:latest
+
       - name: Create output directories
         run: |
           mkdir -p ${{ github.workspace }}/plots/cluster
@@ -46,10 +54,12 @@ jobs:
           chmod -R 777 ${{ github.workspace }}/plots
           chmod -R 777 ${{ github.workspace }}/results
           chmod -R 777 ${{ github.workspace }}/artifacts
+
       - name: Verify semantic checkpoint files
         run: |
           test -f ${{ github.workspace }}/ckpt/universal/model_universal_hybrid_minilm_rgcn.pt
           test -f ${{ github.workspace }}/ckpt/universal/model_universal_hybrid_minilm_rgcn.pt.meta.json
+
       - name: Check available processors and usage percentage
         id: cpu-check
         run: |
@@ -62,96 +72,46 @@ jobs:
           echo "total_cpus=$TOTAL_CPUS" >> $GITHUB_OUTPUT
           echo "percent_used=$PERCENT_USED" >> $GITHUB_OUTPUT
 
-      - name: Run decoder in Docker container
+      - name: Run semantic decoder in Docker container
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -e PYTHONUNBUFFERED=1 \
-            decoder-image:latest \
+            samribahta/decoder-image:latest \
             bash -c "
               set -euo pipefail
-              echo 'Preparing semantic label cache...'
+              echo 'Preparing semantic label cache for Amazon dataset...'
               python scripts/precompute_label_cache.py \
-                --semantic_preset universal \
-                --graph_pkl metta.pkl \
-                --cache_dir /app/artifacts/label_encoder_cache_minilm_universal \
-                --backend hashing \
-                --batch_size 128
+                --graph_pkl=amazon0302_typed_directed_clean_py37.pkl \
+                --cache_dir=/app/artifacts/label_encoder_cache_minilm_universal \
+                --backend=hashing \
+                --batch_size=256
 
-              echo 'Starting decoder run...'
+              echo 'Starting semantic decoder run on Amazon dataset...'
               python -m subgraph_mining.decoder \
-                --dataset=metta.pkl \
-                --graph_type=directed \
-                --model_path=/app/ckpt/universal/model_universal_hybrid_minilm_rgcn.pt \
-                --vocab_dir=/app/artifacts/vocab_ci_semantic \
-                --n_trials=20 \
-                --n_neighborhoods=25 \
+                --dataset=amazon0302_typed_directed_clean_py37.pkl \
+                --model_path=ckpt/universal/model_universal_hybrid_minilm_rgcn.pt \
+                --vocab_dir=/app/artifacts/vocab_amazon_universal_semantic_ci \
+                --n_neighborhoods=10000 \
+                --n_trials=1000 \
                 --min_pattern_size=3 \
-                --max_pattern_size=4 \
-                --min_neighborhood_size=3 \
-                --max_neighborhood_size=6 \
+                --max_pattern_size=8 \
                 --search_strategy=greedy \
-                --memory_efficient \
-                --out_batch_size=2 \
-                --streaming_workers=0 \
-                --out_path=/app/results/semantic_patterns.pkl \
-                2>&1 | tee /app/semantic_decoder.log
+                --min_neighborhood_size=20 \
+                --max_neighborhood_size=29 \
+                --node_anchored \
+                --out_path=/app/results/amazon_semantic_patterns.pkl \
+                --graph_type=directed \
+                --visualize_instances \
+                2>&1 | tee /app/amazon_semantic_decoder.log
 
+              echo 'Semantic decoder finished successfully.'
               echo 'Checking output directories...'
-              test -f /app/results/semantic_patterns.pkl
-              test -f /app/results/semantic_patterns.json
-              ls -la /app/plots/cluster
+              test -f /app/results/amazon_semantic_patterns.pkl
+              test -f /app/results/amazon_semantic_patterns.json
+              ls -la /app/plots/cluster || echo 'No cluster plots found.'
               ls -la /app/results
-              "
-      # - name: Run pattern counter in Docker container
-      #   run: |
-      #     docker run --rm \
-      #       -v ${{ github.workspace }}:/app \
-      #       -e PYTHONUNBUFFERED=1 \
-      #       decoder-image:latest \
-      #       bash -c "
-      #         set -e
-      #         export PYTHONPATH=/app
-      #         echo 'Running pattern counter...'
-      #         python -m analyze.count_patterns \
-      #           --dataset=metta.pkl \
-      #           --queries_path=results/patterns.pkl \
-      #           --out_path=results/ \
-      #           --node_anchored \
-
-      #         echo 'Counting completed.'
-      #         ls -la /app/results
-      #       "
-      # - name: Run matcher in Docker container
-      #  run: |
-      #   docker run --rm \
-      #    -v ${{ github.workspace }}:/app \
-      #   -e PYTHONUNBUFFERED=1 \
-      #  decoder-image:latest \
-      # bash -c "
-      #  set -e
-      # echo 'Starting matcher run on custom gene graph...'
-      #ython -m subgraph_matching.train \
-      # --dataset=graph \
-      #--graph_pkl_path=graph.pkl \
-      #--node_anchored \
-      #--batch_size 16 \
-      #--val_size 128
-      #echo 'Checking output directories...'
-      #ls -la /app/results
-      # ls -la /app/plots
-      #"
-      #         echo 'Starting matcher run on custom gene graph...'
-      #         python -m subgraph_matching.train \
-      #           --dataset=graph \
-      #           --graph_pkl_path=graph.pkl \
-      #           --node_anchored \
-      #           --batch_size 16 \
-      #           --val_size 128
-      #         echo 'Checking output directories...'
-      #         ls -la /app/results
-      #         ls -la /app/plots
-      #       "
+            "
 
       - name: Check for generated files
         run: |
@@ -159,23 +119,25 @@ jobs:
           ls -R plots/ || echo "No plots directory found"
           echo "Checking results directory:"
           ls -R results/ || echo "No results directory found"
+
       - name: Upload plots as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: decoder-plots
+          name: amazon-decoder-results
           path: |
             plots/
             results/
-          retention-days: 7
+          retention-days: 30
           if-no-files-found: warn
 
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: decoder-logs
+          name: amazon-decoder-logs
           path: |
             *.log
             *.err
+          retention-days: 7
           if-no-files-found: ignore
